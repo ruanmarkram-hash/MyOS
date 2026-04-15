@@ -1,4 +1,4 @@
-export function getDashboardHtml(token: string, chatId: string, warroomEnabled = false): string {
+export function getDashboardHtml(token: string, chatId: string, warroomEnabled = false, mainDisplayName = 'Main'): string {
 const WARROOM_ENABLED = warroomEnabled;
   return `<!DOCTYPE html>
 <html lang="en">
@@ -648,6 +648,10 @@ ${WARROOM_ENABLED ? `<div class="card" style="border:1px solid #1e3a5f">
 const TOKEN = ${JSON.stringify(token)};
 const CHAT_ID = ${JSON.stringify(chatId)};
 const BASE = location.origin;
+const MAIN_DISPLAY_NAME = ${JSON.stringify(mainDisplayName)};
+function agentDisplayName(id) {
+  return id === 'main' ? MAIN_DISPLAY_NAME : (id.charAt(0).toUpperCase() + id.slice(1));
+}
 
 // Device detection
 function detectDevice() {
@@ -1245,7 +1249,7 @@ async function loadMeetAgentOptions() {
     }
     const sorted = ['main', ...[...ids].filter(function(x){ return x !== 'main'; }).sort()];
     const optionsHtml = sorted.map(function(id) {
-      const label = id.charAt(0).toUpperCase() + id.slice(1);
+      const label = agentDisplayName(id);
       return '<option value="' + id + '">' + label + '</option>';
     }).join('');
     if (selAvatar) selAvatar.innerHTML = optionsHtml;
@@ -1548,7 +1552,7 @@ async function refreshMeetSessions() {
       meta.style.cssText = 'min-width:0;flex:1';
       const title = document.createElement('div');
       title.style.cssText = 'font-size:12px;color:#fff;font-weight:600';
-      const agentLabel = (s.agent_id || '').charAt(0).toUpperCase() + (s.agent_id || '').slice(1);
+      const agentLabel = agentDisplayName(s.agent_id || '');
       title.textContent = agentLabel + ' · ' + (s.status === 'live' ? 'live' : s.status);
       const sub = document.createElement('div');
       sub.style.cssText = 'font-size:10px;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
@@ -2614,7 +2618,7 @@ async function loadAgentTabs() {
       const dot = document.createElement('span');
       dot.className = 'agent-dot ' + (a.running ? 'live' : 'dead');
       tab.appendChild(dot);
-      tab.appendChild(document.createTextNode(a.id.charAt(0).toUpperCase() + a.id.slice(1)));
+      tab.appendChild(document.createTextNode(agentDisplayName(a.id)));
       tab.onclick = function() { switchAgentTab(a.id, this); };
       container.appendChild(tab);
     });

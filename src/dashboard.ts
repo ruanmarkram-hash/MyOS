@@ -139,7 +139,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // Serve dashboard HTML
   app.get('/', (c) => {
     const chatId = c.req.query('chatId') || '';
-    return c.html(getDashboardHtml(DASHBOARD_TOKEN, chatId, WARROOM_ENABLED));
+    return c.html(getDashboardHtml(DASHBOARD_TOKEN, chatId, WARROOM_ENABLED, process.env.MAIN_AGENT_DISPLAY_NAME || 'Main'));
   });
 
   // War Room page
