@@ -859,6 +859,7 @@ export function createBot(): Bot {
     { command: 'slack', description: 'Recent Slack messages' },
     { command: 'dashboard', description: 'Open web dashboard' },
     { command: 'stop', description: 'Stop current processing' },
+    { command: 'restart', description: 'Restart this bot' },
     { command: 'agents', description: 'List available agents' },
     { command: 'delegate', description: 'Delegate task to agent' },
     { command: 'lock', description: 'Lock session (requires PIN to unlock)' },
@@ -1192,6 +1193,14 @@ export function createBot(): Bot {
     }
   });
 
+  // /restart — graceful restart (bot-layer only, never goes to Claude)
+  bot.command('restart', async (ctx) => {
+    if (!isAuthorised(ctx.chat!.id)) return;
+    await ctx.reply('Restarting... back in a moment 🔄');
+    // Brief delay to ensure Telegram delivery before exit
+    setTimeout(() => process.kill(process.pid, 'SIGTERM'), 500);
+  });
+
   // /agents — list available agents for delegation
   bot.command('agents', async (ctx) => {
     if (!isAuthorised(ctx.chat!.id)) return;
@@ -1256,7 +1265,7 @@ export function createBot(): Bot {
   });
 
   // Text messages — and any slash commands not owned by this bot (skills, e.g. /todo /gmail)
-  const OWN_COMMANDS = new Set(['/start', '/help', '/newchat', '/respin', '/voice', '/model', '/memory', '/forget', '/pin', '/unpin', '/chatid', '/wa', '/slack', '/dashboard', '/stop', '/agents', '/delegate', '/lock', '/status']);
+  const OWN_COMMANDS = new Set(['/start', '/help', '/newchat', '/respin', '/voice', '/model', '/memory', '/forget', '/pin', '/unpin', '/chatid', '/wa', '/slack', '/dashboard', '/stop', '/restart', '/agents', '/delegate', '/lock', '/status']);
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
     const chatIdStr = ctx.chat!.id.toString();
