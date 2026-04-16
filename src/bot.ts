@@ -687,12 +687,24 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
         } catch (ttsErr) {
           logger.error({ err: ttsErr }, 'TTS failed, falling back to text');
           for (const part of splitMessage(formatForTelegram(textWithFooter))) {
-            await ctx.reply(part, { parse_mode: 'HTML' });
+            try {
+              await ctx.reply(part, { parse_mode: 'HTML' });
+            } catch (htmlErr) {
+              logger.warn({ err: htmlErr }, 'HTML parse_mode failed, retrying as plain text');
+              await ctx.reply(part);
+            }
           }
         }
       } else {
         for (const part of splitMessage(formatForTelegram(textWithFooter))) {
-          await ctx.reply(part, { parse_mode: 'HTML' });
+          try {
+            await ctx.reply(part, { parse_mode: 'HTML' });
+          } catch (htmlErr) {
+            // Telegram rejected the HTML (malformed tags, unescaped chars, etc.)
+            // Fall back to plain text so the message always reaches the user.
+            logger.warn({ err: htmlErr }, 'HTML parse_mode failed, retrying as plain text');
+            await ctx.reply(part);
+          }
         }
       }
     }
