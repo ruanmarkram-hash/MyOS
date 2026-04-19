@@ -145,6 +145,91 @@ export async function forwardPipelineResolution(params: {
   return { ok: res.ok, status: res.status, body };
 }
 
+// ── Callback query (inline button tap) ──────────────────────────
+//
+// Pipeline inline buttons use callback_data of the form
+// "pl:<action>:<gate_id>". Format is fixed by pipeline-advance's
+// sendTelegramHumanGatePing. When we detect a matching payload the
+// bot forwards to pipeline-webhook path 4 with resolved_via set to
+// telegram-button (preserving observability) and returns a short
+// toast message that the caller passes to answerCallbackQuery.
+
+const PIPELINE_CALLBACK_PREFIX = 'pl:';
+
+export interface PipelineCallbackMatch {
+  action: 'approve' | 'halt';
+  gate_id: string;
+}
+
+export function parsePipelineCallback(
+  data: string | undefined,
+): PipelineCallbackMatch | null {
+  if (!data || !data.startsWith(PIPELINE_CALLBACK_PREFIX)) return null;
+  const rest = data.slice(PIPELINE_CALLBACK_PREFIX.length);
+  const [action, gate_id] = rest.split(':');
+  if (action !== 'approve' && action !== 'halt') return null;
+  if (!gate_id) return null;
+  return { action, gate_id };
+}
+
+export interface PipelineCallbackResult {
+  ok: boolean;
+  toast: string;
+}
+
+/**
+ * Forward a pipeline button tap to pipeline-webhook path 4 (manual)
+ * declaring resolved_via='telegram-button' so the observability trail
+ * records the channel correctly. Returns a short toast string the bot
+ * should pass to answerCallbackQuery. Does NOT edit the message itself:
+ * that side effect lives in pipeline-advance.resolveGate() so it fires
+ * uniformly across every resolution channel.
+ */
+export async function handlePipelineCallback(
+  match: PipelineCallbackMatch,
+): Promise<PipelineCallbackResult> {
+  if (!PIPELINE_ENABLED) {
+    return { ok: false, toast: 'Pipeline disabled.' };
+  }
+  if (!PIPELINE_WEBHOOK_URL || !PIPELINE_SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, toast: 'Pipeline webhook not configured.' };
+  }
+
+  const resolution: PipelineResolution = match.action;
+  const res = await fetch(PIPELINE_WEBHOOK_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${PIPELINE_SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+    body: JSON.stringify({
+      gate_id: match.gate_id,
+      resolution,
+      resolved_via: 'telegram-button',
+      resolution_notes: `Telegram ${match.action} button tapped`,
+    }),
+  });
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    logger.error(
+      { status: res.status, body, gate_id: match.gate_id },
+      'pipeline-handler: callback webhook call failed',
+    );
+    return { ok: false, toast: 'Webhook failed. Check logs.' };
+  }
+
+  const toast =
+    match.action === 'halt'
+      ? '\u26A0\uFE0F Halted'
+      : '\u2705 Approved';
+  logger.info(
+    { gate_id: match.gate_id, action: match.action },
+    'pipeline-handler: callback forwarded',
+  );
+  return { ok: true, toast };
+}
+
 // ── Top-level handler ───────────────────────────────────────────
 //
 // Called from bot.ts before the LLM routing. Returns a string reply

@@ -53,7 +53,11 @@ import {
   getSecurityStatus,
   audit,
 } from './security.js';
-import { handlePipelineReply } from './pipeline-handler.js';
+import {
+  handlePipelineReply,
+  handlePipelineCallback,
+  parsePipelineCallback,
+} from './pipeline-handler.js';
 
 // ── Streaming rate limiter ───────────────────────────────────────────
 const globalStreamLastEdit = new Map<string, number>();
@@ -1598,6 +1602,36 @@ export function createBot(): Bot {
     } catch (err) {
       logger.error({ err }, 'Video note download failed');
       await ctx.reply('Could not download video note. Note: Telegram bots are limited to 20MB downloads.');
+    }
+  });
+
+  // ── Pipeline inline button taps (callback_query) ────────────────
+  // Human-gate APPROVE / HALT buttons emit callback_data of the form
+  // "pl:<action>:<gate_id>". Forward the tap to pipeline-webhook and
+  // answer with an in-Telegram toast. The message edit (remove
+  // buttons + append resolved state) is done server-side in
+  // pipeline-advance.resolveGate() so every resolution path fires it.
+  bot.on('callback_query:data', async (ctx) => {
+    const data = ctx.callbackQuery.data;
+    const match = parsePipelineCallback(data);
+    if (!match) {
+      // Not ours; answer with an empty ack so Telegram stops spinning.
+      await ctx.answerCallbackQuery().catch(() => {});
+      return;
+    }
+    try {
+      const result = await handlePipelineCallback(match);
+      await ctx
+        .answerCallbackQuery({
+          text: result.toast,
+          show_alert: !result.ok,
+        })
+        .catch(() => {});
+    } catch (err) {
+      logger.error({ err }, 'pipeline callback handler threw');
+      await ctx
+        .answerCallbackQuery({ text: 'Error. See logs.', show_alert: true })
+        .catch(() => {});
     }
   });
 
