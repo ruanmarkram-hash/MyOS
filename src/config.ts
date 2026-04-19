@@ -37,6 +37,10 @@ const envConfig = readEnvFile([
   'WARROOM_ENABLED',
   'WARROOM_PORT',
   'STREAM_STRATEGY',
+  'PIPELINE_SUPABASE_URL',
+  'PIPELINE_SUPABASE_SERVICE_ROLE_KEY',
+  'PIPELINE_WEBHOOK_URL',
+  'PIPELINE_ENABLED',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -251,4 +255,25 @@ export const WARROOM_PORT = parseInt(
   process.env.WARROOM_PORT || envConfig.WARROOM_PORT || '7860',
   10,
 );
+
+// ── Staff-intake pipeline (Sonke Hub) ───────────────────────────────
+// When PIPELINE_ENABLED=true, the bot intercepts Telegram replies to
+// SonkeSage pipeline deliverable pings (human gates) and forwards the
+// resolution to pipeline-webhook. Requires Supabase URL + service role
+// key so the bot can match telegram_message_id to an open gate and POST
+// the manual path with bearer auth.
+//
+// URL-button taps (inline_keyboard with url=...) do not touch the bot
+// runtime at all; they hit pipeline-webhook directly in the browser.
+// This handler covers the text-reply path only.
+export const PIPELINE_ENABLED =
+  (process.env.PIPELINE_ENABLED || envConfig.PIPELINE_ENABLED || 'false').toLowerCase() === 'true';
+export const PIPELINE_SUPABASE_URL =
+  process.env.PIPELINE_SUPABASE_URL || envConfig.PIPELINE_SUPABASE_URL || '';
+export const PIPELINE_SUPABASE_SERVICE_ROLE_KEY =
+  process.env.PIPELINE_SUPABASE_SERVICE_ROLE_KEY ||
+  envConfig.PIPELINE_SUPABASE_SERVICE_ROLE_KEY ||
+  '';
+export const PIPELINE_WEBHOOK_URL =
+  process.env.PIPELINE_WEBHOOK_URL || envConfig.PIPELINE_WEBHOOK_URL || '';
 

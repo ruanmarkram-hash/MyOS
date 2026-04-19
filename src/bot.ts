@@ -53,6 +53,7 @@ import {
   getSecurityStatus,
   audit,
 } from './security.js';
+import { handlePipelineReply } from './pipeline-handler.js';
 
 // ── Streaming rate limiter ───────────────────────────────────────────
 const globalStreamLastEdit = new Map<string, number>();
@@ -1305,6 +1306,25 @@ export function createBot(): Bot {
       return;
     }
     touchActivity();
+
+    // ── Sonke Hub pipeline reply interceptor ──────────────────────
+    // If this is a Telegram-native reply to one of our pipeline
+    // deliverable pings (human gate) AND the text contains a
+    // pipeline keyword, forward to pipeline-webhook and stop here.
+    // No LLM call, no other routing. Silent no-op otherwise.
+    try {
+      const pipelineReply = await handlePipelineReply({
+        text: ctx.message.text,
+        replyToMessageId: ctx.message.reply_to_message?.message_id,
+      });
+      if (pipelineReply) {
+        await ctx.reply(pipelineReply);
+        return;
+      }
+    } catch (err) {
+      logger.error({ err }, 'pipeline reply handler threw');
+      // Fall through to normal routing on any unexpected error.
+    }
 
     // ── WhatsApp state machine ──────────────────────────────────────
     const state = waState.get(chatIdStr);
