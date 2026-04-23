@@ -41,6 +41,10 @@ const envConfig = readEnvFile([
   'PIPELINE_SUPABASE_SERVICE_ROLE_KEY',
   'PIPELINE_WEBHOOK_URL',
   'PIPELINE_ENABLED',
+  'BRAIN',
+  'OB1_SUPABASE_URL',
+  'MCP_ACCESS_KEY',
+  'OB1_BRAIN_FUNCTION',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -171,6 +175,20 @@ export const DB_ENCRYPTION_KEY =
 // Google API key for Gemini (memory extraction + consolidation)
 export const GOOGLE_API_KEY =
   process.env.GOOGLE_API_KEY || envConfig.GOOGLE_API_KEY || '';
+
+// ── Brain backend ────────────────────────────────────────────────────
+// BRAIN=sqlite (default, legacy path) | BRAIN=ob1 (Supabase + pgvector via OB1 MCP)
+// OB1 writes go to Supabase, reads fall back to SQLite if OB1 throws.
+export type BrainBackend = 'sqlite' | 'ob1';
+export const BRAIN: BrainBackend =
+  ((process.env.BRAIN || envConfig.BRAIN || 'sqlite').toLowerCase() as BrainBackend);
+export const OB1_SUPABASE_URL =
+  process.env.OB1_SUPABASE_URL || envConfig.OB1_SUPABASE_URL || '';
+export const MCP_ACCESS_KEY =
+  process.env.MCP_ACCESS_KEY || envConfig.MCP_ACCESS_KEY || '';
+// Edge function name. Default matches Phase 2 deployment.
+export const OB1_BRAIN_FUNCTION =
+  process.env.OB1_BRAIN_FUNCTION || envConfig.OB1_BRAIN_FUNCTION || 'brain-mcp';
 
 // Streaming strategy for progressive Telegram updates.
 // 'global-throttle' (default): edits a placeholder message with streamed text,

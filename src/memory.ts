@@ -1,4 +1,5 @@
-import { agentObsidianConfig, GOOGLE_API_KEY, MEMORY_NUDGE_INTERVAL_TURNS, MEMORY_NUDGE_INTERVAL_HOURS } from './config.js';
+import { agentObsidianConfig, BRAIN, GOOGLE_API_KEY, MEMORY_NUDGE_INTERVAL_TURNS, MEMORY_NUDGE_INTERVAL_HOURS } from './config.js';
+import { buildMemoryContextOb1, ob1Available } from './brain/adapter.js';
 import {
   batchUpdateMemoryRelevance,
   decayMemories,
@@ -46,6 +47,7 @@ export async function buildMemoryContext(
   const seen = new Set<number>();
   const summaryMap = new Map<number, string>();
   const memLines: string[] = [];
+  let ob1MemoryBlock = '';
 
   // Embed the query for vector search (async, adds ~200ms but gives semantic results)
   let queryEmbedding: number[] | undefined;
@@ -57,68 +59,85 @@ export async function buildMemoryContext(
     }
   }
 
-  // Layer 1: semantic search (embedding) with FTS5/LIKE fallback
-  // NOTE: We do NOT touch memories here. The feedback loop (evaluateMemoryRelevance)
-  // is the only thing that should boost salience/accessed_at. Touching at retrieval
-  // creates a positive feedback loop where noise stays fresh forever.
-  const searched = searchMemories(chatId, userMessage, 5, queryEmbedding);
-  for (const mem of searched) {
-    seen.add(mem.id);
-    summaryMap.set(mem.id, mem.summary);
-    const topics = safeParse(mem.topics);
-    const topicStr = topics.length > 0 ? ` (${topics.join(', ')})` : '';
-    memLines.push(`- [${mem.importance.toFixed(1)}] ${mem.summary}${topicStr}`);
+  // BRAIN=ob1: query Supabase/pgvector via OB1 MCP; on failure fall through to SQLite.
+  if (BRAIN === 'ob1' && ob1Available()) {
+    try {
+      ob1MemoryBlock = await buildMemoryContextOb1(userMessage);
+    } catch (err) {
+      logger.warn({ err }, 'OB1 buildMemoryContext failed, falling back to SQLite');
+      ob1MemoryBlock = '';
+    }
   }
 
-  // Layer 2: recent high-importance memories (deduplicated)
-  const recent = getRecentHighImportanceMemories(chatId, 5);
-  for (const mem of recent) {
-    if (seen.has(mem.id)) continue;
-    seen.add(mem.id);
-    summaryMap.set(mem.id, mem.summary);
-    const topics = safeParse(mem.topics);
-    const topicStr = topics.length > 0 ? ` (${topics.join(', ')})` : '';
-    memLines.push(`- [${mem.importance.toFixed(1)}] ${mem.summary}${topicStr}`);
+  if (!ob1MemoryBlock) {
+    // Layer 1: semantic search (embedding) with FTS5/LIKE fallback
+    // NOTE: We do NOT touch memories here. The feedback loop (evaluateMemoryRelevance)
+    // is the only thing that should boost salience/accessed_at. Touching at retrieval
+    // creates a positive feedback loop where noise stays fresh forever.
+    const searched = searchMemories(chatId, userMessage, 5, queryEmbedding);
+    for (const mem of searched) {
+      seen.add(mem.id);
+      summaryMap.set(mem.id, mem.summary);
+      const topics = safeParse(mem.topics);
+      const topicStr = topics.length > 0 ? ` (${topics.join(', ')})` : '';
+      memLines.push(`- [${mem.importance.toFixed(1)}] ${mem.summary}${topicStr}`);
+    }
+
+    // Layer 2: recent high-importance memories (deduplicated)
+    const recent = getRecentHighImportanceMemories(chatId, 5);
+    for (const mem of recent) {
+      if (seen.has(mem.id)) continue;
+      seen.add(mem.id);
+      summaryMap.set(mem.id, mem.summary);
+      const topics = safeParse(mem.topics);
+      const topicStr = topics.length > 0 ? ` (${topics.join(', ')})` : '';
+      memLines.push(`- [${mem.importance.toFixed(1)}] ${mem.summary}${topicStr}`);
+    }
   }
 
   // Layer 3: consolidation insights (semantic search with LIKE fallback)
+  // Consolidations live only in SQLite; skip when OB1 block is in use.
   const insightLines: string[] = [];
 
-  if (queryEmbedding && queryEmbedding.length > 0) {
-    const candidates = getConsolidationsWithEmbeddings(chatId);
-    if (candidates.length > 0) {
-      const scored = candidates
-        .map((c) => ({ ...c, score: cosineSimilarity(queryEmbedding, c.embedding) }))
-        .filter((s) => s.score > 0.3)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 2);
-      for (const c of scored) {
-        insightLines.push(`- ${c.insight}`);
+  if (!ob1MemoryBlock) {
+    if (queryEmbedding && queryEmbedding.length > 0) {
+      const candidates = getConsolidationsWithEmbeddings(chatId);
+      if (candidates.length > 0) {
+        const scored = candidates
+          .map((c) => ({ ...c, score: cosineSimilarity(queryEmbedding, c.embedding) }))
+          .filter((s) => s.score > 0.3)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 2);
+        for (const c of scored) {
+          insightLines.push(`- ${c.insight}`);
+        }
+      }
+    }
+
+    if (insightLines.length === 0) {
+      const consolidations = searchConsolidations(chatId, userMessage, 2);
+      if (consolidations.length === 0) {
+        const recentInsights = getRecentConsolidations(chatId, 2);
+        for (const c of recentInsights) {
+          insightLines.push(`- ${c.insight}`);
+        }
+      } else {
+        for (const c of consolidations) {
+          insightLines.push(`- ${c.insight}`);
+        }
       }
     }
   }
 
-  if (insightLines.length === 0) {
-    const consolidations = searchConsolidations(chatId, userMessage, 2);
-    if (consolidations.length === 0) {
-      const recentInsights = getRecentConsolidations(chatId, 2);
-      for (const c of recentInsights) {
-        insightLines.push(`- ${c.insight}`);
-      }
-    } else {
-      for (const c of consolidations) {
-        insightLines.push(`- ${c.insight}`);
-      }
-    }
-  }
-
-  if (memLines.length === 0 && insightLines.length === 0 && !agentObsidianConfig) {
+  if (!ob1MemoryBlock && memLines.length === 0 && insightLines.length === 0 && !agentObsidianConfig) {
     return { contextText: '', surfacedMemoryIds: [], surfacedMemorySummaries: new Map() };
   }
 
   const parts: string[] = [];
 
-  if (memLines.length > 0 || insightLines.length > 0) {
+  if (ob1MemoryBlock) {
+    parts.push(ob1MemoryBlock);
+  } else if (memLines.length > 0 || insightLines.length > 0) {
     const blocks: string[] = ['[Memory context]'];
     if (memLines.length > 0) {
       blocks.push('Relevant memories:');

@@ -2,6 +2,8 @@ import { generateContent, parseJsonResponse } from './gemini.js';
 import { cosineSimilarity, embedText } from './embeddings.js';
 import { getMemoriesWithEmbeddings, saveStructuredMemoryAtomic } from './db.js';
 import { logger } from './logger.js';
+import { BRAIN } from './config.js';
+import { ingestMemoryOb1, ob1Available } from './brain/adapter.js';
 
 // Callback for notifying when a high-importance memory is created.
 // Set by bot.ts to send a Telegram notification.
@@ -100,6 +102,27 @@ export async function ingestConversationTurn(
 
     // Clamp importance to valid range
     const importance = Math.max(0, Math.min(1, result.importance));
+
+    // BRAIN=ob1: single-write to OB1 via capture_thought. No SQLite write, no local dedup
+    // (the OB1 thoughts table has a content_fingerprint unique constraint that dedupes server-side).
+    if (BRAIN === 'ob1' && ob1Available()) {
+      const ok = await ingestMemoryOb1({
+        chatId,
+        agentId,
+        summary: result.summary,
+        topics: result.topics ?? [],
+        entities: result.entities ?? [],
+        importance,
+        rawText: userMessage,
+      });
+      if (ok) {
+        logger.info(
+          { chatId, importance, topics: result.topics, summary: result.summary.slice(0, 80), brain: 'ob1' },
+          'Memory ingested to OB1',
+        );
+      }
+      return ok;
+    }
 
     // Generate embedding early so we can check for duplicates before saving
     let embedding: number[] = [];
