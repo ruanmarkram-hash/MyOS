@@ -59,3 +59,7 @@ warroom/avatars/photoreal-backup/
 CLAUDE.md
 agents/*/agent.yaml
 agents/*/CLAUDE.md
+
+# Recipe-local creds — never commit
+vendor/ob1/**/.env.local
+vendor/**/.env.local
