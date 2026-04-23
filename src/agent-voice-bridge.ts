@@ -78,22 +78,17 @@ async function main() {
   try {
     const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
     const sdkEnv: Record<string, string | undefined> = { ...process.env };
-    // Strip env vars set by a wrapping Claude Code session. When the voice
-    // bridge is launched indirectly from inside a Claude Code session (e.g.
-    // during local testing where the Pipecat server was started from a
-    // Claude Code shell), the nested claude subprocess inherits these and
-    // exits with code 1. Clearing them guarantees the SDK spawns a fresh
-    // unrelated Claude Code process regardless of launch context.
-    for (const k of [
-      'CLAUDECODE',
-      'CLAUDE_CODE_ENTRYPOINT',
-      'CLAUDE_CODE_EXECPATH',
-      'CLAUDE_CODE_SSE_PORT',
-      'CLAUDE_CODE_IPC_PORT',
-      'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
-      'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
-    ]) {
-      delete sdkEnv[k];
+    // Strip ALL Claude Code env vars from the child subprocess. When this
+    // process runs inside another Claude Code session (e.g. launched from
+    // Claude Desktop), the parent injects session-scoped vars that break
+    // the child (expired OAuth tokens, anti-nesting guards, host-managed
+    // auth flags). Stripping all CLAUDE* vars forces the child to use its
+    // own ~/.claude/ OAuth credentials which auto-refresh.
+    for (const k of Object.keys(sdkEnv)) {
+      if (k === 'CLAUDECLAW_AGENT_ID') continue;
+      if (k.startsWith('CLAUDE') || k === '__CFBundleIdentifier') {
+        delete sdkEnv[k];
+      }
     }
     if (secrets.CLAUDE_CODE_OAUTH_TOKEN) sdkEnv.CLAUDE_CODE_OAUTH_TOKEN = secrets.CLAUDE_CODE_OAUTH_TOKEN;
     if (secrets.ANTHROPIC_API_KEY) sdkEnv.ANTHROPIC_API_KEY = secrets.ANTHROPIC_API_KEY;

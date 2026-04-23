@@ -433,6 +433,18 @@ function runMigrations(database: Database.Database): void {
   if (!taskColNames.includes('last_status')) {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN last_status TEXT`);
   }
+  if (!taskColNames.includes('model')) {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN model TEXT`);
+  }
+  if (!taskColNames.includes('silent')) {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN silent INTEGER NOT NULL DEFAULT 0`);
+  }
+
+  // Mission tasks: add model column for per-task model selection
+  const missionColNames = (database.prepare(`PRAGMA table_info(mission_tasks)`).all() as Array<{ name: string }>).map((c) => c.name);
+  if (missionColNames.length > 0 && !missionColNames.includes('model')) {
+    database.exec(`ALTER TABLE mission_tasks ADD COLUMN model TEXT`);
+  }
 
   // ── Memory V2 migration ──────────────────────────────────────────────
   // Detect old schema (has 'sector' column but no 'importance') and migrate.
@@ -1080,6 +1092,8 @@ export interface ScheduledTask {
   agent_id: string;
   started_at: number | null;
   last_status: 'success' | 'failed' | 'timeout' | null;
+  model: string | null;
+  silent: number;
 }
 
 export function createScheduledTask(
@@ -1088,12 +1102,22 @@ export function createScheduledTask(
   schedule: string,
   nextRun: number,
   agentId = 'main',
+  model: string | null = null,
+  silent = false,
 ): void {
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
-    `INSERT INTO scheduled_tasks (id, prompt, schedule, next_run, status, created_at, agent_id)
-     VALUES (?, ?, ?, ?, 'active', ?, ?)`,
-  ).run(id, prompt, schedule, nextRun, now, agentId);
+    `INSERT INTO scheduled_tasks (id, prompt, schedule, next_run, status, created_at, agent_id, model, silent)
+     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+  ).run(id, prompt, schedule, nextRun, now, agentId, model, silent ? 1 : 0);
+}
+
+export function setScheduledTaskSilent(id: string, silent: boolean): void {
+  db.prepare(`UPDATE scheduled_tasks SET silent = ? WHERE id = ?`).run(silent ? 1 : 0, id);
+}
+
+export function updateScheduledTaskModel(id: string, model: string | null): void {
+  db.prepare(`UPDATE scheduled_tasks SET model = ? WHERE id = ?`).run(model, id);
 }
 
 export function getDueTasks(agentId = 'main'): ScheduledTask[] {
@@ -1655,7 +1679,7 @@ export function getDashboardTokenStats(chatId: string): DashboardTokenStats {
          COALESCE(SUM(cost_usd), 0) as todayCost,
          COUNT(*) as todayTurns
        FROM token_usage
-       WHERE chat_id = ? AND created_at >= unixepoch('now', 'start of day')`,
+       WHERE chat_id = ? AND created_at >= unixepoch('now', 'localtime', 'start of day', 'utc')`,
     )
     .get(chatId) as { todayInput: number; todayOutput: number; todayCost: number; todayTurns: number };
 
@@ -1809,7 +1833,7 @@ export function getAgentTokenStats(agentId: string): { todayCost: number; todayT
     .prepare(
       `SELECT COALESCE(SUM(cost_usd), 0) as todayCost, COUNT(*) as todayTurns
        FROM token_usage
-       WHERE agent_id = ? AND created_at >= unixepoch('now', 'start of day')`,
+       WHERE agent_id = ? AND created_at >= unixepoch('now', 'localtime', 'start of day', 'utc')`,
     )
     .get(agentId) as { todayCost: number; todayTurns: number };
 
@@ -1947,6 +1971,7 @@ export interface MissionTask {
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
+  model: string | null;
 }
 
 export function createMissionTask(
@@ -1956,12 +1981,13 @@ export function createMissionTask(
   assignedAgent: string | null = null,
   createdBy = 'dashboard',
   priority = 0,
+  model: string | null = null,
 ): void {
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
-    `INSERT INTO mission_tasks (id, title, prompt, assigned_agent, status, created_by, priority, created_at)
-     VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)`,
-  ).run(id, title, prompt, assignedAgent, createdBy, priority, now);
+    `INSERT INTO mission_tasks (id, title, prompt, assigned_agent, status, created_by, priority, created_at, model)
+     VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+  ).run(id, title, prompt, assignedAgent, createdBy, priority, now, model);
 }
 
 export function getUnassignedMissionTasks(): MissionTask[] {

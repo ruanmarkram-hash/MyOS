@@ -14,8 +14,9 @@ import {
 } from './db.js';
 import { logger } from './logger.js';
 import { messageQueue } from './message-queue.js';
-import { runAgent } from './agent.js';
+import { runAgentWithRetry } from './agent.js';
 import { formatForTelegram, splitMessage } from './bot.js';
+import { classifyTaskModel, modelTierLabel } from './task-model-classifier.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -77,7 +78,9 @@ async function runDueTasks(): Promise<void> {
     runningTaskIds.add(task.id);
     markTaskRunning(task.id, nextRun);
 
-    logger.info({ taskId: task.id, prompt: task.prompt.slice(0, 60) }, 'Firing task');
+    // Resolve model: use stored model, or auto-classify from prompt
+    const taskModel = task.model ?? classifyTaskModel(task.prompt);
+    logger.info({ taskId: task.id, prompt: task.prompt.slice(0, 60), model: taskModel }, 'Firing task');
 
     // Route through the message queue so scheduled tasks wait for any
     // in-flight user message to finish before running. This prevents
@@ -88,10 +91,16 @@ async function runDueTasks(): Promise<void> {
       const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
 
       try {
-        await sender(`Scheduled task running: "${task.prompt.slice(0, 80)}${task.prompt.length > 80 ? '...' : ''}"`);
+        const isSilent = !!task.silent;
 
-        // Run as a fresh agent call (no session — scheduled tasks are autonomous)
-        const result = await runAgent(task.prompt, undefined, () => {}, undefined, undefined, abortController, undefined, agentMcpAllowlist);
+        if (!isSilent) {
+          await sender(`Scheduled task running [${modelTierLabel(taskModel)}]: "${task.prompt.slice(0, 70)}${task.prompt.length > 70 ? '...' : ''}"`);
+        }
+
+        // Run as a fresh agent call (no session — scheduled tasks are autonomous).
+        // Use runAgentWithRetry so transient failures (auth refresh, rate limits)
+        // get retried with backoff instead of immediately failing.
+        const result = await runAgentWithRetry(task.prompt, undefined, () => {}, undefined, taskModel, abortController, undefined, undefined, undefined, agentMcpAllowlist);
         clearTimeout(timeout);
 
         if (result.aborted) {
@@ -102,8 +111,16 @@ async function runDueTasks(): Promise<void> {
         }
 
         const text = result.text?.trim() || 'Task completed with no output.';
-        for (const chunk of splitMessage(formatForTelegram(text))) {
-          await sender(chunk);
+
+        // Silent tasks only send to Telegram when there's something worth
+        // reporting (i.e. output is NOT just "OK" or empty).
+        const isOkOutput = /^OK\.?$/i.test(text);
+        if (!isSilent || !isOkOutput) {
+          for (const chunk of splitMessage(formatForTelegram(text))) {
+            await sender(chunk);
+          }
+        } else {
+          logger.info({ taskId: task.id }, 'Silent task returned OK, suppressing Telegram');
         }
 
         // Inject task output into the active chat session so user replies have context
@@ -145,7 +162,9 @@ async function runDueMissionTasks(): Promise<void> {
   if (runningTaskIds.has(missionKey)) return;
   runningTaskIds.add(missionKey);
 
-  logger.info({ missionId: mission.id, title: mission.title }, 'Running mission task');
+  // Resolve model: use stored model, or auto-classify from prompt
+  const missionModel = mission.model ?? classifyTaskModel(mission.prompt);
+  logger.info({ missionId: mission.id, title: mission.title, model: missionModel }, 'Running mission task');
 
   const chatId = ALLOWED_CHAT_ID || 'mission';
   messageQueue.enqueue(chatId, async () => {
@@ -153,7 +172,7 @@ async function runDueMissionTasks(): Promise<void> {
     const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
 
     try {
-      const result = await runAgent(mission.prompt, undefined, () => {}, undefined, undefined, abortController, undefined, agentMcpAllowlist);
+      const result = await runAgentWithRetry(mission.prompt, undefined, () => {}, undefined, missionModel, abortController, undefined, undefined, undefined, agentMcpAllowlist);
       clearTimeout(timeout);
 
       if (result.aborted) {

@@ -186,6 +186,27 @@ export async function runAgent(
   const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
 
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
+  // Strip ALL Claude Code env vars from the child subprocess. When this
+  // process runs inside another Claude Code session (e.g. launched from
+  // Claude Desktop), the parent injects session-scoped vars that break
+  // the child:
+  //   - CLAUDECODE / CLAUDE_CODE_ENTRYPOINT → anti-nesting guard (exit 1)
+  //   - CLAUDE_CODE_OAUTH_TOKEN → session-scoped token that expires,
+  //     causing 401 auth failures in scheduled tasks
+  //   - CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST → tells CLI to expect auth
+  //     from a host process that doesn't exist for the child
+  //
+  // By stripping all CLAUDE* vars, the child subprocess falls back to its
+  // own ~/.claude/ OAuth credentials (from `claude login`), which auto-
+  // refresh and stay valid indefinitely.
+  for (const k of Object.keys(sdkEnv)) {
+    if (k === 'CLAUDECLAW_AGENT_ID') continue; // preserve our own agent marker
+    if (k.startsWith('CLAUDE') || k === '__CFBundleIdentifier') {
+      delete sdkEnv[k];
+    }
+  }
+  // Re-inject only explicitly configured auth from .env (not from parent env).
+  // If neither is set, the CLI uses its own OAuth from ~/.claude/.
   if (secrets.CLAUDE_CODE_OAUTH_TOKEN) {
     sdkEnv.CLAUDE_CODE_OAUTH_TOKEN = secrets.CLAUDE_CODE_OAUTH_TOKEN;
   }
