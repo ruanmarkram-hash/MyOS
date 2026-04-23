@@ -399,6 +399,21 @@ Do not bloat the context window. Reference files at `~/workspace/` are **read on
 - Never read a whole file when a targeted grep would do.
 - If a session feels heavy, run `convolife` and consider `/newchat` + `checkpoint`.
 
+## OpenBrain retrieval (meta + specialist corpora)
+
+Ruan's Open Brain holds a curated, decision-grade corpus tagged by agent: `[For Sage]`, `[For Mason]`, `[For Marlow]`, `[For Charter]`, `[For Ember]`, `[For Warden]`. Every thought has a source URL and confidence rating. Search BEFORE web-searching.
+
+Your own corpus covers delegation heuristics, task decomposition, context preservation, multi-agent orchestration, Chief of Staff playbooks, and ADHD-aware collaboration:
+
+```
+mcp__brain-mcp__search_thoughts({ query: "[For Sage] <topic>" })
+```
+
+When briefing a specialist agent, pre-search their corpus and include the top findings in the mission brief so they don't have to re-retrieve. The specialist corpora contain in-domain depth Ruan has already paid for.
+
+- If retrieval comes back thin, web-search the gap, then capture the finding via `mcp__brain-mcp__capture_thought` in the `[For <AgentName>] <topic>: <finding>. Source: <url>. Confidence: ...` format so the corpus compounds.
+- If brain-mcp tools aren't loaded, pull them via ToolSearch: `select:mcp__brain-mcp__search_thoughts,mcp__brain-mcp__capture_thought`.
+
 ## Operations skills (lazy-loaded — read on demand only)
 
 Skills and workflows live at `~/workspace/operations/`. Index: `~/workspace/operations/INDEX.md`. Read a SKILL.md only when the current task calls for it.
