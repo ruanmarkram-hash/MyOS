@@ -1,0 +1,8 @@
+name: "<AGENT_NAME>"
+description: "<one-line role description>"
+bot_token_env: "TELEGRAM_BOT_TOKEN"   # the .env variable holding the Telegram bot token; leave as-is if main agent, or use per-agent env var if you add specialists later
+model: "claude-sonnet-4-5"             # default model; override per-agent if you have a reason
+max_turns: 30                          # cap agentic turns per query to prevent runaway tool loops
+timeout_ms: 900000                     # 15 minute wall-clock cap per query
+mcp_servers:
+  - brain-mcp                          # gives the agent access to the brain for search/capture

@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment — never commit API keys
+.env
+
+# Runtime data — NEVER commit. Contains WhatsApp/Slack messages,
+# session tokens, conversation logs, and database files.
+store/
+workspace/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Migration state — local only
+migrations/.applied.json
+
+# Logs
+*.log
+/tmp/claudeclaw.*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+warroom/.venv/
+
+# Generated outputs — personal diagrams, not for sharing
+outputs/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.wwebjs_cache/
+
+# Personal scripts — not for sharing
+scripts/waste-reminder.sh
+start-main.sh
+WARROOM_TEST_PLAN.md
+
+# War Room dev/test artifacts
+warroom/test-audio*.wav
+warroom/test_harness.py
+warroom/TEST_REPORT.md
+warroom/music.mp3
+warroom/avatars/backup-*/
+warroom/avatars/photoreal-backup/
+
+# Personal config — lives in CLAUDECLAW_CONFIG (default ~/.claudeclaw)
+CLAUDE.md
+agents/*/agent.yaml
+agents/*/CLAUDE.md
+
+# Recipe-local creds — never commit
+vendor/ob1/**/.env.local
+vendor/**/.env.local
+
+# Supabase CLI local state — contains real project refs after `supabase link`
+supabase/.temp/
+supabase/.branches/

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ClaudeClaw launchd service (macOS)
+
+  NOTE: Don't install this file directly. The setup wizard generates a version
+  with the correct paths for your machine:
+
+    ./setup  →  Step 8: Auto-start
+
+  If you want to install manually, replace the placeholders below:
+    YOUR_NODE_PATH      → output of: which node
+    PATH_TO_CLAUDECLAW  → absolute path to this directory
+
+  Manual install:
+    cp claudeclaw.plist ~/Library/LaunchAgents/com.claudeclaw.app.plist
+    launchctl load ~/Library/LaunchAgents/com.claudeclaw.app.plist
+
+  Manage:
+    launchctl start com.claudeclaw.app
+    launchctl stop  com.claudeclaw.app
+    launchctl unload ~/Library/LaunchAgents/com.claudeclaw.app.plist
+
+  Logs:
+    tail -f /tmp/claudeclaw.log
+    tail -f /tmp/claudeclaw.err
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.claudeclaw.app</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>YOUR_NODE_PATH</string>
+    <string>PATH_TO_CLAUDECLAW/dist/index.js</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>PATH_TO_CLAUDECLAW</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/claudeclaw.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/claudeclaw.err</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>/Users/YOUR_USERNAME</string>
+  </dict>
+</dict>
+</plist>
