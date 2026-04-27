@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'child_process';
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
@@ -170,6 +171,28 @@ async function* singleTurn(text: string): AsyncGenerator<{
  * @param onTyping   Called every TYPING_REFRESH_MS while waiting — sends typing action to Telegram
  * @param onProgress Called when sub-agents start/complete — sends status updates to Telegram
  */
+// Resolve the Claude Code executable path once at module load.
+// SDK v0.0.19+ no longer bundles cli.js — must point to the installed binary.
+function resolveClaudeExecutable(): string {
+  if (process.env.CLAUDE_EXECUTABLE) return process.env.CLAUDE_EXECUTABLE;
+  try {
+    return execFileSync('which', ['claude'], { encoding: 'utf8' }).trim();
+  } catch {
+    // Fall back to common npm-global locations
+    const candidates = [
+      path.join(process.env.HOME ?? '/Users', '.npm-global', 'bin', 'claude'),
+      '/usr/local/bin/claude',
+      '/opt/homebrew/bin/claude',
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c)) return c;
+    }
+    throw new Error('Claude Code executable not found. Set CLAUDE_EXECUTABLE in .env or ensure claude is on PATH.');
+  }
+}
+
+const CLAUDE_EXECUTABLE = resolveClaudeExecutable();
+
 export async function runAgent(
   message: string,
   sessionId: string | undefined,
@@ -274,6 +297,9 @@ export async function runAgent(
 
         // Abort support — signals the SDK to kill the subprocess
         ...(abortController ? { abortController } : {}),
+
+        // SDK v0.0.19+ requires an explicit path to the claude binary
+        pathToClaudeCodeExecutable: CLAUDE_EXECUTABLE,
       },
     })) {
       const ev = event as Record<string, unknown>;
