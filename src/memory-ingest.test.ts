@@ -19,6 +19,10 @@ vi.mock('./logger.js', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock('./config.js', () => ({
+  BRAIN: 'sqlite',
+}));
+
 import { ingestConversationTurn } from './memory-ingest.js';
 import { generateContent, parseJsonResponse } from './gemini.js';
 import { saveStructuredMemoryAtomic } from './db.js';

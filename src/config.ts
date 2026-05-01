@@ -41,6 +41,7 @@ const envConfig = readEnvFile([
   'PIPELINE_SUPABASE_SERVICE_ROLE_KEY',
   'PIPELINE_WEBHOOK_URL',
   'PIPELINE_ENABLED',
+  'LLM_PROVIDER',
   'BRAIN',
   'OB1_SUPABASE_URL',
   'MCP_ACCESS_KEY',
@@ -176,6 +177,10 @@ export const DB_ENCRYPTION_KEY =
 export const GOOGLE_API_KEY =
   process.env.GOOGLE_API_KEY || envConfig.GOOGLE_API_KEY || '';
 
+// LLM provider for agent execution. Phase 1 supports Claude only.
+export const LLM_PROVIDER =
+  process.env.LLM_PROVIDER || envConfig.LLM_PROVIDER || 'claude';
+
 // ── Brain backend ────────────────────────────────────────────────────
 // BRAIN=sqlite (default, legacy path) | BRAIN=ob1 (Supabase + pgvector via OB1 MCP)
 // OB1 writes go to Supabase, reads fall back to SQLite if OB1 throws.
@@ -294,4 +299,3 @@ export const PIPELINE_SUPABASE_SERVICE_ROLE_KEY =
   '';
 export const PIPELINE_WEBHOOK_URL =
   process.env.PIPELINE_WEBHOOK_URL || envConfig.PIPELINE_WEBHOOK_URL || '';
-
