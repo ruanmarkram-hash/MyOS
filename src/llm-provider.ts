@@ -1,7 +1,8 @@
 import { AgentError } from './errors.js';
 import { ClaudeProvider } from './llm-providers/claude.js';
+import { CodexProvider } from './llm-providers/codex.js';
 
-export type LlmProviderName = 'claude';
+export type LlmProviderName = 'claude' | 'codex';
 
 export interface McpStdioConfig {
   command: string;
@@ -63,18 +64,20 @@ export interface LlmProvider {
 
 const providers: Record<LlmProviderName, LlmProvider> = {
   claude: new ClaudeProvider(),
+  codex: new CodexProvider(),
 };
 
 export function normalizeLlmProvider(value: string | null | undefined): LlmProviderName {
   const normalized = (value ?? 'claude').trim().toLowerCase();
   if (normalized === '' || normalized === 'claude') return 'claude';
+  if (normalized === 'codex') return 'codex';
 
   throw new AgentError('unknown', {
     shouldRetry: false,
     shouldNewChat: false,
     shouldSwitchModel: false,
     retryAfterMs: 0,
-    userMessage: `Unsupported LLM_PROVIDER "${value}". Supported providers: claude.`,
+    userMessage: `Unsupported LLM_PROVIDER "${value}". Supported providers: claude, codex.`,
   });
 }
 

@@ -177,7 +177,7 @@ export const DB_ENCRYPTION_KEY =
 export const GOOGLE_API_KEY =
   process.env.GOOGLE_API_KEY || envConfig.GOOGLE_API_KEY || '';
 
-// LLM provider for agent execution. Phase 1 supports Claude only.
+// LLM provider for agent execution. Claude remains the production default.
 export const LLM_PROVIDER =
   process.env.LLM_PROVIDER || envConfig.LLM_PROVIDER || 'claude';
 

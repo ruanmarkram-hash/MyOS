@@ -20,10 +20,10 @@ describe('LLM provider selection', () => {
   });
 
   it('rejects unsupported providers without retrying', () => {
-    expect(() => getLlmProvider('codex')).toThrow(AgentError);
+    expect(() => getLlmProvider('openai')).toThrow(AgentError);
 
     try {
-      getLlmProvider('codex');
+      getLlmProvider('openai');
     } catch (err) {
       expect(err).toBeInstanceOf(AgentError);
       expect((err as AgentError).recovery.shouldRetry).toBe(false);
@@ -31,7 +31,13 @@ describe('LLM provider selection', () => {
     }
   });
 
-  it('reports claude as the only Phase 1 provider', () => {
-    expect(getSupportedLlmProviders()).toEqual(['claude']);
+  it('accepts LLM_PROVIDER=codex case-insensitively', () => {
+    expect(normalizeLlmProvider('codex')).toBe('codex');
+    expect(normalizeLlmProvider('Codex')).toBe('codex');
+    expect(getLlmProvider(' CODEX ').name).toBe('codex');
+  });
+
+  it('reports supported Phase 2 providers', () => {
+    expect(getSupportedLlmProviders()).toEqual(['claude', 'codex']);
   });
 });
