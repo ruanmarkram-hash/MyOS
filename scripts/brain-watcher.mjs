@@ -1,9 +1,14 @@
 #!/usr/bin/env node
-// Unified brain watcher — runs two passes per tick:
+// Unified brain watcher — runs three passes per tick:
 //   1. CLAUDE CODE pass: scans ~/.claude/projects/**/*.jsonl for recent edits,
 //      parses turn pairs, extracts via Gemini Flash, inserts into OB1.
 //      Dedupe via claude_code_turn_cache (raw user+asst fingerprint).
-//   2. VAULT pass: scans ~/workspace/**/*.md for recent edits, chunks each
+//   2. CODEX pass: scans ~/.codex/archived_sessions/rollout-*.jsonl for recent
+//      edits, parses Codex response_item turn pairs, extracts via the same
+//      Gemini extractor, inserts into OB1 with source: 'codex'. Shares the
+//      same turn-cache table (fingerprint-keyed) with the Claude pass so
+//      duplicate captures from cross-engine work get deduped automatically.
+//   3. VAULT pass: scans ~/workspace/**/*.md for recent edits, chunks each
 //      file, embeds, inserts into OB1. Dedupe via content_fingerprint on
 //      thoughts table (the same pre-check pattern the one-off import uses).
 //
@@ -15,10 +20,12 @@ import { join, basename, relative } from 'node:path';
 import { homedir } from 'node:os';
 import Database from 'better-sqlite3';
 import pg from 'pg';
+import { parseTurnPairs, stripInjectedContext } from './brain-watcher-parser.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
-const ROOT = '/Users/sagecos1/HQ';
+const ROOT = '/Users/sc/HQ';
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
+const CODEX_SESSIONS_DIR = join(homedir(), '.codex', 'archived_sessions');
 const VAULT_DIR = join(homedir(), 'workspace');
 const STATE_DB = join(ROOT, 'store', 'claudeclaw.db');
 const LOG_PATH = join(ROOT, 'logs', 'brain-watcher.log');
@@ -118,7 +125,7 @@ async function runPool(items, worker, n) {
 
 function isJsonlIncluded(folderName) {
   if (folderName.includes('claude-worktrees')) return false;
-  const stripped = folderName.replace(/^-Users-sagecos1-?-?/, '').replace(/^-/, '');
+  const stripped = folderName.replace(/^-Users-[^-]+-?-?/, '').replace(/^-/, '');
   if (stripped === '') return true;
   if (/^HQ(-|$)/.test(stripped)) return true;
   if (/^sonke-hub/.test(stripped)) return true;
@@ -145,49 +152,11 @@ function discoverRecentJsonl() {
   return out;
 }
 
-function eventText(evt) {
-  const msg = evt?.message;
-  if (!msg) return '';
-  const c = msg.content;
-  if (typeof c === 'string') return c;
-  if (Array.isArray(c)) return c.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n');
-  return '';
-}
+// parseTurnPairs / stripInjectedContext / eventText live in
+// ./brain-watcher-parser.mjs so the parser is unit-testable without
+// triggering this script's top-level sqlite / pg / env initialisation.
 
-function stripInjectedContext(text) {
-  if (!text) return text;
-  return text.replace(/\[(Memory context|Team activity[^\]]*|Conversation history recall|Obsidian context)\][\s\S]*?\[End[^\]]+\]\s*/g, '').trim();
-}
-
-function parseTurnPairs(filepath) {
-  const pairs = [];
-  let raw; try { raw = readFileSync(filepath, 'utf-8'); } catch { return { pairs, firstTs: null }; }
-  let userBuf = [], asstBuf = [], firstTs = null, lastState = null;
-  function flush() {
-    if (!userBuf.length || !asstBuf.length) return;
-    const user = stripInjectedContext(userBuf.join('\n').trim());
-    const asst = asstBuf.join('\n').trim();
-    if (user && asst) pairs.push({ user, asst });
-  }
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    let o; try { o = JSON.parse(line); } catch { continue; }
-    if (!firstTs && o.timestamp) firstTs = o.timestamp;
-    const t = o.type;
-    if (t === 'user') {
-      if (lastState === 'assistant') { flush(); userBuf = []; asstBuf = []; }
-      const tx = eventText(o); if (tx) userBuf.push(tx);
-      lastState = 'user';
-    } else if (t === 'assistant') {
-      const tx = eventText(o); if (tx) asstBuf.push(tx);
-      lastState = 'assistant';
-    }
-  }
-  flush();
-  return { pairs, firstTs };
-}
-
-const EXTRACTION_PROMPT = `You are distilling one conversation turn between a user and a Claude Code AI coding assistant into a single long-term memory.
+const EXTRACTION_PROMPT = `You are distilling one conversation turn between a user and an AI coding/agent assistant into a single long-term memory.
 
 Return JSON with this exact shape:
 {"skip": boolean, "importance": number 0-1, "summary": "1-2 sentence fact or rule (no 'the user said...')", "topics": ["topic1", "topic2"]}
@@ -275,7 +244,139 @@ async function processJsonlFile({ folder, path, mtimeSec }) {
 }
 
 // ╔═════════════════════════════════════════════════════════════════╗
-// ║ PASS 2: WORKSPACE VAULT                                           ║
+// ║ PASS 2: CODEX ARCHIVED SESSIONS                                   ║
+// ╚═════════════════════════════════════════════════════════════════╝
+
+function discoverRecentCodexJsonl() {
+  const cutoff = Date.now() - MTIME_LOOKBACK_MS;
+  const out = [];
+  let entries;
+  try { entries = readdirSync(CODEX_SESSIONS_DIR); } catch { return out; }
+  for (const name of entries) {
+    if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
+    const path = join(CODEX_SESSIONS_DIR, name);
+    let st; try { st = statSync(path); } catch { continue; }
+    if (st.mtimeMs < cutoff) continue;
+    out.push({ path, mtimeSec: Math.floor(st.mtimeMs / 1000) });
+  }
+  return out;
+}
+
+// Codex JSONL schema (codex-cli 0.128):
+//   { type: 'session_meta', payload: { id, timestamp, cwd, ... } }   // 1 per file
+//   { type: 'turn_context', payload: {...} }                          // 1 per file
+//   { type: 'response_item', payload: { type: 'message', role, content: [{type, text}, ...] } }
+//   { type: 'event_msg',     payload: { type, ... } }                 // task_started, etc.
+//
+// Roles seen on response_item.message: 'developer' (system scaffolding — skip),
+// 'user', 'assistant'. Content blocks have type 'input_text' / 'output_text'
+// (the actual prose) plus reasoning/tool blocks we ignore.
+function codexMessageText(msgPayload) {
+  if (!msgPayload || msgPayload.type !== 'message') return '';
+  const content = msgPayload.content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((c) => c && typeof c.text === 'string')
+    .map((c) => c.text)
+    .join('\n')
+    .trim();
+}
+
+// Codex 'user' messages frequently contain large auto-injected blocks
+// (environment_context, user_instructions, sandbox/permissions notes). These
+// are scaffolding, not real user prompts — strip them so extraction sees the
+// actual question.
+const CODEX_SCAFFOLD_RE = /<(environment_context|user_instructions|app-context|permissions instructions|collaboration_mode|skills_instructions|plugins_instructions)>[\s\S]*?<\/\1>\s*/g;
+function stripCodexScaffold(text) {
+  if (!text) return text;
+  return text.replace(CODEX_SCAFFOLD_RE, '').trim();
+}
+
+function parseCodexTurnPairs(filepath) {
+  const pairs = [];
+  let raw; try { raw = readFileSync(filepath, 'utf-8'); } catch { return { pairs, firstTs: null, sessionId: null }; }
+  let userBuf = [], asstBuf = [], firstTs = null, lastState = null, sessionId = null;
+  function flush() {
+    if (!userBuf.length || !asstBuf.length) return;
+    const user = stripInjectedContext(stripCodexScaffold(userBuf.join('\n').trim()));
+    const asst = asstBuf.join('\n').trim();
+    if (user && asst) pairs.push({ user, asst });
+  }
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let o; try { o = JSON.parse(line); } catch { continue; }
+    if (!firstTs && o.timestamp) firstTs = o.timestamp;
+    if (o.type === 'session_meta' && o.payload?.id) sessionId = o.payload.id;
+    if (o.type !== 'response_item') continue;
+    const p = o.payload;
+    if (!p || p.type !== 'message') continue;
+    const role = p.role;
+    if (role === 'user') {
+      if (lastState === 'assistant') { flush(); userBuf = []; asstBuf = []; }
+      const tx = codexMessageText(p);
+      if (tx) userBuf.push(tx);
+      lastState = 'user';
+    } else if (role === 'assistant') {
+      const tx = codexMessageText(p);
+      if (tx) { asstBuf.push(tx); lastState = 'assistant'; }
+    }
+    // role === 'developer' / other → ignored (system scaffolding)
+  }
+  flush();
+  return { pairs, firstTs, sessionId };
+}
+
+const codexCounters = { files: 0, newTurns: 0, cached: 0, short: 0, lowImp: 0, extractFail: 0, embedFail: 0, inserted: 0, deduped: 0, errors: 0 };
+
+async function processCodexJsonlFile({ path, mtimeSec }) {
+  codexCounters.files++;
+  const { pairs, firstTs, sessionId: payloadSid } = parseCodexTurnPairs(path);
+  // Prefer the session id from session_meta payload; fall back to filename UUID.
+  const sessionId = payloadSid || basename(path, '.jsonl').replace(/^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-/, '');
+  const fileTsSec = firstTs ? Math.floor(new Date(firstTs).getTime() / 1000) : mtimeSec;
+
+  for (const p of pairs) {
+    const turnFp = fingerprint(`${p.user}\n---\n${p.asst}`);
+    if (stmtCacheGet.get(turnFp)) { codexCounters.cached++; continue; }
+    codexCounters.newTurns++;
+
+    if (p.user.length + p.asst.length < MIN_TURN_CHARS) {
+      stmtCachePut.run(turnFp, sessionId, Math.floor(Date.now() / 1000), 0);
+      codexCounters.short++;
+      continue;
+    }
+    const ext = await extract(p.user, p.asst);
+    if (!ext || ext.skip || typeof ext.importance !== 'number' || ext.importance < IMPORTANCE_FLOOR || !ext.summary || ext.summary.length < 10) {
+      stmtCachePut.run(turnFp, sessionId, Math.floor(Date.now() / 1000), 0);
+      if (!ext) codexCounters.extractFail++; else codexCounters.lowImp++;
+      continue;
+    }
+
+    try {
+      const result = await insertThought({
+        content: ext.summary,
+        metadata: {
+          source: 'codex',
+          session_id: sessionId,
+          topics: ext.topics || [],
+          importance: ext.importance,
+          type: 'codex_watcher',
+        },
+        createdAtSec: fileTsSec,
+      });
+      stmtCachePut.run(turnFp, sessionId, Math.floor(Date.now() / 1000), result === 'inserted' ? 1 : 0);
+      if (result === 'inserted') codexCounters.inserted++;
+      else if (result === 'duplicate') codexCounters.deduped++;
+      else codexCounters.embedFail++;
+    } catch (err) {
+      codexCounters.errors++;
+      log(`codex insert error ${sessionId}: ${err.message}`);
+    }
+  }
+}
+
+// ╔═════════════════════════════════════════════════════════════════╗
+// ║ PASS 3: WORKSPACE VAULT                                           ║
 // ╚═════════════════════════════════════════════════════════════════╝
 
 function walkRecentMd(dir, cutoff, out = []) {
@@ -372,16 +473,19 @@ async function main() {
 
   // Pass 1: Claude Code JSONL
   const jsonlFiles = discoverRecentJsonl();
-  log(`tick start | jsonl=${jsonlFiles.length}`);
+  // Pass 2: Codex archived sessions
+  const codexFiles = discoverRecentCodexJsonl();
+  log(`tick start | claude=${jsonlFiles.length} codex=${codexFiles.length}`);
   if (jsonlFiles.length > 0) await runPool(jsonlFiles, processJsonlFile, JSONL_CONCURRENCY);
+  if (codexFiles.length > 0) await runPool(codexFiles, processCodexJsonlFile, JSONL_CONCURRENCY);
 
-  // Pass 2: workspace vault
+  // Pass 3: workspace vault
   const mdFiles = walkRecentMd(VAULT_DIR, cutoff);
   log(`vault=${mdFiles.length}`);
   if (mdFiles.length > 0) await runPool(mdFiles, processVaultFile, VAULT_CONCURRENCY);
 
   const elapsed = ((Date.now() - started) / 1000).toFixed(1);
-  log(`done in ${elapsed}s | jsonl: files=${jsonlCounters.files} newTurns=${jsonlCounters.newTurns} inserted=${jsonlCounters.inserted} cached=${jsonlCounters.cached} embedFail=${jsonlCounters.embedFail} errors=${jsonlCounters.errors} | vault: files=${vaultCounters.files} chunks=${vaultCounters.chunks} inserted=${vaultCounters.inserted} dup=${vaultCounters.dup} embedFail=${vaultCounters.embedFail}`);
+  log(`done in ${elapsed}s | claude: files=${jsonlCounters.files} newTurns=${jsonlCounters.newTurns} inserted=${jsonlCounters.inserted} cached=${jsonlCounters.cached} embedFail=${jsonlCounters.embedFail} errors=${jsonlCounters.errors} | codex: files=${codexCounters.files} newTurns=${codexCounters.newTurns} inserted=${codexCounters.inserted} cached=${codexCounters.cached} embedFail=${codexCounters.embedFail} errors=${codexCounters.errors} | vault: files=${vaultCounters.files} chunks=${vaultCounters.chunks} inserted=${vaultCounters.inserted} dup=${vaultCounters.dup} embedFail=${vaultCounters.embedFail}`);
 
   await pool.end();
   sqlite.close();
