@@ -17,6 +17,7 @@ import { messageQueue } from './message-queue.js';
 import { runAgentWithRetry } from './agent.js';
 import { formatForTelegram, splitMessage } from './bot.js';
 import { classifyTaskModel, modelTierLabel } from './task-model-classifier.js';
+import { tryExtractShellCommand, runShellCommand } from './shell-task.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -92,6 +93,51 @@ async function runDueTasks(): Promise<void> {
 
       try {
         const isSilent = !!task.silent;
+
+        // Fast path: silent shell-only tasks bypass the agent entirely.
+        // Avoids the LLM-spawn fragility that was killing overnight heartbeats.
+        // See src/shell-task.ts for the rationale and bypass criteria.
+        const bypass = isSilent ? tryExtractShellCommand(task.prompt) : null;
+        if (bypass) {
+          clearTimeout(timeout);
+          logger.info({ taskId: task.id, kind: bypass.kind, cmd: bypass.command.slice(0, 80) }, 'Shell-bypass: running scheduled task without agent');
+          const shell = await runShellCommand(bypass.command);
+
+          // Compose the "text" the rest of the pipeline expects. On success
+          // we emit stdout (or "OK" if nothing printed). On failure we emit
+          // a clear error so the user sees it on Telegram.
+          let text: string;
+          let status: 'success' | 'failed' | 'timeout';
+          if (shell.timedOut) {
+            text = `⏱ Shell command timed out (60s): ${bypass.command}\n${shell.stderr}`.trim();
+            status = 'timeout';
+          } else if (shell.exitCode !== 0) {
+            text = `❌ Shell command exit ${shell.exitCode}: ${bypass.command}\n${shell.stderr || shell.stdout}`.trim();
+            status = 'failed';
+          } else {
+            text = shell.stdout.length > 0 ? shell.stdout : 'OK';
+            status = 'success';
+          }
+
+          const isOkOutput = /^OK\.?$/i.test(text);
+          if (!isSilent || !isOkOutput) {
+            for (const chunk of splitMessage(formatForTelegram(text))) {
+              await sender(chunk);
+            }
+          } else {
+            logger.info({ taskId: task.id }, 'Shell-bypass returned OK, suppressing Telegram');
+          }
+
+          if (ALLOWED_CHAT_ID) {
+            const activeSession = getSession(ALLOWED_CHAT_ID, schedulerAgentId);
+            logConversationTurn(ALLOWED_CHAT_ID, 'user', `[Scheduled task]: ${task.prompt}`, activeSession ?? undefined, schedulerAgentId);
+            logConversationTurn(ALLOWED_CHAT_ID, 'assistant', text, activeSession ?? undefined, schedulerAgentId);
+          }
+
+          updateTaskAfterRun(task.id, nextRun, text.slice(0, 500), status);
+          logger.info({ taskId: task.id, nextRun, status }, 'Shell-bypass complete, next run scheduled');
+          return;
+        }
 
         if (!isSilent) {
           await sender(`Scheduled task running [${modelTierLabel(taskModel)}]: "${task.prompt.slice(0, 70)}${task.prompt.length > 70 ? '...' : ''}"`);
