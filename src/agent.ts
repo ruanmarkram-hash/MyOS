@@ -2,6 +2,7 @@ import { LLM_PROVIDER } from './config.js';
 import { AgentError } from './errors.js';
 import { getLlmProvider } from './llm-provider.js';
 import { logger } from './logger.js';
+import { resolveFallbackModelsForProvider, resolveModelForProvider } from './model-router.js';
 import type { AgentProgressEvent, AgentResult } from './llm-provider.js';
 
 export type {
@@ -11,6 +12,21 @@ export type {
   UsageInfo,
 } from './llm-provider.js';
 export { loadMcpServers } from './llm-providers/claude.js';
+
+function looksLikeCodexSessionId(sessionId: string | undefined): boolean {
+  // Codex thread ids are UUIDv7-style ids such as 019de375-ca31-...
+  // Claude Code session ids in this runtime are UUIDv4-style. When flipping
+  // providers, never feed a Codex session id to Claude's resume path.
+  return /^019[0-9a-f]{5}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId ?? '');
+}
+
+function sessionIdForProvider(
+  providerName: ReturnType<typeof getLlmProvider>['name'],
+  sessionId: string | undefined,
+): string | undefined {
+  if (providerName === 'claude' && looksLikeCodexSessionId(sessionId)) return undefined;
+  return sessionId;
+}
 
 /**
  * Run a single user message through the configured LLM provider.
@@ -30,12 +46,13 @@ export async function runAgent(
   mcpAllowlist?: string[],
 ): Promise<AgentResult> {
   const provider = getLlmProvider(LLM_PROVIDER);
+  const providerModel = resolveModelForProvider(provider.name, model);
   return provider.runAgent({
     message,
-    sessionId,
+    sessionId: sessionIdForProvider(provider.name, sessionId),
     onTyping,
     onProgress,
-    model,
+    model: providerModel,
     abortController,
     onStreamText,
     mcpAllowlist,
@@ -70,13 +87,15 @@ export async function runAgentWithRetry(
   mcpAllowlist?: string[],
 ): Promise<AgentResult> {
   let lastError: AgentError | undefined;
+  const provider = getLlmProvider(LLM_PROVIDER);
+  const resolvedFallbackModels = resolveFallbackModelsForProvider(provider.name, fallbackModels);
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const currentModel =
         attempt === 0 ? model
-        : lastError?.recovery.shouldSwitchModel && fallbackModels?.length
-          ? fallbackModels[Math.min(attempt - 1, fallbackModels.length - 1)]
+        : lastError?.recovery.shouldSwitchModel && resolvedFallbackModels?.length
+          ? resolvedFallbackModels[Math.min(attempt - 1, resolvedFallbackModels.length - 1)]
           : model;
 
       return await runAgent(

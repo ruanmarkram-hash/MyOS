@@ -42,6 +42,9 @@ const envConfig = readEnvFile([
   'PIPELINE_WEBHOOK_URL',
   'PIPELINE_ENABLED',
   'LLM_PROVIDER',
+  'CODEX_HAIKU_MODEL',
+  'CODEX_SONNET_MODEL',
+  'CODEX_OPUS_MODEL',
   'BRAIN',
   'OB1_SUPABASE_URL',
   'MCP_ACCESS_KEY',
@@ -180,6 +183,13 @@ export const GOOGLE_API_KEY =
 // LLM provider for agent execution. Claude remains the production default.
 export const LLM_PROVIDER =
   process.env.LLM_PROVIDER || envConfig.LLM_PROVIDER || 'claude';
+
+export const CODEX_HAIKU_MODEL =
+  process.env.CODEX_HAIKU_MODEL || envConfig.CODEX_HAIKU_MODEL || 'gpt-5.4-nano';
+export const CODEX_SONNET_MODEL =
+  process.env.CODEX_SONNET_MODEL || envConfig.CODEX_SONNET_MODEL || 'gpt-5.4';
+export const CODEX_OPUS_MODEL =
+  process.env.CODEX_OPUS_MODEL || envConfig.CODEX_OPUS_MODEL || 'gpt-5.5';
 
 // ── Brain backend ────────────────────────────────────────────────────
 // BRAIN=sqlite (default, legacy path) | BRAIN=ob1 (Supabase + pgvector via OB1 MCP)

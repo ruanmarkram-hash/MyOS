@@ -29,6 +29,7 @@ import {
   DAILY_COST_BUDGET,
   HOURLY_TOKEN_BUDGET,
   PROJECT_ROOT,
+  LLM_PROVIDER,
 } from './config.js';
 import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage, saveCompactionEvent, getCompactionCount } from './db.js';
 import { logger } from './logger.js';
@@ -38,6 +39,7 @@ import { classifyMessageComplexity } from './message-classifier.js';
 import { scanForSecrets, redactSecrets } from './exfiltration-guard.js';
 import { trackUsage, getRateStatus } from './rate-tracker.js';
 import { buildCostFooter } from './cost-footer.js';
+import { resolveModelForProvider } from './model-router.js';
 import { setHighImportanceCallback } from './memory-ingest.js';
 import { messageQueue } from './message-queue.js';
 import { parseDelegation, delegateToAgent, getAvailableAgents } from './orchestrator.js';
@@ -642,7 +644,9 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     const { text: responseText, files: fileMarkers } = extractFileMarkers(rawResponse);
 
     // Add cost footer
-    const costFooter = buildCostFooter(SHOW_COST_FOOTER, result.usage, effectiveModel);
+    const activeProvider = LLM_PROVIDER.trim().toLowerCase() === 'codex' ? 'codex' : 'claude';
+    const footerModel = resolveModelForProvider(activeProvider, effectiveModel);
+    const costFooter = buildCostFooter(SHOW_COST_FOOTER, result.usage, footerModel);
 
     // Save conversation turn to memory (including full log).
     // Skip logging for synthetic messages like /respin to avoid self-referential growth.
@@ -1043,7 +1047,9 @@ export function createBot(): Bot {
       const currentLabel = current
         ? Object.entries(AVAILABLE_MODELS).find(([, v]) => v === current)?.[0] ?? current
         : DEFAULT_MODEL_LABEL + ' (default)';
-      const models = Object.keys(AVAILABLE_MODELS).join(', ');
+      const models = LLM_PROVIDER.trim().toLowerCase() === 'codex'
+        ? `${Object.keys(AVAILABLE_MODELS).join(', ')}, or a Codex model ID like gpt-5.5`
+        : Object.keys(AVAILABLE_MODELS).join(', ');
       await ctx.reply(`Current model: ${currentLabel}\nAvailable: ${models}\n\nUsage: /model haiku`);
       return;
     }
@@ -1054,7 +1060,7 @@ export function createBot(): Bot {
       return;
     }
 
-    const modelId = AVAILABLE_MODELS[arg];
+    const modelId = AVAILABLE_MODELS[arg] ?? (LLM_PROVIDER.trim().toLowerCase() === 'codex' && arg.startsWith('gpt-') ? arg : undefined);
     if (!modelId) {
       await ctx.reply(`Unknown model: ${arg}\nAvailable: ${Object.keys(AVAILABLE_MODELS).join(', ')}`);
       return;
