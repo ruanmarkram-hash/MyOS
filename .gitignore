@@ -63,3 +63,7 @@ agents/*/CLAUDE.md
 # Recipe-local creds — never commit
 vendor/ob1/**/.env.local
 vendor/**/.env.local
+
+# Symlinked agent dirs live in ~/workspace/operations/engine-room/agents/
+# Don't track files at these symlinked paths — they're managed in workspace.
+agents/_template/
