@@ -25,7 +25,7 @@
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 
-const ROOT = '/Users/sagecos1/HQ';
+const ROOT = '/Users/sc/HQ';
 const DRY_RUN = process.argv.includes('--dry-run');
 
 const env = Object.fromEntries(

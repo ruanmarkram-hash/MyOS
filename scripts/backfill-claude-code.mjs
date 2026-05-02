@@ -18,7 +18,7 @@ import Database from 'better-sqlite3';
 import pg from 'pg';
 
 // ── Config ──────────────────────────────────────────────────────────
-const ROOT = '/Users/sagecos1/HQ';
+const ROOT = '/Users/sc/HQ';
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 const STATE_DB = join(ROOT, 'store', 'claudeclaw.db');
 const LOG_PATH = `/tmp/backfill-${new Date().toISOString().replace(/[:.]/g, '-')}.log`;

@@ -16,7 +16,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import pg from 'pg';
 
-const ROOT = '/Users/sagecos1/HQ';
+const ROOT = '/Users/sc/HQ';
 const env = Object.fromEntries(
   readFileSync(`${ROOT}/.env`, 'utf-8').split(/\r?\n/)
     .filter((l) => l && !l.startsWith('#') && l.includes('='))

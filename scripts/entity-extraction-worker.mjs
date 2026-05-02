@@ -7,7 +7,7 @@
 import { readFileSync, appendFileSync } from 'node:fs';
 import pg from 'pg';
 
-const ROOT = '/Users/sagecos1/HQ';
+const ROOT = '/Users/sc/HQ';
 const LOG_PATH = `${ROOT}/logs/entity-worker.log`;
 const WORKER_VERSION = 'entity-worker-gemini-v1';
 

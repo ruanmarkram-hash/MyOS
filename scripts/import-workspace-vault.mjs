@@ -14,7 +14,7 @@ import { join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import pg from 'pg';
 
-const ROOT = '/Users/sagecos1/HQ';
+const ROOT = '/Users/sc/HQ';
 const VAULT = join(homedir(), 'workspace');
 const CHUNK_CHARS = 4000;           // aim for ~1000 tokens per chunk
 const CHUNK_OVERLAP = 400;
