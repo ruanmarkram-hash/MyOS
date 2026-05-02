@@ -37,6 +37,18 @@ const envConfig = readEnvFile([
   'WARROOM_ENABLED',
   'WARROOM_PORT',
   'STREAM_STRATEGY',
+  'PIPELINE_SUPABASE_URL',
+  'PIPELINE_SUPABASE_SERVICE_ROLE_KEY',
+  'PIPELINE_WEBHOOK_URL',
+  'PIPELINE_ENABLED',
+  'LLM_PROVIDER',
+  'CODEX_HAIKU_MODEL',
+  'CODEX_SONNET_MODEL',
+  'CODEX_OPUS_MODEL',
+  'BRAIN',
+  'OB1_SUPABASE_URL',
+  'MCP_ACCESS_KEY',
+  'OB1_BRAIN_FUNCTION',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -168,6 +180,31 @@ export const DB_ENCRYPTION_KEY =
 export const GOOGLE_API_KEY =
   process.env.GOOGLE_API_KEY || envConfig.GOOGLE_API_KEY || '';
 
+// LLM provider for agent execution. Claude remains the production default.
+export const LLM_PROVIDER =
+  process.env.LLM_PROVIDER || envConfig.LLM_PROVIDER || 'claude';
+
+export const CODEX_HAIKU_MODEL =
+  process.env.CODEX_HAIKU_MODEL || envConfig.CODEX_HAIKU_MODEL || 'gpt-5.4-nano';
+export const CODEX_SONNET_MODEL =
+  process.env.CODEX_SONNET_MODEL || envConfig.CODEX_SONNET_MODEL || 'gpt-5.4';
+export const CODEX_OPUS_MODEL =
+  process.env.CODEX_OPUS_MODEL || envConfig.CODEX_OPUS_MODEL || 'gpt-5.5';
+
+// ── Brain backend ────────────────────────────────────────────────────
+// BRAIN=sqlite (default, legacy path) | BRAIN=ob1 (Supabase + pgvector via OB1 MCP)
+// OB1 writes go to Supabase, reads fall back to SQLite if OB1 throws.
+export type BrainBackend = 'sqlite' | 'ob1';
+export const BRAIN: BrainBackend =
+  ((process.env.BRAIN || envConfig.BRAIN || 'sqlite').toLowerCase() as BrainBackend);
+export const OB1_SUPABASE_URL =
+  process.env.OB1_SUPABASE_URL || envConfig.OB1_SUPABASE_URL || '';
+export const MCP_ACCESS_KEY =
+  process.env.MCP_ACCESS_KEY || envConfig.MCP_ACCESS_KEY || '';
+// Edge function name. Default matches Phase 2 deployment.
+export const OB1_BRAIN_FUNCTION =
+  process.env.OB1_BRAIN_FUNCTION || envConfig.OB1_BRAIN_FUNCTION || 'brain-mcp';
+
 // Streaming strategy for progressive Telegram updates.
 // 'global-throttle' (default): edits a placeholder message with streamed text,
 //   rate-limited to ~24 edits/min per chat to respect Telegram limits.
@@ -252,3 +289,23 @@ export const WARROOM_PORT = parseInt(
   10,
 );
 
+// ── Staff-intake pipeline (Sonke Hub) ───────────────────────────────
+// When PIPELINE_ENABLED=true, the bot intercepts Telegram replies to
+// SonkeSage pipeline deliverable pings (human gates) and forwards the
+// resolution to pipeline-webhook. Requires Supabase URL + service role
+// key so the bot can match telegram_message_id to an open gate and POST
+// the manual path with bearer auth.
+//
+// URL-button taps (inline_keyboard with url=...) do not touch the bot
+// runtime at all; they hit pipeline-webhook directly in the browser.
+// This handler covers the text-reply path only.
+export const PIPELINE_ENABLED =
+  (process.env.PIPELINE_ENABLED || envConfig.PIPELINE_ENABLED || 'false').toLowerCase() === 'true';
+export const PIPELINE_SUPABASE_URL =
+  process.env.PIPELINE_SUPABASE_URL || envConfig.PIPELINE_SUPABASE_URL || '';
+export const PIPELINE_SUPABASE_SERVICE_ROLE_KEY =
+  process.env.PIPELINE_SUPABASE_SERVICE_ROLE_KEY ||
+  envConfig.PIPELINE_SUPABASE_SERVICE_ROLE_KEY ||
+  '';
+export const PIPELINE_WEBHOOK_URL =
+  process.env.PIPELINE_WEBHOOK_URL || envConfig.PIPELINE_WEBHOOK_URL || '';

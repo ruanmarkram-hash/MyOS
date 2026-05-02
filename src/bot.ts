@@ -29,6 +29,7 @@ import {
   DAILY_COST_BUDGET,
   HOURLY_TOKEN_BUDGET,
   PROJECT_ROOT,
+  LLM_PROVIDER,
 } from './config.js';
 import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage, saveCompactionEvent, getCompactionCount } from './db.js';
 import { logger } from './logger.js';
@@ -38,6 +39,7 @@ import { classifyMessageComplexity } from './message-classifier.js';
 import { scanForSecrets, redactSecrets } from './exfiltration-guard.js';
 import { trackUsage, getRateStatus } from './rate-tracker.js';
 import { buildCostFooter } from './cost-footer.js';
+import { resolveModelForProvider } from './model-router.js';
 import { setHighImportanceCallback } from './memory-ingest.js';
 import { messageQueue } from './message-queue.js';
 import { parseDelegation, delegateToAgent, getAvailableAgents } from './orchestrator.js';
@@ -53,6 +55,11 @@ import {
   getSecurityStatus,
   audit,
 } from './security.js';
+import {
+  handlePipelineReply,
+  handlePipelineCallback,
+  parsePipelineCallback,
+} from './pipeline-handler.js';
 
 // ── Streaming rate limiter ───────────────────────────────────────────
 const globalStreamLastEdit = new Map<string, number>();
@@ -123,7 +130,7 @@ const voiceEnabledChats = new Set<string>();
 const chatModelOverride = new Map<string, string>();
 
 const AVAILABLE_MODELS: Record<string, string> = {
-  opus: 'claude-opus-4-6',
+  opus: 'claude-opus-4-7',
   sonnet: 'claude-sonnet-4-5',
   haiku: 'claude-haiku-4-5',
 };
@@ -497,7 +504,7 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
   const userModel = chatModelOverride.get(chatIdStr) ?? agentDefaultModel;
   const effectiveModel = (SMART_ROUTING_ENABLED && !userModel && classifyMessageComplexity(message) === 'simple')
     ? SMART_ROUTING_CHEAP_MODEL
-    : (userModel ?? 'claude-opus-4-6');
+    : (userModel ?? 'claude-opus-4-7');
 
   // Start typing immediately, then refresh on interval
   await sendTyping(ctx.api, chatId);
@@ -637,7 +644,9 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     const { text: responseText, files: fileMarkers } = extractFileMarkers(rawResponse);
 
     // Add cost footer
-    const costFooter = buildCostFooter(SHOW_COST_FOOTER, result.usage, effectiveModel);
+    const activeProvider = LLM_PROVIDER.trim().toLowerCase() === 'codex' ? 'codex' : 'claude';
+    const footerModel = resolveModelForProvider(activeProvider, effectiveModel);
+    const costFooter = buildCostFooter(SHOW_COST_FOOTER, result.usage, footerModel);
 
     // Save conversation turn to memory (including full log).
     // Skip logging for synthetic messages like /respin to avoid self-referential growth.
@@ -1038,7 +1047,9 @@ export function createBot(): Bot {
       const currentLabel = current
         ? Object.entries(AVAILABLE_MODELS).find(([, v]) => v === current)?.[0] ?? current
         : DEFAULT_MODEL_LABEL + ' (default)';
-      const models = Object.keys(AVAILABLE_MODELS).join(', ');
+      const models = LLM_PROVIDER.trim().toLowerCase() === 'codex'
+        ? `${Object.keys(AVAILABLE_MODELS).join(', ')}, or a Codex model ID like gpt-5.5`
+        : Object.keys(AVAILABLE_MODELS).join(', ');
       await ctx.reply(`Current model: ${currentLabel}\nAvailable: ${models}\n\nUsage: /model haiku`);
       return;
     }
@@ -1049,7 +1060,7 @@ export function createBot(): Bot {
       return;
     }
 
-    const modelId = AVAILABLE_MODELS[arg];
+    const modelId = AVAILABLE_MODELS[arg] ?? (LLM_PROVIDER.trim().toLowerCase() === 'codex' && arg.startsWith('gpt-') ? arg : undefined);
     if (!modelId) {
       await ctx.reply(`Unknown model: ${arg}\nAvailable: ${Object.keys(AVAILABLE_MODELS).join(', ')}`);
       return;
@@ -1305,6 +1316,25 @@ export function createBot(): Bot {
       return;
     }
     touchActivity();
+
+    // ── Sonke Hub pipeline reply interceptor ──────────────────────
+    // If this is a Telegram-native reply to one of our pipeline
+    // deliverable pings (human gate) AND the text contains a
+    // pipeline keyword, forward to pipeline-webhook and stop here.
+    // No LLM call, no other routing. Silent no-op otherwise.
+    try {
+      const pipelineReply = await handlePipelineReply({
+        text: ctx.message.text,
+        replyToMessageId: ctx.message.reply_to_message?.message_id,
+      });
+      if (pipelineReply) {
+        await ctx.reply(pipelineReply);
+        return;
+      }
+    } catch (err) {
+      logger.error({ err }, 'pipeline reply handler threw');
+      // Fall through to normal routing on any unexpected error.
+    }
 
     // ── WhatsApp state machine ──────────────────────────────────────
     const state = waState.get(chatIdStr);
@@ -1578,6 +1608,36 @@ export function createBot(): Bot {
     } catch (err) {
       logger.error({ err }, 'Video note download failed');
       await ctx.reply('Could not download video note. Note: Telegram bots are limited to 20MB downloads.');
+    }
+  });
+
+  // ── Pipeline inline button taps (callback_query) ────────────────
+  // Human-gate APPROVE / HALT buttons emit callback_data of the form
+  // "pl:<action>:<gate_id>". Forward the tap to pipeline-webhook and
+  // answer with an in-Telegram toast. The message edit (remove
+  // buttons + append resolved state) is done server-side in
+  // pipeline-advance.resolveGate() so every resolution path fires it.
+  bot.on('callback_query:data', async (ctx) => {
+    const data = ctx.callbackQuery.data;
+    const match = parsePipelineCallback(data);
+    if (!match) {
+      // Not ours; answer with an empty ack so Telegram stops spinning.
+      await ctx.answerCallbackQuery().catch(() => {});
+      return;
+    }
+    try {
+      const result = await handlePipelineCallback(match);
+      await ctx
+        .answerCallbackQuery({
+          text: result.toast,
+          show_alert: !result.ok,
+        })
+        .catch(() => {});
+    } catch (err) {
+      logger.error({ err }, 'pipeline callback handler threw');
+      await ctx
+        .answerCallbackQuery({ text: 'Error. See logs.', show_alert: true })
+        .catch(() => {});
     }
   });
 

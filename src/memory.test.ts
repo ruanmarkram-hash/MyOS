@@ -31,6 +31,14 @@ vi.mock('./gemini.js', () => ({
   parseJsonResponse: vi.fn(() => []),
 }));
 
+vi.mock('./config.js', () => ({
+  agentObsidianConfig: undefined,
+  BRAIN: 'sqlite',
+  GOOGLE_API_KEY: '',
+  MEMORY_NUDGE_INTERVAL_TURNS: 10,
+  MEMORY_NUDGE_INTERVAL_HOURS: 2,
+}));
+
 import {
   buildMemoryContext,
   saveConversationTurn,

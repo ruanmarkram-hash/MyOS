@@ -138,13 +138,13 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
   // Serve dashboard HTML
   app.get('/', (c) => {
-    const chatId = c.req.query('chatId') || '';
+    const chatId = c.req.query('chatId') || ALLOWED_CHAT_ID || '';
     return c.html(getDashboardHtml(DASHBOARD_TOKEN, chatId, WARROOM_ENABLED, process.env.MAIN_AGENT_DISPLAY_NAME || 'Main'));
   });
 
   // War Room page
   app.get('/warroom', (c) => {
-    const chatId = c.req.query('chatId') || '';
+    const chatId = c.req.query('chatId') || ALLOWED_CHAT_ID || '';
     return c.html(getWarRoomHtml(DASHBOARD_TOKEN, chatId, WARROOM_PORT));
   });
 
@@ -1010,7 +1010,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
           id,
           name: config.name,
           description: config.description,
-          model: config.model ?? 'claude-opus-4-6',
+          model: config.model ?? 'claude-opus-4-7',
           running,
           todayTurns: stats.todayTurns,
           todayCost: stats.todayCost,
@@ -1032,7 +1032,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     }
     const mainStats = getAgentTokenStats('main');
     const allAgents = [
-      { id: 'main', name: 'Main', description: 'Primary ClaudeClaw bot', model: 'claude-opus-4-6', running: mainRunning, todayTurns: mainStats.todayTurns, todayCost: mainStats.todayCost },
+      { id: 'main', name: 'Main', description: 'Primary ClaudeClaw bot', model: 'claude-opus-4-7', running: mainRunning, todayTurns: mainStats.todayTurns, todayCost: mainStats.todayCost },
       ...agents,
     ];
 
@@ -1072,7 +1072,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const model = body?.model?.trim();
     if (!model) return c.json({ error: 'model required' }, 400);
 
-    const validModels = ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
+    const validModels = ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
     if (!validModels.includes(model)) return c.json({ error: `Invalid model` }, 400);
 
     const agentIds = listAgentIds();
@@ -1090,7 +1090,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const model = body?.model?.trim();
     if (!model) return c.json({ error: 'model required' }, 400);
 
-    const validModels = ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
+    const validModels = ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
     if (!validModels.includes(model)) return c.json({ error: `Invalid model. Valid: ${validModels.join(', ')}` }, 400);
 
     try {

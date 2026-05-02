@@ -30,6 +30,13 @@ let tempRoot: string;
 let tempGlobal: string;
 let origHome: string;
 
+function initTestSkillRegistry(): void {
+  initSkillRegistry({
+    projectSkillsDir: path.join(tempRoot, 'skills'),
+    globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
+  });
+}
+
 beforeEach(() => {
   tempRoot = createTempSkillDir();
   tempGlobal = createTempSkillDir();
@@ -88,7 +95,7 @@ triggers: email, inbox, gmail
 Read and send emails.`,
     );
 
-    initSkillRegistry();
+    initTestSkillRegistry();
     const all = getAllSkills();
     // Should find at least the global skill
     const gmailSkill = all.find((s) => s.id === 'gmail');
@@ -104,7 +111,7 @@ Read and send emails.`,
     // Remove the skills dirs so there is nothing to scan
     fs.rmSync(path.join(tempGlobal, '.claude', 'skills'), { recursive: true, force: true });
     // initSkillRegistry should not throw
-    expect(() => initSkillRegistry()).not.toThrow();
+    expect(() => initTestSkillRegistry()).not.toThrow();
     expect(getAllSkills()).toHaveLength(0);
   });
 });
@@ -126,7 +133,7 @@ triggers: schedule, meeting, calendar
 Create and manage events.`,
     );
 
-    initSkillRegistry();
+    initTestSkillRegistry();
     const cal = getAllSkills().find((s) => s.id === 'calendar');
     expect(cal).toBeDefined();
     expect(cal!.name).toBe('Google Calendar');
@@ -147,7 +154,7 @@ Show outstanding tasks from the vault. Supports checkboxes.
 Run /todo to see tasks.`,
     );
 
-    initSkillRegistry();
+    initTestSkillRegistry();
     const todo = getAllSkills().find((s) => s.id === 'todo');
     expect(todo).toBeDefined();
     expect(todo!.name).toBe('Task Manager');
@@ -161,7 +168,7 @@ Run /todo to see tasks.`,
       'Just some plain text content here.',
     );
 
-    initSkillRegistry();
+    initTestSkillRegistry();
     const skill = getAllSkills().find((s) => s.id === 'my-skill');
     expect(skill).toBeDefined();
     expect(skill!.name).toBe('my-skill');
@@ -192,7 +199,7 @@ triggers: schedule, meeting, calendar
 ---`,
     );
 
-    initSkillRegistry();
+    initTestSkillRegistry();
   });
 
   it('matches "check my email" to gmail skill', () => {
@@ -232,14 +239,14 @@ triggers: email
 ---`,
     );
 
-    initSkillRegistry();
+    initTestSkillRegistry();
     const index = getSkillIndex();
     expect(index).toContain('gmail: Email management');
   });
 
   it('returns empty string when no skills', () => {
     fs.rmSync(path.join(tempGlobal, '.claude', 'skills'), { recursive: true, force: true });
-    initSkillRegistry();
+    initTestSkillRegistry();
     expect(getSkillIndex()).toBe('');
   });
 });
@@ -259,13 +266,13 @@ Full instructions here.`;
 
     writeSkill(path.join(tempGlobal, '.claude', 'skills'), 'gmail', content);
 
-    initSkillRegistry();
+    initTestSkillRegistry();
     const instructions = getSkillInstructions('gmail');
     expect(instructions).toBe(content);
   });
 
   it('returns null for unknown skill ID', () => {
-    initSkillRegistry();
+    initTestSkillRegistry();
     expect(getSkillInstructions('nonexistent')).toBeNull();
   });
 });
@@ -278,7 +285,7 @@ describe('edge cases', () => {
     fs.mkdirSync(hiddenDir, { recursive: true });
     fs.writeFileSync(path.join(hiddenDir, 'SKILL.md'), '# Hidden');
 
-    initSkillRegistry();
+    initTestSkillRegistry();
     expect(getAllSkills().find((s) => s.id === '.hidden')).toBeUndefined();
   });
 
@@ -287,7 +294,7 @@ describe('edge cases', () => {
     fs.mkdirSync(emptyDir, { recursive: true });
     fs.writeFileSync(path.join(emptyDir, 'config.json'), '{}');
 
-    initSkillRegistry();
+    initTestSkillRegistry();
     expect(getAllSkills().find((s) => s.id === 'empty')).toBeUndefined();
   });
 
@@ -296,7 +303,7 @@ describe('edge cases', () => {
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'readme.md'), '# Alt Skill\n\nAlt description.');
 
-    initSkillRegistry();
+    initTestSkillRegistry();
     const alt = getAllSkills().find((s) => s.id === 'alt');
     expect(alt).toBeDefined();
     expect(alt!.name).toBe('Alt Skill');
