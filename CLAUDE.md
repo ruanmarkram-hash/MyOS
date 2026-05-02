@@ -183,6 +183,8 @@ Ruan runs a Mac mini and routinely asks you to free up RAM by killing background
 
 **If Ruan asks to restart Sage:** do not run any kill command. Tell him to send `/restart` in Telegram. The bot handles it cleanly and launchd brings Sage back automatically.
 
+**Never self-restart main from inside a Telegram conversation.** `launchctl kickstart -k com.claudeclaw.main` SIGTERMs the live bot mid-reply, drops the in-flight Telegram message, and orphans the assistant turn in `conversation_log` — Ruan sees ~5 minutes of activity then nothing. Use `~/HQ/scripts/safe-launchctl.sh` for any launchctl ops; it refuses the bad pattern and passes everything else through. Restarting OTHER agents (charter, ember, marlow, mason, warden) is fine and does not affect the live conversation.
+
 ## Destructive Command Safety
 
 Use `~/HQ/scripts/safe-exec.sh` instead of bare `rm`, `mv`, `chmod`, or `chown` when operating on files you didn't just create in the current task.

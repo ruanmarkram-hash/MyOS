@@ -16,6 +16,7 @@ import { initOAuthHealthCheck } from './oauth-health.js';
 import { initOrchestrator } from './orchestrator.js';
 import { initScheduler } from './scheduler.js';
 import { setTelegramConnected, setBotInfo } from './state.js';
+import { messageQueue } from './message-queue.js';
 
 // Parse --agent flag
 const agentFlagIndex = process.argv.indexOf('--agent');
@@ -345,15 +346,40 @@ async function main(): Promise<void> {
     logger.warn('ALLOWED_CHAT_ID not set — scheduler disabled (no destination for results)');
   }
 
-  const shutdown = async () => {
-    logger.info('Shutting down...');
+  // Guard against double shutdown: SIGTERM + SIGINT can fire together
+  // (e.g. on launchctl kickstart -k followed by user Ctrl+C).
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info({ signal }, 'Shutting down...');
     setTelegramConnected(false);
+    // Stop accepting new Telegram updates immediately so the queue can
+    // drain without new work arriving. bot.stop() also drops the long-poll
+    // connection; we await it AFTER the drain so any in-flight reply
+    // completes first.
+    // Drain in-flight message handlers so the assistant's final reply
+    // (Telegram send + DB commit) finishes before exit. Without this, a
+    // SIGTERM mid-reply (eg from `launchctl kickstart -k`) drops the
+    // current message and leaves an orphaned user turn in conversation_log.
+    // 30s ceiling — long enough to flush a long answer, short enough not
+    // to hang launchd if a handler is genuinely stuck.
+    try {
+      const { drained, remaining } = await messageQueue.drain(30_000);
+      if (!drained) {
+        logger.warn({ remaining }, 'Shutdown drain timed out — handlers still pending, exiting anyway');
+      } else {
+        logger.info('Shutdown drain complete — all handlers finished cleanly');
+      }
+    } catch (err) {
+      logger.error({ err }, 'Shutdown drain threw — exiting anyway');
+    }
     releaseLock();
     await bot.stop();
     process.exit(0);
   };
-  process.on('SIGINT', () => void shutdown());
-  process.on('SIGTERM', () => void shutdown());
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
   logger.info({ agentId: AGENT_ID }, 'Starting ClaudeClaw...');
 

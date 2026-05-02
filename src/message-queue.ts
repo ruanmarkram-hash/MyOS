@@ -50,6 +50,31 @@ class MessageQueue {
   queuedFor(chatId: string): number {
     return this.pending.get(chatId) ?? 0;
   }
+
+  /**
+   * Wait for all pending handlers across every chat to finish, or until
+   * `timeoutMs` elapses. Used by graceful shutdown so the in-flight
+   * assistant reply gets fully flushed (Telegram send + DB commit) before
+   * the bot process exits.
+   *
+   * Returns `{drained: true}` if the queue emptied, `{drained: false}` if
+   * it timed out (in which case `remaining` is the number of chats that
+   * still had pending work).
+   */
+  async drain(timeoutMs: number): Promise<{ drained: boolean; remaining: number }> {
+    if (this.chains.size === 0) return { drained: true, remaining: 0 };
+    const allPending = Promise.allSettled(Array.from(this.chains.values()));
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), timeoutMs);
+    });
+    const winner = await Promise.race([
+      allPending.then(() => 'done' as const),
+      timeout,
+    ]);
+    if (timer) clearTimeout(timer);
+    return { drained: winner === 'done', remaining: this.chains.size };
+  }
 }
 
 export const messageQueue = new MessageQueue();
