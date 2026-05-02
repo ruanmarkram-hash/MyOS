@@ -64,30 +64,75 @@ export function filterMcpServers(configToml: string, allowlist: string[]): strin
   const lines = configToml.split(/\r?\n/);
   const out: string[] = [];
   let droppingUntilNextTable = false;
+  // TOML multiline string state: triple-double `"""` and triple-single `'''`.
+  // While inside a multiline string the contents may contain anything,
+  // including lines that LOOK like table headers. We must not treat those
+  // as headers. The state machine flips when we see the matching delimiter
+  // (counting triple-occurrences per line, not per character).
+  let inTripleDouble = false;
+  let inTripleSingle = false;
 
   for (const line of lines) {
-    const tableMatch = line.match(/^\s*\[\s*([^\]]+?)\s*\]\s*(?:#.*)?$/);
-    if (tableMatch) {
-      const tablePath = tableMatch[1]!;
-      const name = mcpServersName(tablePath);
-      if (name === null) {
-        // Not an mcp_servers table — keep this line and stop dropping.
-        droppingUntilNextTable = false;
-        out.push(line);
-      } else if (allowed.has(name)) {
-        droppingUntilNextTable = false;
-        out.push(line);
-      } else {
-        droppingUntilNextTable = true;
-        // skip the header line itself
+    if (!inTripleDouble && !inTripleSingle) {
+      const tableMatch = line.match(/^\s*\[\s*([^\]]+?)\s*\]\s*(?:#.*)?$/);
+      if (tableMatch) {
+        const tablePath = tableMatch[1]!;
+        const name = mcpServersName(tablePath);
+        if (name === null) {
+          // Not an mcp_servers table — keep this line and stop dropping.
+          droppingUntilNextTable = false;
+          out.push(line);
+        } else if (allowed.has(name)) {
+          droppingUntilNextTable = false;
+          out.push(line);
+        } else {
+          droppingUntilNextTable = true;
+          // skip the header line itself
+        }
+        // Update string state from this header line too — defensive, in
+        // case a header line somehow contained an embedded ''' or """.
+        const flips = countTripleStringFlips(line);
+        if (flips.tripleDouble & 1) inTripleDouble = !inTripleDouble;
+        if (flips.tripleSingle & 1) inTripleSingle = !inTripleSingle;
+        continue;
       }
-      continue;
     }
+
+    // Track string state changes for non-header lines. Always emit the
+    // line if we're not currently dropping (string content inside a kept
+    // block is preserved verbatim).
+    const flips = countTripleStringFlips(line);
+    const tripleDoubleParity = flips.tripleDouble & 1;
+    const tripleSingleParity = flips.tripleSingle & 1;
+
     if (!droppingUntilNextTable) out.push(line);
-    // else: inside a dropped block, skip
+    // else: inside a dropped block — string content is dropped too,
+    // which is correct because the whole block is gone.
+
+    if (tripleDoubleParity) inTripleDouble = !inTripleDouble;
+    if (tripleSingleParity) inTripleSingle = !inTripleSingle;
   }
 
   return out.join('\n');
+}
+
+/**
+ * Count occurrences of TOML's triple-quote multiline string delimiters
+ * on a single line. Used to maintain "are we inside a multiline string"
+ * state across lines so that lines like `[mcp_servers.x]` appearing
+ * INSIDE a multiline string aren't misread as table headers.
+ *
+ * Note: full TOML escape semantics (e.g. `\"\"\"` inside a basic string)
+ * are not handled. Codex's config.toml is generated, not hand-edited
+ * with adversarial inputs, so this is sufficient for the threat model.
+ */
+export function countTripleStringFlips(line: string): {
+  tripleDouble: number;
+  tripleSingle: number;
+} {
+  const tripleDouble = (line.match(/"""/g) ?? []).length;
+  const tripleSingle = (line.match(/'''/g) ?? []).length;
+  return { tripleDouble, tripleSingle };
 }
 
 /**
@@ -147,26 +192,10 @@ export function prepareCodexHome(allowlist: string[], realHome?: string): CodexH
   const tempHome = path.join(tempBase, `codex-allowlist-${id}`);
   fs.mkdirSync(tempHome, { recursive: true, mode: 0o700 });
 
-  // Symlink everything from real home into temp home, except config.toml.
-  for (const entry of fs.readdirSync(home)) {
-    if (entry === 'config.toml') continue;
-    const target = path.join(home, entry);
-    const link = path.join(tempHome, entry);
-    try {
-      fs.symlinkSync(target, link);
-    } catch (err) {
-      // Best-effort: if a symlink fails (eg permissions), log and continue.
-      // The agent may still work for read-only resources but resume / auth
-      // could be impacted. Surface this in logs.
-      logger.warn({ err, target, link }, 'codex-mcp-filter: symlink failed');
-    }
-  }
-
-  // Write filtered config.toml.
-  const original = fs.readFileSync(configPath, 'utf8');
-  const filtered = filterMcpServers(original, allowlist);
-  fs.writeFileSync(path.join(tempHome, 'config.toml'), filtered, { mode: 0o600 });
-
+  // Build cleanup IMMEDIATELY after mkdirSync so we can rm the temp dir
+  // even if a later step throws. Critical: the temp dir contains symlinks
+  // to auth.json / sessions / etc. — leaking it on a setup failure leaves
+  // live links to credential material lying around.
   let cleanedUp = false;
   const cleanup = (): void => {
     if (cleanedUp) return;
@@ -177,6 +206,33 @@ export function prepareCodexHome(allowlist: string[], realHome?: string): CodexH
       logger.warn({ err, tempHome }, 'codex-mcp-filter: cleanup failed');
     }
   };
+
+  try {
+    // Symlink everything from real home into temp home, except config.toml.
+    for (const entry of fs.readdirSync(home)) {
+      if (entry === 'config.toml') continue;
+      const target = path.join(home, entry);
+      const link = path.join(tempHome, entry);
+      try {
+        fs.symlinkSync(target, link);
+      } catch (err) {
+        // Best-effort: if a symlink fails (eg permissions), log and continue.
+        // The agent may still work for read-only resources but resume / auth
+        // could be impacted. Surface this in logs.
+        logger.warn({ err, target, link }, 'codex-mcp-filter: symlink failed');
+      }
+    }
+
+    // Write filtered config.toml.
+    const original = fs.readFileSync(configPath, 'utf8');
+    const filtered = filterMcpServers(original, allowlist);
+    fs.writeFileSync(path.join(tempHome, 'config.toml'), filtered, { mode: 0o600 });
+  } catch (err) {
+    // Setup failed after mkdirSync. Rip the temp dir back out so we don't
+    // leak the symlinks-to-credentials it might contain, then rethrow.
+    cleanup();
+    throw err;
+  }
 
   return { home: tempHome, cleanup };
 }

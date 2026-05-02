@@ -354,14 +354,28 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info({ signal }, 'Shutting down...');
     setTelegramConnected(false);
-    // Stop accepting new Telegram updates immediately so the queue can
-    // drain without new work arriving. bot.stop() also drops the long-poll
-    // connection; we await it AFTER the drain so any in-flight reply
-    // completes first.
-    // Drain in-flight message handlers so the assistant's final reply
-    // (Telegram send + DB commit) finishes before exit. Without this, a
-    // SIGTERM mid-reply (eg from `launchctl kickstart -k`) drops the
-    // current message and leaves an orphaned user turn in conversation_log.
+
+    // STEP 1: Stop intake. Two things must happen before drain has any
+    // meaning, otherwise new messages keep arriving and drain reports
+    // success while work is still being enqueued:
+    //   (a) close the message queue so new enqueue() calls are dropped
+    //   (b) stop the Telegram long-poll so grammy stops handing us updates
+    messageQueue.close();
+    try {
+      // bot.stop() also closes the long-poll connection, so no new updates
+      // are pulled. Existing handlers continue (they're already inside the
+      // queue's promise chains). We DON'T await it here because grammy's
+      // stop is itself drain-style and would block us; fire-and-forget,
+      // then await later as part of cleanup.
+      void bot.stop();
+    } catch (err) {
+      logger.warn({ err }, 'bot.stop() threw during shutdown — continuing');
+    }
+
+    // STEP 2: Drain in-flight message handlers so the assistant's final
+    // reply (Telegram send + DB commit) finishes before exit. Without
+    // this a SIGTERM mid-reply (eg from `launchctl kickstart -k`) drops
+    // the current message and orphans the user turn in conversation_log.
     // 30s ceiling — long enough to flush a long answer, short enough not
     // to hang launchd if a handler is genuinely stuck.
     try {
@@ -375,7 +389,6 @@ async function main(): Promise<void> {
       logger.error({ err }, 'Shutdown drain threw — exiting anyway');
     }
     releaseLock();
-    await bot.stop();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));

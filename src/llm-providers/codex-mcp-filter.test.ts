@@ -85,6 +85,50 @@ enabled = true
     expect(out).toContain('url = "https://weird"');
     expect(out).not.toContain('[mcp_servers.brain-mcp]');
   });
+
+  it('does NOT treat table-header-looking lines inside a multiline """ string as headers', () => {
+    const tricky = `model = "gpt-5.5"
+
+[some.other.section]
+note = """
+This describes the [mcp_servers.gmail-mcp] block in our docs.
+[mcp_servers.brain-mcp] is mentioned too.
+"""
+greeting = "ok"
+
+[mcp_servers.brain-mcp]
+url = "real"
+
+[mcp_servers.gmail-mcp]
+url = "evil"
+`;
+    const out = filterMcpServers(tricky, ['brain-mcp']);
+    // Real gmail-mcp block must be dropped (its body line is gone).
+    expect(out).not.toContain('url = "evil"');
+    // The narrative content inside the multiline string must be preserved.
+    expect(out).toContain('This describes the [mcp_servers.gmail-mcp] block');
+    expect(out).toContain('[mcp_servers.brain-mcp] is mentioned too.');
+    // And the real brain-mcp block survives.
+    expect(out).toContain('url = "real"');
+    // greeting (after the multiline string closes) survives too.
+    expect(out).toContain('greeting = "ok"');
+  });
+
+  it("handles ''' triple-single multiline strings the same way", () => {
+    const tricky = `[some.section]
+literal = '''
+[mcp_servers.gmail-mcp] in literal text
+'''
+[mcp_servers.gmail-mcp]
+url = "evil"
+[mcp_servers.brain-mcp]
+url = "real"
+`;
+    const out = filterMcpServers(tricky, ['brain-mcp']);
+    expect(out).toContain('[mcp_servers.gmail-mcp] in literal text');
+    expect(out).not.toContain('url = "evil"');
+    expect(out).toContain('url = "real"');
+  });
 });
 
 describe('prepareCodexHome', () => {
@@ -155,6 +199,32 @@ describe('prepareCodexHome', () => {
       expect(stat.isFile()).toBe(true);
     } finally {
       prep.cleanup();
+    }
+  });
+
+  it('cleans up the temp dir if writing the filtered config throws', () => {
+    // Force write failure by making config.toml unreadable mid-flow.
+    // Simpler: point at a fake home where config.toml is a directory,
+    // so readFileSync throws EISDIR.
+    const broken = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-broken-'));
+    try {
+      // Create a DIRECTORY named config.toml so readFileSync throws.
+      fs.mkdirSync(path.join(broken, 'config.toml'));
+      fs.writeFileSync(path.join(broken, 'auth.json'), '{}');
+
+      const tempCountBefore = fs
+        .readdirSync(os.tmpdir())
+        .filter((n) => n.startsWith('codex-allowlist-')).length;
+
+      expect(() => prepareCodexHome(['brain-mcp'], broken)).toThrow();
+
+      const tempCountAfter = fs
+        .readdirSync(os.tmpdir())
+        .filter((n) => n.startsWith('codex-allowlist-')).length;
+      // No leaked codex-allowlist-* directory should remain.
+      expect(tempCountAfter).toBe(tempCountBefore);
+    } finally {
+      fs.rmSync(broken, { recursive: true, force: true });
     }
   });
 });

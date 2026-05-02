@@ -52,5 +52,58 @@ describe('MessageQueue.drain', () => {
 
     // Cleanup so we don't leak the pending chain into other tests.
     gate.resolve();
+    await new Promise((r) => setTimeout(r, 10));
+    messageQueue._resetForTest();
+  });
+});
+
+describe('MessageQueue.close', () => {
+  it('drops new enqueues after close()', async () => {
+    messageQueue._resetForTest();
+
+    let firstHandlerRan = false;
+    let secondHandlerRan = false;
+
+    messageQueue.enqueue('chat-close-1', async () => {
+      firstHandlerRan = true;
+    });
+    // Wait for the first to be processed before close.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(firstHandlerRan).toBe(true);
+
+    messageQueue.close();
+    expect(messageQueue.isClosed).toBe(true);
+
+    messageQueue.enqueue('chat-close-2', async () => {
+      secondHandlerRan = true;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(secondHandlerRan).toBe(false);
+
+    messageQueue._resetForTest();
+  });
+
+  it('drain after close means queue is genuinely empty (no race)', async () => {
+    messageQueue._resetForTest();
+
+    const gate = defer<void>();
+    messageQueue.enqueue('chat-close-3', async () => {
+      await gate.promise;
+    });
+
+    messageQueue.close();
+    // Try to enqueue more after close — these must NOT extend the drain.
+    let droppedRan = false;
+    messageQueue.enqueue('chat-close-4', async () => {
+      droppedRan = true;
+    });
+
+    const drainPromise = messageQueue.drain(2000);
+    gate.resolve();
+    const result = await drainPromise;
+    expect(result.drained).toBe(true);
+    expect(droppedRan).toBe(false);
+
+    messageQueue._resetForTest();
   });
 });
