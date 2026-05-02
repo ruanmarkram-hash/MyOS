@@ -9,6 +9,7 @@ import { readEnvFile } from '../env.js';
 import { classifyError } from '../errors.js';
 import { logger } from '../logger.js';
 import type { AgentResult, LlmProvider, RunAgentOptions, UsageInfo } from '../llm-provider.js';
+import { prepareCodexHome } from './codex-mcp-filter.js';
 
 interface CodexUsage {
   inputTokens: number;
@@ -297,12 +298,26 @@ export class CodexProvider implements LlmProvider {
       model,
       abortController,
       onStreamText,
+      mcpAllowlist,
     } = options;
 
     const cwd = agentCwd ?? PROJECT_ROOT;
     const resumeSessionId = sessionId && codexSessionExists(sessionId) ? sessionId : undefined;
     const pricingModel = codexModelForPricing(model);
     const args = buildCodexExecArgs({ cwd, sessionId: resumeSessionId, model });
+
+    // Per-call MCP allowlist enforcement. When mcpAllowlist is provided we
+    // build a temp CODEX_HOME with a filtered config.toml. When undefined
+    // the contract treats it as "no constraint" so we leave CODEX_HOME alone
+    // and Codex uses the user's normal global config. See
+    // ./codex-mcp-filter.ts for rationale.
+    const homePrep = mcpAllowlist ? prepareCodexHome(mcpAllowlist) : undefined;
+    const spawnEnv: NodeJS.ProcessEnv = homePrep
+      ? { ...process.env, CODEX_HOME: homePrep.home }
+      : process.env;
+    if (homePrep) {
+      logger.info({ tempHome: homePrep.home, mcpAllowlist }, 'Codex: applied per-call MCP allowlist');
+    }
 
     let newSessionId: string | undefined;
     const usageState: { current: UsageInfo | null } = { current: null };
@@ -317,7 +332,7 @@ export class CodexProvider implements LlmProvider {
     const typingInterval = setInterval(onTyping, 4000);
     const proc = spawn('codex', args, {
       cwd,
-      env: process.env,
+      env: spawnEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -453,6 +468,8 @@ export class CodexProvider implements LlmProvider {
       clearInterval(typingInterval);
       if (killTimer) clearTimeout(killTimer);
       abortController?.signal.removeEventListener('abort', abort);
+      // Always clean up the per-call CODEX_HOME if we made one. Idempotent.
+      homePrep?.cleanup();
     }
   }
 }

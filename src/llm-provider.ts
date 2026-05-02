@@ -54,11 +54,35 @@ export interface RunAgentOptions {
   model?: string;
   abortController?: AbortController;
   onStreamText?: (accumulatedText: string) => void;
+
+  /**
+   * Allowlist of MCP server names the model is permitted to see for this
+   * call. Sourced from the active agent's `agent.yaml.mcp_servers` field.
+   *
+   * **Provider contract (enforced by `llm-provider.test.ts`):** if this list
+   * is non-undefined, the provider MUST expose only servers whose names
+   * appear in it. An empty list MUST result in zero MCP servers exposed.
+   * `undefined` means "no constraint" — provider behaves as if no allowlist
+   * was supplied (whatever the user's global config says).
+   *
+   * Implementations:
+   *   - Claude: filtered in `loadMcpServers()` before passing to the SDK.
+   *   - Codex: filtered via per-call temp `CODEX_HOME` config (see
+   *     `codex-mcp-filter.ts`).
+   *   - Future providers (local Ollama etc.): MUST honor this contract.
+   */
   mcpAllowlist?: string[];
 }
 
 export interface LlmProvider {
   readonly name: LlmProviderName;
+  /**
+   * Run a single user message through this provider.
+   *
+   * Implementations MUST honor every field on `RunAgentOptions`. In
+   * particular, `mcpAllowlist` is a security boundary, not a hint — see
+   * the field doc for the exact contract.
+   */
   runAgent(options: RunAgentOptions): Promise<AgentResult>;
 }
 
