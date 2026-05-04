@@ -42,6 +42,14 @@ import { buildCostFooter } from './cost-footer.js';
 import { resolveModelForProvider } from './model-router.js';
 import { setHighImportanceCallback } from './memory-ingest.js';
 import { messageQueue } from './message-queue.js';
+import {
+  RUNTIME_BUILD_META,
+  RUNTIME_STARTED_AT,
+  checkStale,
+  shortSha,
+  formatRelative,
+  formatUptime,
+} from './build-meta.js';
 import { parseDelegation, delegateToAgent, getAvailableAgents } from './orchestrator.js';
 import { emitChatEvent, setProcessing, setActiveAbort, abortActiveQuery } from './state.js';
 import {
@@ -1265,7 +1273,17 @@ export function createBot(): Bot {
   bot.command('status', async (ctx) => {
     if (!isAuthorised(ctx.chat!.id)) return;
     const s = getSecurityStatus();
+    const stale = checkStale();
+    const agentId = process.env.CLAUDECLAW_AGENT_ID || 'main';
     const lines = [
+      'Sage status:',
+      `- SHA: ${shortSha(stale.runtimeSha)} (built ${formatRelative(RUNTIME_BUILD_META.builtAt)})`,
+      `- Disk SHA: ${shortSha(stale.diskSha)} (built ${formatRelative(stale.diskMeta.builtAt)})`,
+      `- Stale: ${stale.stale ? 'YES' : 'NO'}`,
+      `- PID: ${process.pid}`,
+      `- Uptime: ${formatUptime(Date.now() - RUNTIME_STARTED_AT)}`,
+      `- Mode: ${agentId}`,
+      '',
       `PIN lock: ${s.pinEnabled ? 'enabled' : 'disabled'}`,
       `Session: ${s.locked ? 'LOCKED' : 'unlocked'}`,
       s.idleLockMinutes > 0 ? `Idle lock: ${s.idleLockMinutes}m` : 'Idle lock: disabled',
