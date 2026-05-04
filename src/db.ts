@@ -2722,7 +2722,13 @@ export interface TelegramOutboxRow {
  * markTelegramOutboxDeadLettered, all of which clear the lease) before
  * lease_expires_at. If a worker crashes mid-send, the recovery sweep
  * resets the row to pending after this many seconds. */
-export const TELEGRAM_OUTBOX_LEASE_SECONDS = 60;
+/**
+ * Lease length is bumped well above any plausible Telegram API call so the
+ * recovery sweep only fires for true crashes (process death). The
+ * within-process double-send window is closed by an in-memory single-flight
+ * Set in telegram-outbox.ts; the lease guards crashes only.
+ */
+export const TELEGRAM_OUTBOX_LEASE_SECONDS = 5 * 60;
 
 /** Insert a pending outbox row. Returns the new row id. */
 export function insertTelegramOutbox(
@@ -2892,6 +2898,28 @@ export function getOutboxStats(): TelegramOutboxStats {
   };
 }
 
+/**
+ * Prune sent and dead-lettered outbox rows older than `olderThanDays`.
+ * Without this the outbox grows unbounded — every Telegram message ever
+ * sent stays in the table forever, eventually choking sqlite. Called from
+ * the same daily cleanup path as `cleanupOldMissionTasks`.
+ *
+ * Pending and in_flight rows are NEVER pruned regardless of age — those
+ * still represent undelivered work or an in-progress send.
+ */
+export function pruneSentTelegramOutbox(olderThanDays = 7): number {
+  const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 86400;
+  // sent rows use sent_at; dead-lettered rows have last_attempt_at as the
+  // most-recent terminal timestamp. Fall back to created_at so a row
+  // missing both columns (shouldn't happen, but defensively) still ages out.
+  const result = db.prepare(
+    `DELETE FROM telegram_outbox
+     WHERE status IN ('sent', 'dead-lettered')
+       AND COALESCE(sent_at, last_attempt_at, created_at) < ?`,
+  ).run(cutoff);
+  return result.changes;
+}
+
 // ── Operation Notifications ─────────────────────────────────────────
 //
 // Durable, scheduler-driven notifications. Replaces ScheduleWakeup, which
@@ -2962,6 +2990,40 @@ export function claimOperationNotification(id: number): boolean {
        WHERE id = ? AND status = 'pending'`,
   ).run(now, id);
   return info.changes > 0;
+}
+
+/**
+ * Atomic claim + outbox enqueue for operation_notifications.
+ *
+ * Solves the crash-mid-handoff bug: if the claim and the enqueue are
+ * in separate transactions, a process crash between them marks the
+ * row 'fired' but never enqueues the message — silent loss.
+ *
+ * This wraps both writes in a single sqlite transaction. Either both
+ * commit or neither does. Returns the outbox row id on success, or
+ * null if the row was already claimed (lost the race).
+ */
+export function claimAndEnqueueOperationNotification(
+  rowId: number,
+  enqueue: { agentId: string; chatId: string; payload: string },
+): number | null {
+  const now = Math.floor(Date.now() / 1000);
+  let outboxId: number | null = null;
+  const txn = db.transaction(() => {
+    const claimInfo = db.prepare(
+      `UPDATE operation_notifications
+         SET status = 'fired', fired_at = ?
+         WHERE id = ? AND status = 'pending'`,
+    ).run(now, rowId);
+    if (claimInfo.changes === 0) return;
+    const insertInfo = db.prepare(
+      `INSERT INTO telegram_outbox (agent_id, chat_id, payload, status, created_at)
+       VALUES (?, ?, ?, 'pending', ?)`,
+    ).run(enqueue.agentId, enqueue.chatId, enqueue.payload, now);
+    outboxId = Number(insertInfo.lastInsertRowid);
+  });
+  txn();
+  return outboxId;
 }
 
 /**

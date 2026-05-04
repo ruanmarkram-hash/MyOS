@@ -66,6 +66,25 @@ export type TelegramApiClient = (
 let apiClient: TelegramApiClient | null = null;
 
 /**
+ * In-memory single-flight guard. Closes the within-process double-send race:
+ * the DB lease (now 5min) covers true process crashes, but a slow API call
+ * combined with an overlapping tick could otherwise reclaim a row that is
+ * still actively being delivered. We add row id on claim and remove it in a
+ * `finally` so it is always cleared, even on throw.
+ *
+ * Without this guard, two concurrent ticks calling claim could both see the
+ * same row (in the rare CAS race window) — though the SQL CAS makes that
+ * exceedingly unlikely on better-sqlite3's serial executor, the cost of an
+ * extra Set membership check is negligible and the guarantee is absolute.
+ */
+const currentlyDelivering = new Set<number>();
+
+/** @internal — for tests. */
+export function _getCurrentlyDeliveringSize(): number {
+  return currentlyDelivering.size;
+}
+
+/**
  * Wire the outbox to the real Telegram API. Call once at bot startup.
  * Until this is called, ticks will mark rows as transient failures
  * (so nothing is lost; sends are simply held until the bot is ready).
@@ -162,8 +181,6 @@ function errorMessage(err: unknown): string {
  * (sent + failed + dead-lettered).
  */
 export async function tickTelegramOutbox(): Promise<number> {
-  const client = apiClient;
-
   // Recovery sweep: if a previous worker crashed mid-send, its claimed
   // rows sit in 'in_flight' with an expired lease. Reset them to
   // 'pending' so we re-attempt delivery on this tick.
@@ -177,68 +194,83 @@ export async function tickTelegramOutbox(): Promise<number> {
 
   let processed = 0;
   for (const row of due) {
-    const parsed = parsePayload(row);
-    if (!parsed) {
-      // Permanently malformed row — dead-letter immediately. Don't
-      // recurse on the meta-alert here; just log and move on.
-      markTelegramOutboxDeadLettered(row.id, 'malformed payload');
-      logger.error({ rowId: row.id }, 'telegram-outbox: malformed payload, dead-lettered');
-      processed++;
+    // Single-flight guard: if this id is already being delivered by an
+    // overlapping tick within the same process, skip. The other tick will
+    // mark the row as sent / failed / dead-lettered.
+    if (currentlyDelivering.has(row.id)) {
+      logger.warn({ rowId: row.id }, 'telegram-outbox: skipping row already in flight in-process');
       continue;
     }
-
-    if (!client) {
-      // Client not yet wired — defer with a short backoff so we don't
-      // spin. attempt_count is incremented but capped via the same
-      // dead-letter path; in practice the bot wires the client at
-      // startup before the first tick.
-      const nextRetry = Math.floor(Date.now() / 1000) + 5;
-      scheduleTelegramOutboxRetry(row.id, nextRetry, 'outbox client not yet wired');
-      processed++;
-      continue;
-    }
-
+    currentlyDelivering.add(row.id);
     try {
-      const resp = await client(parsed.method, row.chat_id, parsed.params);
-      const messageId = resp && typeof resp.message_id === 'number' ? resp.message_id : null;
-      markTelegramOutboxSent(row.id, messageId);
-      logger.info(
-        { rowId: row.id, method: parsed.method, messageId, attempts: row.attempt_count + 1 },
-        'telegram-outbox: delivered',
-      );
-    } catch (err) {
-      const rate = detectRateLimit(err);
-      const newAttemptCount = row.attempt_count + 1;
-      const errMsg = errorMessage(err);
-
-      const hitGenericCap = !rate && newAttemptCount >= MAX_ATTEMPTS;
-      // Eventually dead-letter persistent 429s too: real throttles
-      // resolve within minutes, but a bot that's been outright banned
-      // or a malformed chat target can return 429 forever.
-      const hit429Cap = !!rate && newAttemptCount >= MAX_429_ATTEMPTS;
-      if (hitGenericCap || hit429Cap) {
-        markTelegramOutboxDeadLettered(row.id, errMsg);
-        emitDeadLetterMetaAlert(row, errMsg);
-        logger.error(
-          { rowId: row.id, agentId: row.agent_id, attempts: newAttemptCount, err: errMsg, rate429: !!rate },
-          'telegram-outbox: dead-lettered after max attempts',
-        );
-      } else {
-        const delaySeconds = rate
-          ? rate.retryAfterSeconds
-          : exponentialBackoffSeconds(row.attempt_count);
-        const nextRetry = Math.floor(Date.now() / 1000) + delaySeconds;
-        scheduleTelegramOutboxRetry(row.id, nextRetry, errMsg);
-        logger.warn(
-          { rowId: row.id, attempts: newAttemptCount, delaySeconds, rate429: !!rate, err: errMsg },
-          'telegram-outbox: scheduling retry',
-        );
-      }
+      await processOneRow(row);
+    } finally {
+      currentlyDelivering.delete(row.id);
     }
     processed++;
   }
 
   return processed;
+}
+
+async function processOneRow(row: TelegramOutboxRow): Promise<void> {
+  const client = apiClient;
+  const parsed = parsePayload(row);
+  if (!parsed) {
+    // Permanently malformed row — dead-letter immediately. Don't
+    // recurse on the meta-alert here; just log and move on.
+    markTelegramOutboxDeadLettered(row.id, 'malformed payload');
+    logger.error({ rowId: row.id }, 'telegram-outbox: malformed payload, dead-lettered');
+    return;
+  }
+
+  if (!client) {
+    // Client not yet wired — defer with a short backoff so we don't
+    // spin. attempt_count is incremented but capped via the same
+    // dead-letter path; in practice the bot wires the client at
+    // startup before the first tick.
+    const nextRetry = Math.floor(Date.now() / 1000) + 5;
+    scheduleTelegramOutboxRetry(row.id, nextRetry, 'outbox client not yet wired');
+    return;
+  }
+
+  try {
+    const resp = await client(parsed.method, row.chat_id, parsed.params);
+    const messageId = resp && typeof resp.message_id === 'number' ? resp.message_id : null;
+    markTelegramOutboxSent(row.id, messageId);
+    logger.info(
+      { rowId: row.id, method: parsed.method, messageId, attempts: row.attempt_count + 1 },
+      'telegram-outbox: delivered',
+    );
+  } catch (err) {
+    const rate = detectRateLimit(err);
+    const newAttemptCount = row.attempt_count + 1;
+    const errMsg = errorMessage(err);
+
+    const hitGenericCap = !rate && newAttemptCount >= MAX_ATTEMPTS;
+    // Eventually dead-letter persistent 429s too: real throttles
+    // resolve within minutes, but a bot that's been outright banned
+    // or a malformed chat target can return 429 forever.
+    const hit429Cap = !!rate && newAttemptCount >= MAX_429_ATTEMPTS;
+    if (hitGenericCap || hit429Cap) {
+      markTelegramOutboxDeadLettered(row.id, errMsg);
+      emitDeadLetterMetaAlert(row, errMsg);
+      logger.error(
+        { rowId: row.id, agentId: row.agent_id, attempts: newAttemptCount, err: errMsg, rate429: !!rate },
+        'telegram-outbox: dead-lettered after max attempts',
+      );
+    } else {
+      const delaySeconds = rate
+        ? rate.retryAfterSeconds
+        : exponentialBackoffSeconds(row.attempt_count);
+      const nextRetry = Math.floor(Date.now() / 1000) + delaySeconds;
+      scheduleTelegramOutboxRetry(row.id, nextRetry, errMsg);
+      logger.warn(
+        { rowId: row.id, attempts: newAttemptCount, delaySeconds, rate429: !!rate, err: errMsg },
+        'telegram-outbox: scheduling retry',
+      );
+    }
+  }
 }
 
 /**

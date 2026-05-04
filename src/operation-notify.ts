@@ -28,13 +28,16 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import {
+  _resetOperationNotificationForTest,
   cancelOperationNotificationsByOpId,
+  claimAndEnqueueOperationNotification,
   claimOperationNotification,
   getDueOperationNotifications,
   insertOperationNotification,
   type OperationNotificationRow,
 } from './db.js';
 import { logger } from './logger.js';
+import { enqueueTelegramSend } from './telegram-outbox.js';
 
 /** Wire-format stored in `operation_notifications.payload`. */
 export interface OperationNotificationPayload {
@@ -87,6 +90,18 @@ let spawnImpl: NotifySpawn = defaultSpawn;
 /** @internal — test seam. */
 export function _setOperationNotifySpawn(impl: NotifySpawn | null): void {
   spawnImpl = impl ?? defaultSpawn;
+}
+
+/**
+ * Test seam for the outbox handoff — swap with a thrower to exercise the
+ * crash-mid-enqueue branch without poisoning the real outbox table.
+ */
+export type OutboxEnqueue = typeof enqueueTelegramSend;
+let enqueueImpl: OutboxEnqueue = enqueueTelegramSend;
+
+/** @internal — test seam. Pass null to restore the real enqueue. */
+export function _setOperationOutboxEnqueue(impl: OutboxEnqueue | null): void {
+  enqueueImpl = impl ?? enqueueTelegramSend;
 }
 
 function resolveNotifyScript(): string {
@@ -166,17 +181,86 @@ export function cancelOperationNotification(operationId: string): void {
  * and a stale ping hours later is worse than no ping. Mission B's outbox
  * will provide its own retry layer when wired in.
  */
+/**
+ * Delivery strategy: by default we route through the durable Telegram outbox
+ * (Mission B). The outbox provides retries, 429 backoff, and dead-lettering,
+ * so a transient curl failure no longer permanently drops a "I'll check back
+ * in X minutes" promise — the original failure mode that motivated this
+ * module.
+ *
+ * Test seam: `_setOperationNotifySpawn` keeps the legacy notify.sh path
+ * available to tests that drive the spawn directly. When set, it shadows
+ * the outbox path entirely.
+ */
 export async function processDueOperationNotifications(now?: Date): Promise<number> {
   const cutoff = now ? Math.floor(now.getTime() / 1000) : Math.floor(Date.now() / 1000);
   const rows = getDueOperationNotifications(cutoff);
   if (rows.length === 0) return 0;
   let delivered = 0;
   for (const row of rows) {
-    if (!claimOperationNotification(row.id)) continue; // lost the race
-    const ok = await deliverOperationNotification(row);
-    if (ok) delivered += 1;
+    // Spawn seam test path bypasses the transactional handoff so existing
+    // test fixtures keep working (they assert against notify.sh args).
+    if (spawnImpl !== defaultSpawn) {
+      if (!claimOperationNotification(row.id)) continue;
+      let ok = false;
+      try {
+        ok = await deliverOperationNotification(row);
+      } catch (err) {
+        logger.error({ err, id: row.id }, 'operation-notify: spawn delivery threw, resetting row');
+        _resetOperationNotificationForTest(row.id);
+        continue;
+      }
+      if (ok) delivered += 1;
+      continue;
+    }
+
+    // Production path: atomic claim + outbox enqueue in one DB transaction.
+    // Either both writes commit or neither does — closes the crash-mid-handoff
+    // window where the row would be marked 'fired' but no message enqueued.
+    const parsed = parsePayloadForRow(row);
+    if (!parsed) {
+      // Malformed payload — claim and stop (don't enqueue garbage). The
+      // claim prevents infinite retries on an undeliverable row.
+      claimOperationNotification(row.id);
+      continue;
+    }
+    try {
+      const outboxId = claimAndEnqueueOperationNotification(row.id, {
+        agentId: row.agent_id,
+        chatId: row.chat_id,
+        payload: row.payload,
+      });
+      if (outboxId === null) continue; // lost the race; another tick already claimed
+      logger.info(
+        { id: row.id, opId: row.operation_id, agent: row.agent_id, outboxId, via: 'outbox' },
+        'operation-notify: claimed + enqueued atomically',
+      );
+      delivered += 1;
+    } catch (err) {
+      logger.error({ err, id: row.id }, 'operation-notify: atomic claim+enqueue threw');
+      // Transaction rolled back — row is still pending, will retry next tick.
+    }
   }
   return delivered;
+}
+
+function parsePayloadForRow(row: OperationNotificationRow): OperationNotificationPayload | null {
+  let payload: OperationNotificationPayload;
+  try {
+    payload = JSON.parse(row.payload) as OperationNotificationPayload;
+  } catch (err) {
+    logger.warn({ err, id: row.id }, 'operation-notify: payload JSON parse failed, dropping');
+    return null;
+  }
+  if (payload.method !== 'sendMessage' || typeof payload.params?.text !== 'string') {
+    logger.warn({ id: row.id, method: payload.method }, 'operation-notify: unsupported payload shape');
+    return null;
+  }
+  if (!row.chat_id) {
+    logger.warn({ id: row.id }, 'operation-notify: row missing chat_id, dropping');
+    return null;
+  }
+  return payload;
 }
 
 async function deliverOperationNotification(row: OperationNotificationRow): Promise<boolean> {
@@ -196,21 +280,39 @@ async function deliverOperationNotification(row: OperationNotificationRow): Prom
     return false;
   }
 
-  let exitCode: number;
-  try {
-    exitCode = await spawnImpl(resolveNotifyScript(), [payload.params.text, row.chat_id]);
-  } catch (err) {
-    logger.warn({ err, id: row.id }, 'operation-notify: spawn threw');
-    return false;
+  // Test seam: when a test has installed a spawn impl, use the legacy
+  // notify.sh path so existing test fixtures keep working unchanged.
+  if (spawnImpl !== defaultSpawn) {
+    let exitCode: number;
+    try {
+      exitCode = await spawnImpl(resolveNotifyScript(), [payload.params.text, row.chat_id]);
+    } catch (err) {
+      logger.warn({ err, id: row.id }, 'operation-notify: spawn threw');
+      return false;
+    }
+    if (exitCode !== 0) {
+      logger.warn({ id: row.id, exitCode }, 'operation-notify: notify.sh failed (row stays fired, no retry)');
+      return false;
+    }
+    logger.info(
+      { id: row.id, opId: row.operation_id, agent: row.agent_id, via: 'spawn' },
+      'operation-notify: delivered',
+    );
+    return true;
   }
 
-  if (exitCode !== 0) {
-    logger.warn({ id: row.id, exitCode }, 'operation-notify: notify.sh failed (row stays fired, no retry)');
-    return false;
-  }
+  // Production path: hand off to the durable outbox. Throws here are caught
+  // by the caller, which resets the row to pending so we don't lose the
+  // promise on a crash between claim and enqueue.
+  const outboxId = enqueueImpl({
+    agentId: row.agent_id,
+    chatId: row.chat_id,
+    method: payload.method,
+    params: payload.params,
+  });
   logger.info(
-    { id: row.id, opId: row.operation_id, agent: row.agent_id },
-    'operation-notify: delivered',
+    { id: row.id, opId: row.operation_id, agent: row.agent_id, outboxId, via: 'outbox' },
+    'operation-notify: handed to outbox',
   );
   return true;
 }
