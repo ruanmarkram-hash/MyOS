@@ -44,13 +44,13 @@ import { fileURLToPath } from 'url';
 
 import {
   type MissionTask,
+  enqueueTelegramAndMarkMissionDelivered,
   getLatestChatIdForAgent,
   markMissionDelivered,
   markMissionNotified,
   resetMissionNotified,
 } from './db.js';
 import { logger } from './logger.js';
-import { enqueueTelegramSend } from './telegram-outbox.js';
 
 export type MissionTerminalState = 'completed' | 'failed' | 'partial' | 'timed_out';
 
@@ -175,8 +175,10 @@ export function _setNotifySpawn(impl: NotifySpawn | null): void {
  *   - getLatestChatIdForAgent returns null (we mark delivered to break the
  *     retry loop, since we have no destination)
  *
- * Returns true iff a ping was actually delivered (notify.sh exit 0 AND
- * Telegram returned ok:true).
+ * Returns true iff the notification was successfully handed off to a
+ * durable channel (outbox enqueue succeeded, OR notify.sh fallback
+ * exited 0). The outbox owns actual Telegram delivery from there with
+ * its own retry / lease / dead-letter machinery.
  */
 export async function notifyMissionDone(
   task: MissionTask,
@@ -219,16 +221,19 @@ export async function notifyMissionDone(
   // notify.sh remains as a fallback for the rare case where DB writes
   // fail (e.g. disk full mid-INSERT). It is no longer the primary path.
   try {
-    enqueueTelegramSend({
-      agentId: task.created_by,
-      chatId,
+    // Atomic: outbox INSERT + delivered_at UPDATE in one db.transaction.
+    // Codex review of ee63a3b found the previous two-call sequence had a
+    // duplicate-delivery window: a crash between the writes left
+    // delivered_at NULL while the outbox row already existed, so the
+    // next recovery sweep re-enqueued a duplicate.
+    const payload = JSON.stringify({
       method: 'sendMessage',
       params: { text: message, parse_mode: 'HTML' },
     });
-    markMissionDelivered(task.id);
+    enqueueTelegramAndMarkMissionDelivered(task.id, task.created_by, chatId, payload);
     logger.info(
       { missionId: task.id, state, agent: task.created_by },
-      'Mission notify enqueued to durable outbox',
+      'Mission notify enqueued to durable outbox (atomic)',
     );
     return true;
   } catch (err) {

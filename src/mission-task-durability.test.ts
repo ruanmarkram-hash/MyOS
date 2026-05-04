@@ -17,24 +17,27 @@ import {
   setSession,
 } from './db.js';
 
-// Mission notify now delivers via the durable telegram-outbox; mock the
-// enqueue function so the recovery-sweep replay test can observe it.
-vi.mock('./telegram-outbox.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./telegram-outbox.js')>();
+// Mission notify uses enqueueTelegramAndMarkMissionDelivered (atomic);
+// mock that helper so the recovery-sweep replay test can observe it.
+vi.mock('./db.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./db.js')>();
   return {
     ...actual,
-    enqueueTelegramSend: vi.fn<typeof actual.enqueueTelegramSend>(() => 1),
+    enqueueTelegramAndMarkMissionDelivered: vi.fn<typeof actual.enqueueTelegramAndMarkMissionDelivered>(() => 1),
   };
 });
 
 import { _setNotifySpawn, notifyMissionDone } from './mission-notify.js';
-import { enqueueTelegramSend } from './telegram-outbox.js';
+import { enqueueTelegramAndMarkMissionDelivered, markMissionDelivered as actualMarkMissionDelivered } from './db.js';
 
 describe('mission notify recovery sweep', () => {
   beforeEach(() => {
     _initTestDatabase();
-    vi.mocked(enqueueTelegramSend).mockReset();
-    vi.mocked(enqueueTelegramSend).mockImplementation(() => 1);
+    vi.mocked(enqueueTelegramAndMarkMissionDelivered).mockReset();
+    vi.mocked(enqueueTelegramAndMarkMissionDelivered).mockImplementation((missionId) => {
+      actualMarkMissionDelivered(missionId);
+      return 1;
+    });
   });
   afterEach(() => {
     _setNotifySpawn(null);
@@ -62,8 +65,10 @@ describe('mission notify recovery sweep', () => {
 
   it('replays the missed notification: outbox enqueue fires and timestamps are set', async () => {
     const calls: Array<{ chatId: string; params: Record<string, unknown> }> = [];
-    vi.mocked(enqueueTelegramSend).mockImplementation((opts) => {
-      calls.push({ chatId: opts.chatId, params: opts.params });
+    vi.mocked(enqueueTelegramAndMarkMissionDelivered).mockImplementation((missionId, agentId, chatId, payload) => {
+      const parsed = JSON.parse(payload) as { method: string; params: Record<string, unknown> };
+      calls.push({ chatId, params: parsed.params });
+      actualMarkMissionDelivered(missionId);
       return 1;
     });
 

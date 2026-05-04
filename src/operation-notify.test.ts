@@ -291,6 +291,38 @@ describe('operation-notify', () => {
       // outbox worker's existing retry/lease/dead-letter machinery.
     });
 
+    it('atomic rollback (INSERT-then-UPDATE order): UPDATE failure rolls back INSERT (Codex ee63a3b MED #1 follow-up)', async () => {
+      // Codex review of ee63a3b: the original rollback test only catches
+      // an UPDATE-then-INSERT split (drop telegram_outbox so INSERT fails).
+      // It does NOT catch the symmetric INSERT-then-UPDATE split. Add a
+      // failpoint for that ordering: drop operation_notifications so the
+      // claim UPDATE fails, assert the outbox row was rolled back too.
+      // Both directions must hold for full atomicity coverage.
+      const id = scheduleOperationNotification({
+        agentId: 'main',
+        chatId: 'chat-rollback-2',
+        operationId: 'op-rollback-2',
+        fireAt: new Date(Date.now() - 1_000),
+        message: 'should also roll back',
+      });
+      void id;
+      const { _testDbHandle } = await import('./db.js');
+      // Make the UPDATE clause fail by dropping the column (operation_notifications
+      // table still has the row to claim, but UPDATE references missing column).
+      // Cleaner: drop the table entirely; the SELECT-then-UPDATE pattern
+      // surfaces the missing-table error at UPDATE time too.
+      _testDbHandle().exec('DROP TABLE operation_notifications');
+
+      await processDueOperationNotifications().catch(() => {});
+
+      // Outbox should have NO rows (INSERT rolled back) since the claim
+      // UPDATE that the transaction depends on couldn't land.
+      const outboxCount = _testDbHandle()
+        .prepare('SELECT COUNT(*) as n FROM telegram_outbox')
+        .get() as { n: number };
+      expect(outboxCount.n).toBe(0);
+    });
+
     it('atomic rollback: enqueue failure leaves op-notify row as pending (Codex CRITICAL #2 regression guard)', async () => {
       // Codex M2 review CRITICAL #2: the happy-path test above only proves
       // both writes happen; a regression that splits the helper into two

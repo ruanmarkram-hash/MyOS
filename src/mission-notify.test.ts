@@ -12,15 +12,16 @@ import {
   type MissionTask,
 } from './db.js';
 
-// IMPORTANT: mission-notify.ts now uses the durable telegram-outbox as the
-// primary delivery path; notify.sh is only the fallback when the outbox
-// enqueue itself throws. We mock the outbox so each test can choose
-// whether enqueue succeeds, throws, or simply records the payload.
-vi.mock('./telegram-outbox.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./telegram-outbox.js')>();
+// IMPORTANT: mission-notify.ts now uses enqueueTelegramAndMarkMissionDelivered
+// from db.ts (atomic outbox INSERT + delivered_at UPDATE in one transaction)
+// to close the duplicate-delivery window flagged in the ee63a3b Codex review.
+// We mock that helper so each test can choose whether enqueue succeeds,
+// throws, or simply records the payload.
+vi.mock('./db.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./db.js')>();
   return {
     ...actual,
-    enqueueTelegramSend: vi.fn<typeof actual.enqueueTelegramSend>(() => 1),
+    enqueueTelegramAndMarkMissionDelivered: vi.fn<typeof actual.enqueueTelegramAndMarkMissionDelivered>(() => 1),
   };
 });
 
@@ -30,7 +31,7 @@ import {
   notifyMissionDone,
   _setNotifySpawn,
 } from './mission-notify.js';
-import { enqueueTelegramSend } from './telegram-outbox.js';
+import { enqueueTelegramAndMarkMissionDelivered, markMissionDelivered as actualMarkMissionDelivered } from './db.js';
 
 type EnqueueCall = {
   agentId: string;
@@ -42,26 +43,26 @@ type EnqueueCall = {
 type SpawnCall = { script: string; args: string[] };
 
 /**
- * Default-success enqueue capture. Returns the array that subsequent
- * enqueueTelegramSend invocations will populate.
+ * Default-success enqueue capture. Records calls AND performs the real
+ * delivered_at UPDATE so the test can still assert on the timestamp
+ * (the production helper does both atomically).
  */
 function captureEnqueues(): { calls: EnqueueCall[] } {
   const calls: EnqueueCall[] = [];
-  vi.mocked(enqueueTelegramSend).mockImplementation((opts) => {
-    calls.push({
-      agentId: opts.agentId,
-      chatId: opts.chatId,
-      method: opts.method,
-      params: opts.params,
-    });
+  vi.mocked(enqueueTelegramAndMarkMissionDelivered).mockImplementation((missionId, agentId, chatId, payload) => {
+    const parsed = JSON.parse(payload) as { method: string; params: Record<string, unknown> };
+    calls.push({ agentId, chatId, method: parsed.method, params: parsed.params });
+    // Mimic the real helper's side effect: stamp delivered_at on the
+    // mission task. Tests assert on this column.
+    actualMarkMissionDelivered(missionId);
     return 1;
   });
   return { calls };
 }
 
-/** Force the outbox enqueue to throw (drives mission-notify into the spawn fallback path). */
+/** Force the atomic helper to throw (drives mission-notify into the spawn fallback path). */
 function failEnqueues(err: Error = new Error('outbox down')): void {
-  vi.mocked(enqueueTelegramSend).mockImplementation(() => {
+  vi.mocked(enqueueTelegramAndMarkMissionDelivered).mockImplementation(() => {
     throw err;
   });
 }
@@ -79,10 +80,12 @@ function captureSpawns(exitCode = 0): { calls: SpawnCall[] } {
 describe('mission-notify', () => {
   beforeEach(() => {
     _initTestDatabase();
-    vi.mocked(enqueueTelegramSend).mockReset();
-    // Default: enqueue succeeds and returns a fake row id. Tests that need
-    // failure modes call failEnqueues() / captureEnqueues() explicitly.
-    vi.mocked(enqueueTelegramSend).mockImplementation(() => 1);
+    vi.mocked(enqueueTelegramAndMarkMissionDelivered).mockReset();
+    // Default: enqueue succeeds, stamps delivered_at, returns a fake row id.
+    vi.mocked(enqueueTelegramAndMarkMissionDelivered).mockImplementation((missionId) => {
+      actualMarkMissionDelivered(missionId);
+      return 1;
+    });
   });
   afterEach(() => {
     _setNotifySpawn(null);

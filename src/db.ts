@@ -765,8 +765,23 @@ export function _initTestDatabase(): void {
  * inject controlled failure modes (e.g. drop a table mid-transaction to
  * verify rollback). Production code MUST NOT import this; it bypasses
  * every safety the regular API provides.
+ *
+ * Hard-guarded against accidental production import: throws unless we're
+ * running under Vitest. Caught in Codex review of ee63a3b — left
+ * unprotected, anyone could `import { _testDbHandle }` and bypass the
+ * DDL-stable API surface.
  */
 export function _testDbHandle(): Database.Database {
+  // Vitest sets VITEST=true and process.env.VITEST_WORKER_ID in worker
+  // processes. Either signal is sufficient.
+  const inVitest = process.env.VITEST === 'true' || !!process.env.VITEST_WORKER_ID;
+  if (!inVitest) {
+    throw new Error(
+      '_testDbHandle is test-only and refuses to run outside Vitest. ' +
+      'Production code MUST NOT import this — it bypasses every safety ' +
+      'the regular DB API provides.',
+    );
+  }
   return db;
 }
 
@@ -2178,15 +2193,56 @@ export function resetMissionNotified(id: string): void {
 }
 
 /**
- * Stamp delivered_at after notify.sh has confirmed Telegram accepted
- * the message (HTTP 200 + ok:true). This is the durable success marker
- * the recovery sweep filters on.
+ * Stamp delivered_at to mark the mission notification as durably handed
+ * off. Since the outbox migration this means "row inserted into
+ * telegram_outbox with status='pending'"; the outbox owns retries +
+ * dead-letter from there. The recovery sweep filters on
+ * `delivered_at IS NULL` so a crash before this stamp re-enqueues.
+ *
+ * Prefer enqueueTelegramAndMarkMissionDelivered() when paired with an
+ * outbox enqueue — non-atomic enqueue + mark sequences leave a
+ * duplicate-delivery window if the process crashes between them.
  */
 export function markMissionDelivered(id: string): void {
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
     `UPDATE mission_tasks SET delivered_at = ? WHERE id = ?`,
   ).run(now, id);
+}
+
+/**
+ * Atomic mission-notify handoff: insert the outbox row AND stamp
+ * delivered_at on the mission task, in a single transaction. Closes
+ * the duplicate-delivery window where a crash between two non-atomic
+ * writes leaves delivered_at NULL but the outbox row already exists,
+ * so the next recovery sweep re-enqueues a duplicate.
+ *
+ * Codex review of ee63a3b flagged this gap. Use this in
+ * notifyMissionDone instead of enqueueTelegramSend + markMissionDelivered.
+ *
+ * Returns the outbox row id on success. Throws on any DB failure (the
+ * caller is expected to fall back to a non-durable path or retry).
+ */
+export function enqueueTelegramAndMarkMissionDelivered(
+  missionId: string,
+  agentId: string,
+  chatId: string,
+  payload: string,
+): number {
+  const now = Math.floor(Date.now() / 1000);
+  let outboxId = 0;
+  const txn = db.transaction(() => {
+    const insertInfo = db.prepare(
+      `INSERT INTO telegram_outbox (agent_id, chat_id, payload, status, created_at)
+       VALUES (?, ?, ?, 'pending', ?)`,
+    ).run(agentId, chatId, payload, now);
+    outboxId = Number(insertInfo.lastInsertRowid);
+    db.prepare(
+      `UPDATE mission_tasks SET delivered_at = ? WHERE id = ?`,
+    ).run(now, missionId);
+  });
+  txn();
+  return outboxId;
 }
 
 /** @internal — test seam to age a row's completed_at for recovery sweep tests. */
