@@ -20,6 +20,8 @@ import { setTelegramConnected, setBotInfo } from './state.js';
 import { messageQueue } from './message-queue.js';
 import { RUNTIME_BUILD_META, createStaleWatcher, shortSha, markShuttingDown } from './build-meta.js';
 import { enqueueTelegramSend } from './telegram-outbox.js';
+import { getTelegramOutboxRow } from './db.js';
+import { createStaleCodeAlerter } from './stale-code-alert.js';
 
 // Parse --agent flag
 const agentFlagIndex = process.argv.indexOf('--agent');
@@ -496,31 +498,53 @@ async function main(): Promise<void> {
   // Auto-restart for sub-agents only; main is locked by CLAUDE.md and
   // would self-terminate the very supervisor that handles /restart.
   const staleWatcher = createStaleWatcher();
+  // STALE_CODE_FALLBACK_MS: how long a stale-code outbox row may sit
+  // unsent before we ALSO fprint a [STALE-CODE-FALLBACK] line to stderr
+  // (visible in launchctl logs). Default 5min ≈ 2x the worst-case
+  // dead-letter window. Defends against the scenario where the outbox
+  // itself is broken (DB locked, table missing, sender worker dead) so
+  // the alert never reaches Telegram and the agent silently runs stale.
+  const STALE_CODE_FALLBACK_MS = parseInt(process.env.STALE_CODE_FALLBACK_MS ?? '300000', 10);
+  const staleAlerter = ALLOWED_CHAT_ID
+    ? createStaleCodeAlerter({
+        enqueue: (text) => enqueueTelegramSend({
+          agentId: AGENT_ID,
+          chatId: ALLOWED_CHAT_ID,
+          method: 'sendMessage',
+          params: { text },
+        }),
+        getRow: getTelegramOutboxRow,
+        fallbackMs: STALE_CODE_FALLBACK_MS,
+      })
+    : null;
   const staleInterval = setInterval(() => {
+    // Sweep first — Codex HIGH #2: a previously-tracked outbox row may
+    // be stuck unsent. The sweep emits the stderr fallback if so. We
+    // call it on EVERY tick (not just when shouldNotify fires) because
+    // shouldNotify is debounced by the watcher and would let stuck rows
+    // rot indefinitely.
+    if (staleAlerter) staleAlerter.sweep();
+
     const r = staleWatcher.tick();
     if (!r.stale) return;
     const diffMsg = `STALE_CODE_DETECTED runtime_sha=${shortSha(r.runtimeSha)} disk_sha=${shortSha(r.diskSha)}`;
     logger.warn(
-      { runtimeSha: r.runtimeSha, diskSha: r.diskSha, agentId: AGENT_ID },
+      { runtimeSha: r.runtimeSha, diskSha: r.diskSha, agentId: AGENT_ID, suppressedReason: r.suppressedReason },
       diffMsg,
     );
-    if (r.shouldNotify && ALLOWED_CHAT_ID) {
+    if (r.shouldNotify && staleAlerter) {
       const tag = AGENT_ID === 'main' ? 'main' : AGENT_ID;
-      // Use durable outbox — stale-code alert is a push notification (user
-      // not waiting), needs retry on failure or it joins the class of bugs
-      // that triggered building the outbox in the first place.
-      try {
-        enqueueTelegramSend({
-          agentId: AGENT_ID,
-          chatId: ALLOWED_CHAT_ID,
-          method: 'sendMessage',
-          params: {
-            text: `[${tag} ⚠️] Stale code detected — runtime running ${shortSha(r.runtimeSha)}, disk has ${shortSha(r.diskSha)}. Run /restart to pick up changes.`,
-          },
-        });
-      } catch (err) {
-        logger.warn({ err }, 'Stale-code outbox enqueue failed');
-      }
+      // staleAlerter handles BOTH paths:
+      //   - normal: enqueue to durable outbox
+      //   - fallback: if enqueue throws OR the previous row is still
+      //     pending past STALE_CODE_FALLBACK_MS, fprint to stderr with
+      //     [STALE-CODE-FALLBACK] prefix so launchctl logs surface it.
+      // We deliberately do NOT direct-call bot.api.sendMessage — that's
+      // the meta-recursion guard pattern (telegram-outbox dead-letters
+      // only via stderr too).
+      staleAlerter.notify(
+        `[${tag} ⚠️] Stale code detected — runtime running ${shortSha(r.runtimeSha)}, disk has ${shortSha(r.diskSha)}. Run /restart to pick up changes.`,
+      );
     }
     // Auto-restart for non-main agents is intentionally deferred —
     // Mission B/C/D may also touch the same launchctl path, and we

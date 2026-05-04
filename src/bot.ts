@@ -130,6 +130,7 @@ import {
 import { getSlackConversations, getSlackMessages, sendSlackMessage, SlackConversation } from './slack.js';
 import { getWaChats, getWaChatMessages, sendWhatsAppMessage, WaChat } from './whatsapp.js';
 import { enqueueTelegramSend } from './telegram-outbox.js';
+import { createProgressPulse, readProgressPulseDefaults } from './progress-pulse.js';
 
 // Per-chat voice mode toggle (in-memory, resets on restart)
 const voiceEnabledChats = new Set<string>();
@@ -528,32 +529,47 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
 
   setProcessing(chatIdStr, true);
 
+  // Codex HIGH #1: pulse holds an internal setInterval. Whoever creates
+  // it owns the dispose. handleMessage is the owner; the outer finally
+  // calls pulse.dispose() so we never leak timers across requests.
+  // Declared in the outer scope so it's visible in the finally block.
+  let pulse: ReturnType<typeof createProgressPulse> | null = null;
+
   try {
-    // Progress callback: surface agent activity to Telegram + SSE.
-    // Tool activity is throttled to one Telegram update per 30s to avoid spam.
-    let lastToolNotifyTime = 0;
-    let lastToolDesc = '';
-    const TOOL_NOTIFY_INTERVAL_MS = 30_000;
+    // Progress callback: surface agent activity to the dashboard SSE
+    // bus. Telegram surface stays muted for tool activity (locked
+    // 2026-05-04 — descriptions are raw shell commands and bloat the
+    // chat). The progress-pulse adds a coalesced "agent still alive"
+    // heartbeat so the dashboard / streaming-off sessions don't go dark
+    // between user-visible events. Defaults: every 8 tool calls or 45s,
+    // whichever first; both env-tunable.
+    const pulseDefaults = readProgressPulseDefaults();
+    pulse = createProgressPulse({
+      everyNTools: pulseDefaults.everyNTools,
+      everyMs: pulseDefaults.everyMs,
+      emit: (description) => emitChatEvent({ type: 'progress', chatId: chatIdStr, description }),
+    });
 
     const onProgress = (event: AgentProgressEvent) => {
       if (event.type === 'task_started') {
-        // Subagent task lifecycle stays on the dashboard (emitChatEvent) but
-        // is NO LONGER mirrored to Telegram — descriptions are often raw
-        // shell commands and other internals that bloat the chat with no
-        // signal. The parent agent's own reply is the user-facing surface.
+        // Subagent task lifecycle stays on the dashboard but is NOT
+        // mirrored to Telegram — same lock as tool_active. Counts as a
+        // user-visible event (the dashboard renders it) so the pulse
+        // window resets.
         emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
+        pulse?.onUserVisibleEvent();
       } else if (event.type === 'task_completed') {
         emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
+        pulse?.onUserVisibleEvent();
       } else if (event.type === 'tool_active') {
-        // Tool activity stays on the dashboard (emitChatEvent) but is NO
-        // LONGER mirrored to Telegram. The previous "⚙️ Running command..."
-        // throttled-to-30s pings created a wall of notifications during long
-        // sessions (rebases, multi-step audits) with no actionable signal —
-        // the user already sees the parent agent's streamed text or final
-        // reply. If a long operation needs progress visibility, send a
-        // dedicated message rather than relying on tool-active mirroring.
+        // Per-tool dashboard event preserved so the activity panel
+        // shows what's actually running. The pulse below ALSO fires
+        // periodically with a coalesced summary — useful for the
+        // streaming-off case where the activity panel may not be
+        // visible (mobile dashboard, SSE consumer that only listens
+        // for pulses, etc.).
         emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
-        lastToolDesc = event.description;
+        pulse?.onTool(event.description);
       }
     };
 
@@ -586,6 +602,9 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
 
       globalStreamLastEdit.set(chatIdStr, now);
       lastEditLength = accumulated.length;
+      // The user just saw fresh content — reset the pulse window so
+      // the heartbeat doesn't fire redundantly right after.
+      pulse?.onUserVisibleEvent();
 
       if (!streamMsgId) {
         void ctx.reply(displayText).then((sent) => {
@@ -798,6 +817,11 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       logger.error({ err }, 'Agent error (unclassified)');
       await ctx.reply('Something went wrong. Check the logs and try again.');
     }
+  } finally {
+    // Codex HIGH #1: tear down the progress-pulse interval timer when
+    // the request finishes. Without this, every handleMessage call leaks
+    // an unref'd setInterval for the life of the process.
+    pulse?.dispose();
   }
 }
 
