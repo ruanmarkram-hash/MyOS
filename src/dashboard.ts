@@ -51,7 +51,8 @@ import {
   getWarRoomTranscript,
 } from './db.js';
 import { generateContent, parseJsonResponse } from './gemini.js';
-import { getSecurityStatus } from './security.js';
+import { getSecurityStatus, getScrubbedSdkEnv } from './security.js';
+import { readEnvFile } from './env.js';
 import { listAgentIds, loadAgentConfig, setAgentModel } from './agent-config.js';
 import {
   listTemplates,
@@ -768,9 +769,22 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       return { ok: false, data: { error: 'meet-cli not built; run npm run build' }, stderr: '', code: -1 };
     }
     const { spawn } = await import('child_process');
+    // SDK-CLASS spawn: meet-cli runs SDK queries internally (briefing
+    // prompts, transcript synthesis) and consumes URL/agent args that
+    // can be agent-controlled via dashboard input. Scrub env and
+    // re-inject auth + Daily/Pika credentials the CLI itself needs.
+    const meetAuth = readEnvFile([
+      'CLAUDE_CODE_OAUTH_TOKEN',
+      'ANTHROPIC_API_KEY',
+      'DAILY_API_KEY',
+      'PIKA_DEV_KEY',
+      'PIKA_API_KEY',
+      'GOOGLE_API_KEY',
+    ]);
+    const meetEnv = getScrubbedSdkEnv(meetAuth);
     const proc = spawn(process.execPath, [MEET_CLI, ...args], {
       cwd: PROJECT_ROOT,
-      env: process.env,
+      env: meetEnv as NodeJS.ProcessEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
