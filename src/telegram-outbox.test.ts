@@ -475,6 +475,88 @@ describe('telegram durable outbox', () => {
     });
   });
 
+  describe('in-memory single-flight guard (HIGH 2 fix)', () => {
+    it('two concurrent ticks finding the same row deliver exactly once', async () => {
+      // Use a slow client to widen the in-flight window so the second
+      // tick has time to observe the in-memory guard.
+      const sends: string[] = [];
+      const client: TelegramApiClient = vi.fn(async (_method, _chatId, params) => {
+        await new Promise((r) => setTimeout(r, 50));
+        sends.push((params as { text: string }).text);
+        return { message_id: 1 };
+      });
+      setTelegramOutboxClient(client);
+
+      enqueueTelegramSend({
+        agentId: 'main', chatId: '1', method: 'sendMessage', params: { text: 'one-shot' },
+      });
+
+      const [t1, t2, t3] = await Promise.all([
+        tickTelegramOutbox(),
+        tickTelegramOutbox(),
+        tickTelegramOutbox(),
+      ]);
+      // Only one tick should have done real work (1 row), other two see no
+      // pending rows (CAS already moved it to in_flight).
+      expect(t1 + t2 + t3).toBe(1);
+      expect(sends).toEqual(['one-shot']);
+      expect(client).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('outbox pruning (MEDIUM fix)', () => {
+    it('prunes sent and dead-lettered rows older than the cutoff but keeps recent and pending rows', async () => {
+      const { pruneSentTelegramOutbox, insertTelegramOutbox, markTelegramOutboxSent, claimDueTelegramOutbox } = await import('./db.js');
+      // We need direct DB manipulation to age rows. Easier: insert several
+      // rows, mark them sent, then call prune with olderThanDays=0 to age out.
+      const id1 = insertTelegramOutbox('main', '1', JSON.stringify({ method: 'sendMessage', params: { text: 'old1' } }));
+      const id2 = insertTelegramOutbox('main', '1', JSON.stringify({ method: 'sendMessage', params: { text: 'old2' } }));
+      const id3 = insertTelegramOutbox('main', '1', JSON.stringify({ method: 'sendMessage', params: { text: 'kept-pending' } }));
+      // Move id1 + id2 into 'sent' (must claim first to satisfy in_flight check).
+      claimDueTelegramOutbox(20);
+      markTelegramOutboxSent(id1, 100);
+      markTelegramOutboxSent(id2, 101);
+
+      // With cutoff=0 days, sent rows count as "older than 0 days ago"
+      // because cutoff = now - 0 = now, and sent_at <= now.
+      // To make the comparison strict we use a tiny sleep to ensure
+      // sent_at < (now after sleep).
+      await new Promise((r) => setTimeout(r, 1100));
+      const pruned = pruneSentTelegramOutbox(0);
+      expect(pruned).toBe(2);
+
+      const counts = countTelegramOutboxByStatus();
+      expect(counts.sent).toBe(0);
+      // id3 is still pending (was claimed but not marked sent), so its
+      // status is in_flight after our claim. Either way, it must NOT be
+      // pruned. Confirm it survived.
+      const survivor = getTelegramOutboxRow(id3);
+      expect(survivor).not.toBeNull();
+    });
+
+    it('does not prune sent rows newer than the cutoff', async () => {
+      const { pruneSentTelegramOutbox, insertTelegramOutbox, markTelegramOutboxSent, claimDueTelegramOutbox } = await import('./db.js');
+      const id = insertTelegramOutbox('main', '1', JSON.stringify({ method: 'sendMessage', params: { text: 'fresh' } }));
+      claimDueTelegramOutbox(20);
+      markTelegramOutboxSent(id, 1);
+
+      const pruned = pruneSentTelegramOutbox(7); // 7-day cutoff
+      expect(pruned).toBe(0);
+      expect(getTelegramOutboxRow(id)).not.toBeNull();
+    });
+
+    it('prunes dead-lettered rows too', async () => {
+      const { pruneSentTelegramOutbox, insertTelegramOutbox, markTelegramOutboxDeadLettered, claimDueTelegramOutbox } = await import('./db.js');
+      const id = insertTelegramOutbox('main', '1', JSON.stringify({ method: 'sendMessage', params: { text: 'dead' } }));
+      claimDueTelegramOutbox(20);
+      markTelegramOutboxDeadLettered(id, 'gave up');
+      await new Promise((r) => setTimeout(r, 1100));
+      const pruned = pruneSentTelegramOutbox(0);
+      expect(pruned).toBe(1);
+      expect(getTelegramOutboxRow(id)).toBeNull();
+    });
+  });
+
   describe('malformed payload', () => {
     it('dead-letters a row with an unparseable payload', async () => {
       const client = vi.fn();

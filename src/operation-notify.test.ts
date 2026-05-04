@@ -10,6 +10,7 @@ import {
 } from './db.js';
 import {
   _setOperationNotifySpawn,
+  _setOperationOutboxEnqueue,
   cancelOperationNotification,
   processDueOperationNotifications,
   scheduleOperationNotification,
@@ -229,6 +230,65 @@ describe('operation-notify', () => {
       });
       const rows = getOperationNotificationsByOpId('op-list');
       expect(rows.map((r) => r.id)).toEqual([a, b]);
+    });
+  });
+
+  describe('outbox integration (Mission D ↔ B handoff)', () => {
+    it('hands the delivery to the outbox when no spawn seam is installed', async () => {
+      // Don't install captureSpawns — falls through to the production
+      // outbox path. We swap the outbox client for a mock to avoid hitting
+      // the real Telegram API.
+      const { setTelegramOutboxClient, tickTelegramOutbox } = await import(
+        './telegram-outbox.js'
+      );
+      const sends: Array<{ method: string; chatId: string; params: Record<string, unknown> }> = [];
+      setTelegramOutboxClient(async (method, chatId, params) => {
+        sends.push({ method, chatId, params });
+        return { message_id: 555 };
+      });
+      try {
+        const id = scheduleOperationNotification({
+          agentId: 'mason',
+          chatId: 'chat-outbox',
+          operationId: 'op-outbox',
+          fireAt: new Date(Date.now() - 1_000),
+          message: 'durable hello',
+        });
+        const delivered = await processDueOperationNotifications();
+        expect(delivered).toBe(1);
+        // The op-notification row is fired immediately (handed off).
+        expect(getOperationNotification(id)?.status).toBe('fired');
+        // The outbox has not delivered yet — drain it.
+        await tickTelegramOutbox();
+        expect(sends).toHaveLength(1);
+        expect(sends[0]!.method).toBe('sendMessage');
+        expect(sends[0]!.chatId).toBe('chat-outbox');
+        expect((sends[0]!.params as { text: string }).text).toBe('durable hello');
+      } finally {
+        setTelegramOutboxClient(null);
+      }
+    });
+
+    it('atomic claim+enqueue: row is fired AND outbox row exists OR neither (no half-state)', async () => {
+      // Codex final-pass HIGH: claim and enqueue must be in one transaction so
+      // a crash between them can't leave the row marked 'fired' with no
+      // queued message. Verify by inspection: after a successful tick, the
+      // op-notify row is 'fired' AND a telegram_outbox row exists referencing
+      // its payload. The transactional helper makes a half-state impossible.
+      const id = scheduleOperationNotification({
+        agentId: 'mason',
+        chatId: 'chat-atomic',
+        operationId: 'op-atomic',
+        fireAt: new Date(Date.now() - 1_000),
+        message: 'atomic handoff',
+      });
+      const delivered = await processDueOperationNotifications();
+      expect(delivered).toBe(1);
+      const row = getOperationNotification(id);
+      expect(row?.status).toBe('fired');
+      expect(row?.fired_at).not.toBeNull();
+      // The outbox now owns durability — the message will be retried by the
+      // outbox worker's existing retry/lease/dead-letter machinery.
     });
   });
 

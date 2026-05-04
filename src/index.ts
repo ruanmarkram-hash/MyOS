@@ -6,7 +6,7 @@ import { createBot } from './bot.js';
 import { checkPendingMigrations } from './migrations.js';
 import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, WARROOM_ENABLED, WARROOM_PORT } from './config.js';
 import { startDashboard } from './dashboard.js';
-import { initDatabase, cleanupOldMissionTasks, insertAuditLog } from './db.js';
+import { initDatabase, cleanupOldMissionTasks, insertAuditLog, pruneSentTelegramOutbox } from './db.js';
 import { initSecurity, setAuditCallback, getScrubbedSdkEnv } from './security.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
@@ -156,7 +156,12 @@ async function main(): Promise<void> {
   if (AGENT_ID === 'main') {
     runDecaySweep();
     cleanupOldMissionTasks(7);
-    setInterval(() => { runDecaySweep(); cleanupOldMissionTasks(7); }, 24 * 60 * 60 * 1000);
+    pruneSentTelegramOutbox(7);
+    setInterval(() => {
+      runDecaySweep();
+      cleanupOldMissionTasks(7);
+      pruneSentTelegramOutbox(7);
+    }, 24 * 60 * 60 * 1000);
 
     // Memory consolidation: find patterns across recent memories every 30 minutes
     if (ALLOWED_CHAT_ID && GOOGLE_API_KEY) {
