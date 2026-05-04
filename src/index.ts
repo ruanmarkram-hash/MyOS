@@ -179,6 +179,41 @@ async function main(): Promise<void> {
 
   const bot = createBot();
 
+  // Wire the durable Telegram outbox to the bot's API. Every send
+  // queued via enqueueTelegramSend() drains through this client.
+  const { setTelegramOutboxClient } = await import('./telegram-outbox.js');
+  setTelegramOutboxClient(async (method, chatId, params) => {
+    const numericChatId = /^-?\d+$/.test(chatId) ? Number(chatId) : chatId;
+    // Strip our internal-use marker so it never reaches Telegram.
+    const cleanParams: Record<string, unknown> = { ...params };
+    delete cleanParams.__meta_alert;
+    if (method === 'sendMessage') {
+      const resp = await bot.api.sendMessage(
+        numericChatId as number,
+        String(cleanParams.text ?? ''),
+        cleanParams as Parameters<typeof bot.api.sendMessage>[2],
+      );
+      return { message_id: resp.message_id };
+    }
+    if (method === 'sendDocument') {
+      const resp = await bot.api.sendDocument(
+        numericChatId as number,
+        cleanParams.document as Parameters<typeof bot.api.sendDocument>[1],
+        cleanParams as Parameters<typeof bot.api.sendDocument>[2],
+      );
+      return { message_id: resp.message_id };
+    }
+    if (method === 'sendPhoto') {
+      const resp = await bot.api.sendPhoto(
+        numericChatId as number,
+        cleanParams.photo as Parameters<typeof bot.api.sendPhoto>[1],
+        cleanParams as Parameters<typeof bot.api.sendPhoto>[2],
+      );
+      return { message_id: resp.message_id };
+    }
+    throw new Error(`telegram-outbox: unsupported method ${method}`);
+  });
+
   // Dashboard only runs in the main bot process
   if (AGENT_ID === 'main') {
     startDashboard(bot.api);
@@ -222,7 +257,8 @@ async function main(): Promise<void> {
             + 'Then restart the bot.';
           logger.error(msg);
           if (ALLOWED_CHAT_ID) {
-            bot.api.sendMessage(ALLOWED_CHAT_ID, `War Room could not start.\n\n${msg}`).catch(() => {});
+            const { enqueueTelegramSend } = await import('./telegram-outbox.js');
+            enqueueTelegramSend({ agentId: AGENT_ID, chatId: ALLOWED_CHAT_ID, method: 'sendMessage', params: { text: `War Room could not start.\n\n${msg}` } });
           }
         } else {
         // Dedicated log file for the warroom subprocess
@@ -294,7 +330,9 @@ async function main(): Promise<void> {
               if (respawnAttempts > MAX_CRASH_RESPAWNS) {
                 logger.error(`War Room crashed ${MAX_CRASH_RESPAWNS} times. Giving up. Check /tmp/warroom-debug.log for errors.`);
                 if (ALLOWED_CHAT_ID) {
-                  bot.api.sendMessage(ALLOWED_CHAT_ID, `War Room crashed ${MAX_CRASH_RESPAWNS} times and has been disabled.\n\nCheck /tmp/warroom-debug.log, fix the issue, and restart the bot.`).catch(() => {});
+                  void import('./telegram-outbox.js').then(({ enqueueTelegramSend }) => {
+                    enqueueTelegramSend({ agentId: AGENT_ID, chatId: ALLOWED_CHAT_ID, method: 'sendMessage', params: { text: `War Room crashed ${MAX_CRASH_RESPAWNS} times and has been disabled.\n\nCheck /tmp/warroom-debug.log, fix the issue, and restart the bot.` } });
+                  });
                 }
                 return;
               }
@@ -325,7 +363,8 @@ async function main(): Promise<void> {
           : 'warroom/server.py not found. Make sure the warroom/ directory exists.';
         logger.warn('War Room enabled but cannot start: %s', hint);
         if (ALLOWED_CHAT_ID) {
-          bot.api.sendMessage(ALLOWED_CHAT_ID, `War Room is enabled but could not start.\n\n${hint}`).catch(() => {});
+          const { enqueueTelegramSend } = await import('./telegram-outbox.js');
+          enqueueTelegramSend({ agentId: AGENT_ID, chatId: ALLOWED_CHAT_ID, method: 'sendMessage', params: { text: `War Room is enabled but could not start.\n\n${hint}` } });
         }
       }
     }
@@ -335,13 +374,17 @@ async function main(): Promise<void> {
     initScheduler(
       async (text) => {
         // Split long messages to respect Telegram's 4096 char limit.
-        // The scheduler's splitMessage handles chunking, but the sender
-        // callback is also called directly for status messages which may exceed the limit.
+        // Route through the durable outbox so transient Telegram failures
+        // don't drop scheduled-task output.
         const { splitMessage } = await import('./bot.js');
+        const { enqueueTelegramSend } = await import('./telegram-outbox.js');
         for (const chunk of splitMessage(text)) {
-          await bot.api.sendMessage(ALLOWED_CHAT_ID, chunk, { parse_mode: 'HTML' }).catch((err) =>
-            logger.error({ err }, 'Scheduler failed to send message'),
-          );
+          enqueueTelegramSend({
+            agentId: AGENT_ID,
+            chatId: ALLOWED_CHAT_ID,
+            method: 'sendMessage',
+            params: { text: chunk, parse_mode: 'HTML' },
+          });
         }
       },
       AGENT_ID,
@@ -357,10 +400,14 @@ async function main(): Promise<void> {
     if ((oauthHealthEnv.OAUTH_HEALTH_ENABLED || '').trim().toLowerCase() === 'true') {
       initOAuthHealthCheck(async (text) => {
         const { splitMessage } = await import('./bot.js');
+        const { enqueueTelegramSend } = await import('./telegram-outbox.js');
         for (const chunk of splitMessage(text)) {
-          await bot.api.sendMessage(ALLOWED_CHAT_ID, chunk, { parse_mode: 'HTML' }).catch((err) =>
-            logger.error({ err }, 'OAuth health alert failed'),
-          );
+          enqueueTelegramSend({
+            agentId: AGENT_ID,
+            chatId: ALLOWED_CHAT_ID,
+            method: 'sendMessage',
+            params: { text: chunk, parse_mode: 'HTML' },
+          });
         }
       });
     } else {

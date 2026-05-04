@@ -349,6 +349,28 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_skill_usage_skill ON skill_usage(skill_id, triggered_at DESC);
 
+    -- Telegram durable outbox: every Telegram send is queued here so a
+    -- transient API failure (rate limit, network blip, Telegram outage)
+    -- doesn't drop the message. A scheduler-driven worker drains pending
+    -- rows with retries + dead-letter, the same model that mission-notify
+    -- uses for delivery confirmation but generalised to ALL sends.
+    CREATE TABLE IF NOT EXISTS telegram_outbox (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id            TEXT NOT NULL,
+      chat_id             TEXT NOT NULL,
+      payload             TEXT NOT NULL,
+      status              TEXT NOT NULL DEFAULT 'pending',
+      attempt_count       INTEGER NOT NULL DEFAULT 0,
+      last_error          TEXT,
+      last_attempt_at     INTEGER,
+      next_retry_at       INTEGER,
+      telegram_message_id INTEGER,
+      created_at          INTEGER NOT NULL,
+      sent_at             INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_telegram_outbox_pending
+      ON telegram_outbox(status, next_retry_at);
+
     -- Phase 6.2: Session summaries
     CREATE TABLE IF NOT EXISTS session_summaries (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2609,4 +2631,117 @@ export function getWarRoomTranscript(meetingId: string): Array<{
   return db.prepare(
     'SELECT speaker, text, created_at FROM warroom_transcript WHERE meeting_id = ? ORDER BY created_at',
   ).all(meetingId) as any[];
+}
+
+// ── Telegram durable outbox ───────────────────────────────────────────
+//
+// Every Telegram send is INSERTed here with status='pending'. A worker
+// (src/telegram-outbox.ts, ticked from the scheduler) drains pending rows,
+// makes the actual API call, and on failure schedules a retry via
+// exponential backoff or a 429-honouring delay. After MAX_ATTEMPTS the row
+// is moved to 'dead-lettered' and a meta-alert is enqueued so the failure
+// is visible.
+
+export type TelegramOutboxStatus = 'pending' | 'sent' | 'failed' | 'dead-lettered';
+
+export interface TelegramOutboxRow {
+  id: number;
+  agent_id: string;
+  chat_id: string;
+  payload: string;
+  status: TelegramOutboxStatus;
+  attempt_count: number;
+  last_error: string | null;
+  last_attempt_at: number | null;
+  next_retry_at: number | null;
+  telegram_message_id: number | null;
+  created_at: number;
+  sent_at: number | null;
+}
+
+/** Insert a pending outbox row. Returns the new row id. */
+export function insertTelegramOutbox(
+  agentId: string,
+  chatId: string,
+  payload: string,
+): number {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `INSERT INTO telegram_outbox (agent_id, chat_id, payload, status, created_at)
+     VALUES (?, ?, ?, 'pending', ?)`,
+  ).run(agentId, chatId, payload, now);
+  return Number(info.lastInsertRowid);
+}
+
+/**
+ * Claim up to `limit` rows that are due for delivery. Returns rows whose
+ * `status='pending'` AND (next_retry_at IS NULL OR next_retry_at <= now).
+ * The caller is expected to attempt delivery and then call one of
+ * markTelegramOutboxSent / scheduleTelegramOutboxRetry / markTelegramOutboxDeadLettered.
+ */
+export function claimDueTelegramOutbox(limit = 20): TelegramOutboxRow[] {
+  const now = Math.floor(Date.now() / 1000);
+  return db.prepare(
+    `SELECT * FROM telegram_outbox
+     WHERE status = 'pending'
+       AND (next_retry_at IS NULL OR next_retry_at <= ?)
+     ORDER BY id ASC
+     LIMIT ?`,
+  ).all(now, limit) as TelegramOutboxRow[];
+}
+
+export function markTelegramOutboxSent(id: number, telegramMessageId: number | null): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'sent',
+         telegram_message_id = ?,
+         sent_at = ?,
+         last_attempt_at = ?,
+         attempt_count = attempt_count + 1,
+         last_error = NULL
+     WHERE id = ? AND status = 'pending'`,
+  ).run(telegramMessageId, now, now, id);
+}
+
+export function scheduleTelegramOutboxRetry(
+  id: number,
+  nextRetryAt: number,
+  lastError: string,
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE telegram_outbox
+     SET attempt_count = attempt_count + 1,
+         last_attempt_at = ?,
+         next_retry_at = ?,
+         last_error = ?
+     WHERE id = ? AND status = 'pending'`,
+  ).run(now, nextRetryAt, lastError.slice(0, 500), id);
+}
+
+export function markTelegramOutboxDeadLettered(id: number, lastError: string): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'dead-lettered',
+         attempt_count = attempt_count + 1,
+         last_attempt_at = ?,
+         last_error = ?
+     WHERE id = ? AND status = 'pending'`,
+  ).run(now, lastError.slice(0, 500), id);
+}
+
+export function getTelegramOutboxRow(id: number): TelegramOutboxRow | null {
+  const row = db.prepare(`SELECT * FROM telegram_outbox WHERE id = ?`).get(id) as TelegramOutboxRow | undefined;
+  return row ?? null;
+}
+
+export function countTelegramOutboxByStatus(): Record<TelegramOutboxStatus, number> {
+  const rows = db.prepare(
+    `SELECT status, COUNT(*) AS n FROM telegram_outbox GROUP BY status`,
+  ).all() as Array<{ status: TelegramOutboxStatus; n: number }>;
+  const out: Record<TelegramOutboxStatus, number> = { 'pending': 0, 'sent': 0, 'failed': 0, 'dead-lettered': 0 };
+  for (const r of rows) out[r.status] = r.n;
+  return out;
 }

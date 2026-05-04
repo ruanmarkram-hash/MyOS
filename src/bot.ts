@@ -121,6 +121,7 @@ import {
 } from './voice.js';
 import { getSlackConversations, getSlackMessages, sendSlackMessage, SlackConversation } from './slack.js';
 import { getWaChats, getWaChatMessages, sendWhatsAppMessage, WaChat } from './whatsapp.js';
+import { enqueueTelegramSend } from './telegram-outbox.js';
 
 // Per-chat voice mode toggle (in-memory, resets on restart)
 const voiceEnabledChats = new Set<string>();
@@ -862,7 +863,7 @@ export function createBot(): Bot {
   if (ALLOWED_CHAT_ID) {
     setHighImportanceCallback((memoryId, summary, importance) => {
       const msg = `🧠 New memory #${memoryId} [${importance.toFixed(1)}]: ${summary.slice(0, 200)}\n\n/pin ${memoryId} to make permanent`;
-      bot.api.sendMessage(ALLOWED_CHAT_ID, msg).catch(() => {});
+      enqueueTelegramSend({ agentId: AGENT_ID, chatId: ALLOWED_CHAT_ID, method: 'sendMessage', params: { text: msg } });
     });
   }
 
@@ -1797,9 +1798,14 @@ export async function notifyWhatsAppIncoming(
   const origin = isGroup && groupName ? groupName : contactName;
   const text = `📱 <b>${escapeHtml(origin)}</b> — new message\n<i>/wa to view &amp; reply</i>`;
 
-  try {
-    await api.sendMessage(parseInt(ALLOWED_CHAT_ID), text, { parse_mode: 'HTML' });
-  } catch (err) {
-    logger.error({ err }, 'Failed to send WhatsApp notification');
-  }
+  // Route through the durable outbox so a flaky Telegram doesn't drop
+  // the WhatsApp ping. `api` arg is preserved for backward compatibility
+  // but is no longer used directly.
+  void api;
+  enqueueTelegramSend({
+    agentId: AGENT_ID,
+    chatId: ALLOWED_CHAT_ID,
+    method: 'sendMessage',
+    params: { text, parse_mode: 'HTML' },
+  });
 }
