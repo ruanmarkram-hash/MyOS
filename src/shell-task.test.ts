@@ -149,4 +149,22 @@ describe('buildShellTaskEnv', () => {
     expect(env.PATH).toBeUndefined();
     expect(env.HOME).toBe('/h');
   });
+
+  // Codex round-3 regression: a key that is prefix-allowed (LC_*) must
+  // still be filtered through the shared secret-name denylist, so a
+  // planted `LC_FOO_SECRET` cannot ride the locale wildcard out.
+  it('strips secret-shaped keys even when they match an allow prefix', () => {
+    const env = buildShellTaskEnv({
+      PATH: '/usr/bin',
+      LC_ALL: 'en_AU.UTF-8',
+      LC_FOO_SECRET: 'should-be-stripped',
+      LC_BAR_TOKEN: 'should-be-stripped',
+      LC_BAZ_API_KEY: 'should-be-stripped',
+    });
+    expect(env.PATH).toBe('/usr/bin');
+    expect(env.LC_ALL).toBe('en_AU.UTF-8');
+    expect(env.LC_FOO_SECRET).toBeUndefined();
+    expect(env.LC_BAR_TOKEN).toBeUndefined();
+    expect(env.LC_BAZ_API_KEY).toBeUndefined();
+  });
 });

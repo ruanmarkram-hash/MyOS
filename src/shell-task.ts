@@ -27,6 +27,7 @@
  */
 import { spawn } from 'node:child_process';
 import { logger } from './logger.js';
+import { isLikelySecretEnvName } from './security.js';
 
 /**
  * Allowlisted env vars that survive into a shell-bypass subprocess.
@@ -77,14 +78,18 @@ export function buildShellTaskEnv(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of SHELL_TASK_ENV_ALLOWLIST) {
+    if (isLikelySecretEnvName(key)) continue; // defence in depth
     const v = source[key];
     if (typeof v === 'string' && v.length > 0) out[key] = v;
   }
   for (const key of Object.keys(source)) {
-    if (SHELL_TASK_ENV_ALLOW_PREFIXES.some((p) => key.startsWith(p))) {
-      const v = source[key];
-      if (typeof v === 'string' && v.length > 0) out[key] = v;
-    }
+    if (!SHELL_TASK_ENV_ALLOW_PREFIXES.some((p) => key.startsWith(p))) continue;
+    // Codex round-3 fix: prefix-allowed keys must still pass the
+    // shared secret-name denylist. Otherwise a planted LC_FOO_SECRET
+    // would slip through the LC_* sweep.
+    if (isLikelySecretEnvName(key)) continue;
+    const v = source[key];
+    if (typeof v === 'string' && v.length > 0) out[key] = v;
   }
   return out;
 }

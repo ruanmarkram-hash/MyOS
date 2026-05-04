@@ -367,6 +367,23 @@ export function getScrubbedSdkEnv(
 // Re-exported so tests / callers can introspect the auth slot list.
 export const SDK_AUTH_VAR_NAMES: readonly string[] = SDK_AUTH_VARS;
 
+/**
+ * Shared secret-name heuristic. Returns true if the env var name
+ * matches any of the secret-shaped patterns (or is on the explicit
+ * SDK_DROP_VARS_SECRETS list).
+ *
+ * Exported so other env builders (e.g. buildShellTaskEnv) can share
+ * the same denylist without duplicating the pattern set. Closes a
+ * Codex round-3 finding where a prefix-allowed key like LC_FOO_SECRET
+ * could survive the SHELL_TASK_ENV_ALLOW_PREFIXES sweep because no
+ * denylist filter ran on prefix-matched keys.
+ */
+export function isLikelySecretEnvName(key: string): boolean {
+  if ((SDK_DROP_VARS_SECRETS as readonly string[]).includes(key)) return true;
+  if ((SDK_DROP_VARS_NESTED_CLAUDE as readonly string[]).includes(key)) return true;
+  return SDK_SECRET_NAME_PATTERNS.some((re) => re.test(key));
+}
+
 // ── Status ───────────────────────────────────────────────────────────
 
 export function getSecurityStatus(): {
