@@ -293,18 +293,19 @@ const SDK_SECRET_NAME_PATTERNS = [
 
 // Auth re-injection slots. Keys here can be passed via `authSecrets`
 // (typically loaded from .env) and re-added to the scrubbed env after
-// the sweep. CLAUDE_CODE_OAUTH_TOKEN is intentionally NOT in the
-// natural pass-through allowlist — process.env may carry the harness
-// session token, which we never want to forward to subprocesses. A
-// caller that genuinely wants OAuth auth must read it out of .env and
-// pass it explicitly via `authSecrets`.
+// the sweep. Both CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY are
+// intentionally re-injection-only — process.env may carry the harness
+// session OAuth token or a caller-shadowed ANTHROPIC_API_KEY that we
+// never want to silently forward to subprocesses. A caller that wants
+// auth in the child must read the value out of .env (or out of
+// process.env explicitly) and pass it via `authSecrets`.
+//
+// Codex round-4 structural fix: the previous SDK_NATURAL_PASS_VARS
+// allowlist was the same shape as the HIGH-1 (CLAUDE_CODE_OAUTH_TOKEN)
+// and round-4 ANTHROPIC_API_KEY ride-along bugs — an allowlisted var
+// quietly survives the scrub from raw process.env without explicit
+// caller intent. Removed entirely; callers now explicitly re-inject.
 const SDK_AUTH_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'] as const;
-
-// Tiny natural pass-through allowlist. ONLY ANTHROPIC_API_KEY is
-// allowed to survive the scrub when present in process.env — every
-// other secret-shaped variable must be re-injected explicitly via
-// `authSecrets`.
-const SDK_NATURAL_PASS_VARS = ['ANTHROPIC_API_KEY'] as const;
 
 // Fork-specific: vars that are safe (or required) to pass through
 // despite matching one of the patterns above. Non-secret config only.
@@ -342,8 +343,13 @@ export function getScrubbedSdkEnv(
   //    because the natural-pass allowlist below does NOT include them.
   for (const key of Object.keys(env)) {
     if ((SDK_KEEP_VARS as readonly string[]).includes(key)) continue;
-    if ((SDK_NATURAL_PASS_VARS as readonly string[]).includes(key)) continue;
     if (key.startsWith('CLAUDE_CODE_') || key === 'CLAUDECODE') {
+      delete env[key];
+      continue;
+    }
+    // Auth slots are scrubbed unconditionally here; callers must
+    // explicitly re-inject via `authSecrets`. See SDK_AUTH_VARS comment.
+    if ((SDK_AUTH_VARS as readonly string[]).includes(key)) {
       delete env[key];
       continue;
     }

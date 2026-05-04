@@ -297,8 +297,14 @@ async function synthesizeBrief(params: {
       // SDK-CLASS spawn: agent-voice-bridge runs an SDK query against the
       // briefingPrompt. Scrub env so the LLM session can't see harness
       // secrets; re-inject only the auth tokens it needs.
+      // Round-4 structural fix: explicit re-injection. ANTHROPIC_API_KEY
+      // falls back to process.env (shell-exported dev key); OAuth never
+      // does (would re-introduce the HIGH-1 ride-along).
       const briefAuth = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
-      const briefEnv = getScrubbedSdkEnv(briefAuth);
+      const briefEnv = getScrubbedSdkEnv({
+        CLAUDE_CODE_OAUTH_TOKEN: briefAuth.CLAUDE_CODE_OAUTH_TOKEN,
+        ANTHROPIC_API_KEY: briefAuth.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+      });
       const proc = spawn(process.execPath, [VOICE_BRIDGE_JS, '--agent', params.agentId, '--chat-id', `meet-brief-${params.briefId}`, '--message', briefingPrompt], {
         cwd: PROJECT_ROOT,
         env: briefEnv as NodeJS.ProcessEnv,

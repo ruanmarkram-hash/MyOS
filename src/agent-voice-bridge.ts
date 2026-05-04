@@ -80,8 +80,15 @@ async function main() {
     // Build a scrubbed env for the SDK subprocess. See security.ts for
     // the full rationale: drops session-scoped CLAUDE_CODE_* vars + every
     // secret-shaped var, re-injects auth tokens straight from .env.
-    const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
-    const sdkEnv = getScrubbedSdkEnv(secrets);
+    // Round-4 structural fix: explicit re-injection (no
+    // SDK_NATURAL_PASS_VARS). ANTHROPIC_API_KEY may live in shell-exported
+    // process.env on dev machines; CLAUDE_CODE_OAUTH_TOKEN never falls
+    // back to process.env (would re-introduce the HIGH-1 ride-along).
+    const dotenv = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+    const sdkEnv = getScrubbedSdkEnv({
+      CLAUDE_CODE_OAUTH_TOKEN: dotenv.CLAUDE_CODE_OAUTH_TOKEN,
+      ANTHROPIC_API_KEY: dotenv.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+    });
 
     // Validate agent ID format (prevent path traversal)
     if (agentId !== 'main' && !/^[a-z][a-z0-9_-]{0,29}$/.test(agentId)) {

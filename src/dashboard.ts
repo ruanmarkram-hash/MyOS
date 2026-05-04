@@ -781,7 +781,13 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       'PIKA_API_KEY',
       'GOOGLE_API_KEY',
     ]);
-    const meetEnv = getScrubbedSdkEnv(meetAuth);
+    // Round-4 structural fix: explicit re-injection (no
+    // SDK_NATURAL_PASS_VARS). ANTHROPIC_API_KEY falls back to process.env
+    // for shell-exported dev setups; OAuth token does not.
+    const meetEnv = getScrubbedSdkEnv({
+      ...meetAuth,
+      ANTHROPIC_API_KEY: meetAuth.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+    });
     const proc = spawn(process.execPath, [MEET_CLI, ...args], {
       cwd: PROJECT_ROOT,
       env: meetEnv as NodeJS.ProcessEnv,

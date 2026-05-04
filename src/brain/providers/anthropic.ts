@@ -27,9 +27,15 @@ async function runOnce(systemPrompt: string, userPrompt: string, maxTurns = 3): 
   // Scrub secrets from the subprocess env (DASHBOARD_TOKEN,
   // DB_ENCRYPTION_KEY, third-party keys etc. have no business in the
   // child) while re-injecting SDK auth straight from .env.
-  const sdkEnv = getScrubbedSdkEnv(
-    readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']),
-  );
+  // Round-4 structural fix: explicit re-injection. Re-add the auth
+  // values the child needs by name. .env first; fall back to process.env
+  // for ANTHROPIC_API_KEY only (CLAUDE_CODE_OAUTH_TOKEN in process.env is
+  // the harness session token and must never ride along).
+  const dotenv = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+  const sdkEnv = getScrubbedSdkEnv({
+    CLAUDE_CODE_OAUTH_TOKEN: dotenv.CLAUDE_CODE_OAUTH_TOKEN,
+    ANTHROPIC_API_KEY: dotenv.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+  });
   for await (const event of query({
     prompt: userPrompt,
     options: {

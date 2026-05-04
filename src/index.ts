@@ -244,6 +244,9 @@ async function main(): Promise<void> {
             'DEEPGRAM_API_KEY',
             'CARTESIA_API_KEY',
           ]);
+          // Round-4 structural fix: no natural pass-through. Warroom
+          // doesn't need ANTHROPIC_API_KEY directly, but if .env doesn't
+          // carry one of these voice keys we still scrub correctly.
           const warroomEnv = getScrubbedSdkEnv(warroomAuth);
           warroomEnv.WARROOM_PORT = String(WARROOM_PORT);
           const proc = spawn(venvPython, [serverScript], {

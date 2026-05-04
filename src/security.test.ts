@@ -33,12 +33,14 @@ describe('getScrubbedSdkEnv', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
-  it('drops CLAUDE_CODE_OAUTH_TOKEN even when ANTHROPIC_API_KEY is allowed through', () => {
+  it('drops both CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY from raw process.env', () => {
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'planted-harness-token';
     process.env.ANTHROPIC_API_KEY = 'sk-ant-real';
     const env = getScrubbedSdkEnv();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-real');
+    // Round-4: ANTHROPIC_API_KEY no longer rides along. Caller must
+    // explicitly re-inject via authSecrets if the child needs it.
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 
   it('re-injects CLAUDE_CODE_OAUTH_TOKEN only when caller passes it via authSecrets', () => {
@@ -77,10 +79,21 @@ describe('getScrubbedSdkEnv', () => {
     expect(env.SECRET_FOO).toBeUndefined();
   });
 
-  it('keeps ANTHROPIC_API_KEY in the natural pass-through', () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-ant';
+  // Round-4 structural fix: SDK_NATURAL_PASS_VARS is gone. A bare
+  // process.env.ANTHROPIC_API_KEY must NOT survive the scrub — callers
+  // who want it in the child must explicitly re-inject via authSecrets.
+  // This forces a clear failure (auth fails) instead of a silent ride-
+  // along, matching the HIGH-1 (CLAUDE_CODE_OAUTH_TOKEN) fix shape.
+  it('drops ANTHROPIC_API_KEY from process.env (no natural pass-through)', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-from-shell';
     const env = getScrubbedSdkEnv();
-    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant');
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
+  it('re-injects ANTHROPIC_API_KEY only when caller passes it via authSecrets', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-from-shell';
+    const env = getScrubbedSdkEnv({ ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY });
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-from-shell');
   });
 
   it('keeps CLAUDECLAW_AGENT_ID despite secret-shaped neighbours', () => {
@@ -184,13 +197,13 @@ describe('getScrubbedSdkEnv', () => {
       expect(env.SHARD_REDIS_URL).toBeUndefined();
     });
 
-    it('does NOT regress allowlisted vars (ANTHROPIC_API_KEY, CLAUDECLAW_AGENT_ID)', () => {
+    it('keeps CLAUDECLAW_AGENT_ID; ANTHROPIC_API_KEY only via re-injection', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-ant';
       process.env.CLAUDECLAW_AGENT_ID = 'mason';
       // Plant a few new-pattern secrets alongside.
       process.env.SECRET = 'x';
       process.env.DATABASE_URL = 'postgres://...';
-      const env = getScrubbedSdkEnv();
+      const env = getScrubbedSdkEnv({ ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY });
       expect(env.ANTHROPIC_API_KEY).toBe('sk-ant');
       expect(env.CLAUDECLAW_AGENT_ID).toBe('mason');
       expect(env.SECRET).toBeUndefined();
