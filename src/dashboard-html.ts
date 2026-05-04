@@ -2207,7 +2207,7 @@ async function loadMissionControl() {
     const DONE_VISIBLE_SECS = 30 * 60;
     const assigned = tasks.filter(t => {
       if (!t.assigned_agent) return false;
-      if (t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') {
+      if (t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled' || t.status === 'partial') {
         return t.completed_at && (now - t.completed_at) < DONE_VISIBLE_SECS;
       }
       return true;
@@ -2287,6 +2287,7 @@ function renderMissionCard(t) {
     queued: '<span class="pill pill-paused">queued</span>',
     running: '<span class="pill pill-running">running</span>',
     completed: '<span class="pill pill-active">done</span>',
+    partial: '<span class="pill" style="background:#78350f;color:#fbbf24">partial</span>',
     failed: '<span class="pill" style="background:#7f1d1d;color:#f87171">failed</span>',
     cancelled: '<span class="pill" style="background:#374151;color:#9ca3af">cancelled</span>',
   };
@@ -2300,16 +2301,16 @@ function renderMissionCard(t) {
   }
 
   let resultHtml = '';
-  if (t.status === 'completed' && t.result) {
+  if ((t.status === 'completed' || t.status === 'partial') && t.result) {
     resultHtml = '<details class="mt-2"><summary class="text-xs text-gray-500 cursor-pointer">View result' + durationStr + '</summary><pre class="text-xs text-gray-400 mt-1 whitespace-pre-wrap break-words" style="max-height:200px;overflow-y:auto">' + escapeHtml(t.result.slice(0, 2000)) + (t.result.length > 2000 ? '...' : '') + '</pre></details>';
-  } else if (t.status === 'failed' && t.error) {
+  } else if ((t.status === 'failed' || t.status === 'partial') && t.error) {
     resultHtml = '<div class="text-xs text-red-400 mt-1">' + escapeHtml(t.error.slice(0, 200)) + '</div>';
   }
 
   const cancelBtn = (t.status === 'queued' || t.status === 'running')
     ? '<button data-mid="' + t.id + '" data-mact="cancel" onclick="missionAction(this.dataset.mid,this.dataset.mact)" title="Cancel" style="background:none;border:none;cursor:pointer;color:#f87171;font-size:12px;padding:1px 3px">&times;</button>'
     : '';
-  const deleteBtn = (t.status === 'completed' || t.status === 'cancelled' || t.status === 'failed')
+  const deleteBtn = (t.status === 'completed' || t.status === 'cancelled' || t.status === 'failed' || t.status === 'partial')
     ? '<button data-mid="' + t.id + '" data-mact="delete" onclick="missionAction(this.dataset.mid,this.dataset.mact)" title="Remove" style="background:none;border:none;cursor:pointer;color:#6b7280;font-size:12px;padding:1px 3px">&times;</button>'
     : '';
 
