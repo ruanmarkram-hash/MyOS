@@ -524,11 +524,13 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
 
     const onProgress = (event: AgentProgressEvent) => {
       if (event.type === 'task_started') {
+        // Subagent task lifecycle stays on the dashboard (emitChatEvent) but
+        // is NO LONGER mirrored to Telegram — descriptions are often raw
+        // shell commands and other internals that bloat the chat with no
+        // signal. The parent agent's own reply is the user-facing surface.
         emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
-        void ctx.reply(`🔄 ${event.description}`).catch(() => {});
       } else if (event.type === 'task_completed') {
         emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
-        void ctx.reply(`✓ ${event.description}`).catch(() => {});
       } else if (event.type === 'tool_active') {
         emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
         lastToolDesc = event.description;
