@@ -266,6 +266,12 @@ const SDK_DROP_VARS_SECRETS = [
 // vars like MCP_ACCESS_KEY / PIPELINE_SUPABASE_SERVICE_ROLE_KEY get
 // caught — anything ending in _KEY/_TOKEN/_SECRET/_PASSWORD/_CREDENTIAL
 // /_PRIVATE is dropped unless on the tiny allowlist.
+//
+// Codex re-review 2026-05-04 (HIGH-2 still open): extended to cover
+// bare SECRET, *_PRIV, *_PASS (no _WORD/_ATE suffix), bearer tokens
+// and JWTs in any position, DSNs (Sentry-style), and DB/queue/cache
+// connection strings (DATABASE_URL, REDIS_URL, AMQP_URL, POSTGRES_URL,
+// MONGODB_URL, MYSQL_URL — both bare and *_<name> suffixed forms).
 const SDK_SECRET_NAME_PATTERNS = [
   /_KEY$/i,
   /_TOKEN$/i,
@@ -275,6 +281,14 @@ const SDK_SECRET_NAME_PATTERNS = [
   /_PRIVATE$/i,
   /^SECRET_/i,
   /^PRIVATE_/i,
+  /^SECRET$/i,                 // bare SECRET=...
+  /_PRIV$/i,                   // *_PRIV (no _ATE)
+  /_PASS$/i,                   // *_PASS (no _WORD)
+  /(^|_)(BEARER|JWT)(_|$)/i,   // BEARER / JWT in any position
+  /^DSN$/i,                    // bare DSN
+  /_DSN$/i,                    // *_DSN (Sentry-style URLs)
+  /^(DATABASE|POSTGRES|REDIS|AMQP|MONGODB|MYSQL)_URL$/i,
+  /_(DATABASE|POSTGRES|REDIS|AMQP|MONGODB|MYSQL)_URL$/i,
 ] as const;
 
 // Auth re-injection slots. Keys here can be passed via `authSecrets`

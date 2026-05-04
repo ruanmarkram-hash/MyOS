@@ -111,4 +111,90 @@ describe('getScrubbedSdkEnv', () => {
     const env = getScrubbedSdkEnv({ ANTHROPIC_API_KEY: '' });
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
+
+  // Codex re-review 2026-05-04 (HIGH-2 still open): denylist gaps.
+  describe('HIGH-2 denylist gaps (codex re-review 2026-05-04)', () => {
+    it('drops bare SECRET=...', () => {
+      process.env.SECRET = 'bare-secret';
+      const env = getScrubbedSdkEnv();
+      expect(env.SECRET).toBeUndefined();
+    });
+
+    it('drops *_PRIV (no _ATE suffix)', () => {
+      process.env.SIGNING_PRIV = 'priv';
+      process.env.foo_priv = 'priv2';
+      const env = getScrubbedSdkEnv();
+      expect(env.SIGNING_PRIV).toBeUndefined();
+      expect(env.foo_priv).toBeUndefined();
+    });
+
+    it('drops *_PASS (no _WORD suffix)', () => {
+      process.env.DB_PASS = 'pw';
+      process.env.SMTP_PASS = 'pw2';
+      const env = getScrubbedSdkEnv();
+      expect(env.DB_PASS).toBeUndefined();
+      expect(env.SMTP_PASS).toBeUndefined();
+    });
+
+    it('drops BEARER / JWT in any position', () => {
+      process.env.BEARER = 't';
+      process.env.MY_BEARER_TOKEN = 't';
+      process.env.SOME_BEARER = 't';
+      process.env.JWT = 'j';
+      process.env.MY_JWT = 'j';
+      process.env.JWT_PUBLIC = 'j';
+      const env = getScrubbedSdkEnv();
+      expect(env.BEARER).toBeUndefined();
+      expect(env.MY_BEARER_TOKEN).toBeUndefined();
+      expect(env.SOME_BEARER).toBeUndefined();
+      expect(env.JWT).toBeUndefined();
+      expect(env.MY_JWT).toBeUndefined();
+      expect(env.JWT_PUBLIC).toBeUndefined();
+    });
+
+    it('drops DATABASE_URL and *_DATABASE_URL', () => {
+      process.env.DATABASE_URL = 'postgres://...';
+      process.env.OB1_DATABASE_URL = 'postgres://...';
+      const env = getScrubbedSdkEnv();
+      expect(env.DATABASE_URL).toBeUndefined();
+      expect(env.OB1_DATABASE_URL).toBeUndefined();
+    });
+
+    it('drops DSN and *_DSN (Sentry-style)', () => {
+      process.env.DSN = 'https://a@b/1';
+      process.env.SENTRY_DSN = 'https://a@b/1';
+      const env = getScrubbedSdkEnv();
+      expect(env.DSN).toBeUndefined();
+      expect(env.SENTRY_DSN).toBeUndefined();
+    });
+
+    it('drops common DB / queue / cache connection-string URLs', () => {
+      process.env.POSTGRES_URL = 'postgres://...';
+      process.env.REDIS_URL = 'redis://...';
+      process.env.AMQP_URL = 'amqp://...';
+      process.env.MONGODB_URL = 'mongodb://...';
+      process.env.MYSQL_URL = 'mysql://...';
+      process.env.SHARD_REDIS_URL = 'redis://...';
+      const env = getScrubbedSdkEnv();
+      expect(env.POSTGRES_URL).toBeUndefined();
+      expect(env.REDIS_URL).toBeUndefined();
+      expect(env.AMQP_URL).toBeUndefined();
+      expect(env.MONGODB_URL).toBeUndefined();
+      expect(env.MYSQL_URL).toBeUndefined();
+      expect(env.SHARD_REDIS_URL).toBeUndefined();
+    });
+
+    it('does NOT regress allowlisted vars (ANTHROPIC_API_KEY, CLAUDECLAW_AGENT_ID)', () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-ant';
+      process.env.CLAUDECLAW_AGENT_ID = 'mason';
+      // Plant a few new-pattern secrets alongside.
+      process.env.SECRET = 'x';
+      process.env.DATABASE_URL = 'postgres://...';
+      const env = getScrubbedSdkEnv();
+      expect(env.ANTHROPIC_API_KEY).toBe('sk-ant');
+      expect(env.CLAUDECLAW_AGENT_ID).toBe('mason');
+      expect(env.SECRET).toBeUndefined();
+      expect(env.DATABASE_URL).toBeUndefined();
+    });
+  });
 });
