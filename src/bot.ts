@@ -545,17 +545,15 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       } else if (event.type === 'task_completed') {
         emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
       } else if (event.type === 'tool_active') {
+        // Tool activity stays on the dashboard (emitChatEvent) but is NO
+        // LONGER mirrored to Telegram. The previous "⚙️ Running command..."
+        // throttled-to-30s pings created a wall of notifications during long
+        // sessions (rebases, multi-step audits) with no actionable signal —
+        // the user already sees the parent agent's streamed text or final
+        // reply. If a long operation needs progress visibility, send a
+        // dedicated message rather than relying on tool-active mirroring.
         emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
         lastToolDesc = event.description;
-        // Only send tool notifications to Telegram if streaming is off.
-        // When streaming is active, the live text updates already show progress.
-        if (!streamingEnabled) {
-          const now = Date.now();
-          if (now - lastToolNotifyTime >= TOOL_NOTIFY_INTERVAL_MS) {
-            lastToolNotifyTime = now;
-            void ctx.reply(`⚙️ ${event.description}...`).catch(() => {});
-          }
-        }
       }
     };
 
