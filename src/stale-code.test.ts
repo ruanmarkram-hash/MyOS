@@ -50,6 +50,24 @@ describe('checkStale', () => {
     const r = checkStale(path.join(tmpDir, 'nope.json'));
     expect(r.stale).toBe(false);
   });
+
+  it('suppresses alert when build-meta branch is not main (shared-tree mid-mission)', () => {
+    if (RUNTIME_BUILD_META.sha === 'unknown') return;
+    // Simulate Mason rebuilding while checked out on a feature branch:
+    // dist/.build-meta.json reflects the feature SHA, but that's not a
+    // deployment-stale condition — it's another agent mid-flight.
+    fs.writeFileSync(
+      metaPath,
+      JSON.stringify({
+        sha: 'feature-sha-deadbeef',
+        branch: 'recovery/m1-stale-progress',
+        builtAt: '2026-05-04T00:00:00Z',
+      }),
+    );
+    const r = checkStale(metaPath);
+    expect(r.stale).toBe(false);
+    expect(r.diskMeta.branch).toBe('recovery/m1-stale-progress');
+  });
 });
 
 describe('createStaleWatcher', () => {

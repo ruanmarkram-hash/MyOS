@@ -71,10 +71,24 @@ export function checkStale(filePath?: string): StaleResult {
   // emits 'unknown' on detached-HEAD/missing-git; if we can't read
   // disk meta we also get 'unknown'. Treating those as stale would
   // spam every sub-agent that runs without a git checkout.
+  //
+  // Branch gate: fork uses a shared working tree across all agents
+  // (sage, mason, charter, ember, marlow, warden), so any agent
+  // checking out a feature/recovery branch + rebuilding clobbers
+  // dist/.build-meta.json with that branch's SHA. Without this gate,
+  // every other agent's stale-detector then false-alarms because
+  // disk meta no longer reflects main. Only fire when disk meta is
+  // built from main — that's the only case where /restart actually
+  // picks up new deployment code. Mid-mission rebuilds on feature
+  // branches are not "stale", they're "in flight on something else".
+  // (2026-05-05 incident: 4 spurious stale alerts in <12h while Mason
+  // was iterating on recovery/m1-stale-progress.)
+  const onMain = diskMeta.branch === 'main';
   const stale =
     runtimeSha !== 'unknown'
     && diskMeta.sha !== 'unknown'
-    && runtimeSha !== diskMeta.sha;
+    && runtimeSha !== diskMeta.sha
+    && onMain;
   return { stale, runtimeSha, diskSha: diskMeta.sha, diskMeta };
 }
 
