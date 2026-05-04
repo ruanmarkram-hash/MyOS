@@ -226,4 +226,49 @@ describe('CodexProvider', () => {
       lastCallCacheRead: 4480,
     });
   });
+
+  // HIGH-3 regression: codex exec used to be spawned with raw process.env,
+  // bypassing getScrubbedSdkEnv. Ensure secrets that pattern-match the
+  // sweep are gone from the spawn env.
+  it('spawns codex with a scrubbed env (HIGH-3)', async () => {
+    const planted = {
+      DASHBOARD_TOKEN: 'leaked',
+      MCP_ACCESS_KEY: 'leaked',
+      WIDGET_PASSWORD: 'leaked',
+      CLAUDE_CODE_OAUTH_TOKEN: 'leaked',
+    };
+    const prevValues: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(planted)) {
+      prevValues[k] = process.env[k];
+      process.env[k] = v;
+    }
+
+    try {
+      const fake = new FakeCodexProcess();
+      spawnMock.mockReturnValue(fake);
+
+      const provider = new CodexProvider();
+      const resultPromise = provider.runAgent({
+        message: 'noop',
+        sessionId: undefined,
+        onTyping: () => {},
+      });
+
+      fake.stdout.write('{"type":"thread.started","thread_id":"abc"}\n');
+      fake.stdout.write('{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"ok"}}\n');
+      fake.emit('close', 0, null);
+      await resultPromise;
+
+      const spawnOpts = spawnMock.mock.calls[0][2] as { env: NodeJS.ProcessEnv };
+      expect(spawnOpts.env.DASHBOARD_TOKEN).toBeUndefined();
+      expect(spawnOpts.env.MCP_ACCESS_KEY).toBeUndefined();
+      expect(spawnOpts.env.WIDGET_PASSWORD).toBeUndefined();
+      expect(spawnOpts.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    } finally {
+      for (const [k, v] of Object.entries(prevValues)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
 });

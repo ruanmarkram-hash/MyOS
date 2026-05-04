@@ -1,0 +1,114 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { getScrubbedSdkEnv } from './security.js';
+
+// Snapshot + restore process.env around each case so we can plant
+// arbitrary harness state without polluting the test runner.
+const ENV_BACKUP = { ...process.env };
+
+function resetEnv(): void {
+  for (const k of Object.keys(process.env)) {
+    if (!(k in ENV_BACKUP)) delete process.env[k];
+  }
+  for (const [k, v] of Object.entries(ENV_BACKUP)) {
+    if (v !== undefined) process.env[k] = v;
+  }
+}
+
+describe('getScrubbedSdkEnv', () => {
+  beforeEach(() => {
+    resetEnv();
+  });
+  afterEach(() => {
+    resetEnv();
+  });
+
+  // HIGH-1 regression: a harness-injected CLAUDE_CODE_OAUTH_TOKEN
+  // must not survive the scrub. Previously the natural pass-through
+  // allowlist `continue`d before the CLAUDE_CODE_* prefix sweep, so
+  // the parent's session token leaked into spawned subprocesses.
+  it('drops CLAUDE_CODE_OAUTH_TOKEN from process.env', () => {
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'planted-harness-token';
+    const env = getScrubbedSdkEnv();
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+  });
+
+  it('drops CLAUDE_CODE_OAUTH_TOKEN even when ANTHROPIC_API_KEY is allowed through', () => {
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'planted-harness-token';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-real';
+    const env = getScrubbedSdkEnv();
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-real');
+  });
+
+  it('re-injects CLAUDE_CODE_OAUTH_TOKEN only when caller passes it via authSecrets', () => {
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'planted-harness-token';
+    const env = getScrubbedSdkEnv({ CLAUDE_CODE_OAUTH_TOKEN: 'from-dotenv' });
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('from-dotenv');
+  });
+
+  // HIGH-2 regression: structural denylist gaps. The previous
+  // explicit drop list missed MCP_ACCESS_KEY, *_PASSWORD, *_CREDENTIAL,
+  // *_PRIVATE, and any *_KEY that wasn't *_API_KEY. The pattern sweep
+  // must catch every secret-shaped name.
+  it('drops MCP_ACCESS_KEY (was not in the explicit list)', () => {
+    process.env.MCP_ACCESS_KEY = 'mcp-secret';
+    const env = getScrubbedSdkEnv();
+    expect(env.MCP_ACCESS_KEY).toBeUndefined();
+  });
+
+  it('drops PIPELINE_SUPABASE_SERVICE_ROLE_KEY', () => {
+    process.env.PIPELINE_SUPABASE_SERVICE_ROLE_KEY = 'service-role';
+    const env = getScrubbedSdkEnv();
+    expect(env.PIPELINE_SUPABASE_SERVICE_ROLE_KEY).toBeUndefined();
+  });
+
+  it('drops generic *_KEY vars not previously enumerated', () => {
+    process.env.SOMETHING_PRIVATE_KEY = 'pk';
+    process.env.WIDGET_PASSWORD = 'pw';
+    process.env.VENDOR_CREDENTIAL = 'creds';
+    process.env.RANDOM_PRIVATE = 'priv';
+    process.env.SECRET_FOO = 'foo';
+    const env = getScrubbedSdkEnv();
+    expect(env.SOMETHING_PRIVATE_KEY).toBeUndefined();
+    expect(env.WIDGET_PASSWORD).toBeUndefined();
+    expect(env.VENDOR_CREDENTIAL).toBeUndefined();
+    expect(env.RANDOM_PRIVATE).toBeUndefined();
+    expect(env.SECRET_FOO).toBeUndefined();
+  });
+
+  it('keeps ANTHROPIC_API_KEY in the natural pass-through', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant';
+    const env = getScrubbedSdkEnv();
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant');
+  });
+
+  it('keeps CLAUDECLAW_AGENT_ID despite secret-shaped neighbours', () => {
+    process.env.CLAUDECLAW_AGENT_ID = 'mason';
+    const env = getScrubbedSdkEnv();
+    expect(env.CLAUDECLAW_AGENT_ID).toBe('mason');
+  });
+
+  it('drops CLAUDE_CODE_* prefix vars (session state) other than auth slots', () => {
+    process.env.CLAUDE_CODE_ENTRYPOINT = 'cli';
+    process.env.CLAUDE_CODE_SSE_PORT = '12345';
+    process.env.CLAUDECODE = '1';
+    const env = getScrubbedSdkEnv();
+    expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    expect(env.CLAUDE_CODE_SSE_PORT).toBeUndefined();
+    expect(env.CLAUDECODE).toBeUndefined();
+  });
+
+  it('re-injects extra non-Anthropic auth secrets (e.g. OPENAI_API_KEY for codex)', () => {
+    process.env.OPENAI_API_KEY = 'leaked-from-process-env';
+    const env = getScrubbedSdkEnv({ OPENAI_API_KEY: 'sk-from-dotenv' });
+    // process.env value got swept by the explicit drop list, but
+    // the .env-supplied value survives via re-injection.
+    expect(env.OPENAI_API_KEY).toBe('sk-from-dotenv');
+  });
+
+  it('does not inject empty-string auth secrets', () => {
+    const env = getScrubbedSdkEnv({ ANTHROPIC_API_KEY: '' });
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+});

@@ -233,6 +233,7 @@ const SDK_DROP_VARS_NESTED_CLAUDE = [
 ] as const;
 
 // Exact secret env names we never want the SDK subprocess to see.
+// Belt-and-braces alongside the pattern-based denylist below.
 const SDK_DROP_VARS_SECRETS = [
   'DASHBOARD_TOKEN',
   'DB_ENCRYPTION_KEY',
@@ -255,44 +256,79 @@ const SDK_DROP_VARS_SECRETS = [
   'NOTION_API_KEY',
   'PIN_HASH',
   'DAILY_DOMAIN',
+  'MCP_ACCESS_KEY',
+  'PIPELINE_SUPABASE_SERVICE_ROLE_KEY',
 ] as const;
 
 // Heuristic: any env var whose name matches one of these patterns is a
 // likely secret (defense in depth for keys we haven't enumerated).
-// The auth vars below are exceptions — the SDK needs them.
+// Broadened from the original `_API_KEY$` to a full `_KEY$` sweep so
+// vars like MCP_ACCESS_KEY / PIPELINE_SUPABASE_SERVICE_ROLE_KEY get
+// caught — anything ending in _KEY/_TOKEN/_SECRET/_PASSWORD/_CREDENTIAL
+// /_PRIVATE is dropped unless on the tiny allowlist.
 const SDK_SECRET_NAME_PATTERNS = [
-  /_API_KEY$/,
-  /_TOKEN$/,
-  /_SECRET$/,
-  /^SECRET_/,
+  /_KEY$/i,
+  /_TOKEN$/i,
+  /_SECRET$/i,
+  /_PASSWORD$/i,
+  /_CREDENTIAL$/i,
+  /_PRIVATE$/i,
+  /^SECRET_/i,
+  /^PRIVATE_/i,
 ] as const;
 
+// Auth re-injection slots. Keys here can be passed via `authSecrets`
+// (typically loaded from .env) and re-added to the scrubbed env after
+// the sweep. CLAUDE_CODE_OAUTH_TOKEN is intentionally NOT in the
+// natural pass-through allowlist — process.env may carry the harness
+// session token, which we never want to forward to subprocesses. A
+// caller that genuinely wants OAuth auth must read it out of .env and
+// pass it explicitly via `authSecrets`.
 const SDK_AUTH_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'] as const;
 
-// Fork-specific: vars that are safe (or required) to pass through despite
-// matching one of the patterns above.
+// Tiny natural pass-through allowlist. ONLY ANTHROPIC_API_KEY is
+// allowed to survive the scrub when present in process.env — every
+// other secret-shaped variable must be re-injected explicitly via
+// `authSecrets`.
+const SDK_NATURAL_PASS_VARS = ['ANTHROPIC_API_KEY'] as const;
+
+// Fork-specific: vars that are safe (or required) to pass through
+// despite matching one of the patterns above. Non-secret config only.
 const SDK_KEEP_VARS = ['CLAUDECLAW_AGENT_ID'] as const;
 
 /**
- * Return a scrubbed env dict suitable for passing to `query({ env, ... })`.
+ * Return a scrubbed env dict suitable for passing to `query({ env, ... })`
+ * or to `spawn(..., { env })` for any subprocess we don't want to see
+ * the parent's full secret set.
+ *
+ * Sweep order (HIGH-1 fix): drop dangerous vars FIRST, then re-inject
+ * the caller's explicit auth secrets. Any earlier ordering risked
+ * letting a process.env CLAUDE_CODE_OAUTH_TOKEN survive because the
+ * allowlist branch short-circuited the prefix sweep.
+ *
  * Pass `authSecrets` (loaded via readEnvFile) so secrets stripped from
  * process.env can still be re-injected for the subprocess to authenticate.
+ * Extra non-SDK auth (e.g. OPENAI_API_KEY for codex) can be passed too —
+ * any string-valued key in `authSecrets` is re-injected verbatim.
  */
 export function getScrubbedSdkEnv(
-  authSecrets?: Partial<Record<typeof SDK_AUTH_VARS[number], string>>,
+  authSecrets?: Record<string, string | undefined>,
 ): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...process.env };
 
+  // 1. Drop nested-Claude session vars unconditionally.
   for (const k of SDK_DROP_VARS_NESTED_CLAUDE) delete env[k];
+
+  // 2. Drop the explicit secret list (belt-and-braces).
   for (const k of SDK_DROP_VARS_SECRETS) delete env[k];
 
-  // Pattern-based drop. Walk a snapshot of keys so we can mutate the
-  // dict during iteration. Also drop any remaining CLAUDE_CODE_* var
-  // (besides the auth ones) so a session-scoped token from a parent
-  // Claude Code process can't leak in and break the child.
+  // 3. Pattern-based sweep. Walk a snapshot of keys so we can mutate
+  //    the dict during iteration. CLAUDE_CODE_* vars get nuked here
+  //    too — including any harness-injected CLAUDE_CODE_OAUTH_TOKEN —
+  //    because the natural-pass allowlist below does NOT include them.
   for (const key of Object.keys(env)) {
     if ((SDK_KEEP_VARS as readonly string[]).includes(key)) continue;
-    if ((SDK_AUTH_VARS as readonly string[]).includes(key)) continue;
+    if ((SDK_NATURAL_PASS_VARS as readonly string[]).includes(key)) continue;
     if (key.startsWith('CLAUDE_CODE_') || key === 'CLAUDECODE') {
       delete env[key];
       continue;
@@ -302,17 +338,20 @@ export function getScrubbedSdkEnv(
     }
   }
 
-  // Re-inject auth secrets the caller explicitly opted to allow. Without
-  // at least one of these, the SDK subprocess can't authenticate.
+  // 4. Re-inject caller-supplied auth secrets LAST so they survive the
+  //    sweep above. This is the only path by which CLAUDE_CODE_OAUTH_TOKEN
+  //    or any other auth value can reach the subprocess.
   if (authSecrets) {
-    for (const k of SDK_AUTH_VARS) {
-      const v = authSecrets[k];
-      if (v) env[k] = v;
+    for (const [k, v] of Object.entries(authSecrets)) {
+      if (typeof v === 'string' && v.length > 0) env[k] = v;
     }
   }
 
   return env;
 }
+
+// Re-exported so tests / callers can introspect the auth slot list.
+export const SDK_AUTH_VAR_NAMES: readonly string[] = SDK_AUTH_VARS;
 
 // ── Status ───────────────────────────────────────────────────────────
 
