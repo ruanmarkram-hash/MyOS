@@ -19,6 +19,7 @@ import { initScheduler } from './scheduler.js';
 import { setTelegramConnected, setBotInfo } from './state.js';
 import { messageQueue } from './message-queue.js';
 import { RUNTIME_BUILD_META, createStaleWatcher, shortSha } from './build-meta.js';
+import { enqueueTelegramSend } from './telegram-outbox.js';
 
 // Parse --agent flag
 const agentFlagIndex = process.argv.indexOf('--agent');
@@ -496,10 +497,21 @@ async function main(): Promise<void> {
     );
     if (r.shouldNotify && ALLOWED_CHAT_ID) {
       const tag = AGENT_ID === 'main' ? 'main' : AGENT_ID;
-      bot.api.sendMessage(
-        ALLOWED_CHAT_ID,
-        `[${tag} ⚠️] Stale code detected — runtime running ${shortSha(r.runtimeSha)}, disk has ${shortSha(r.diskSha)}. Run /restart to pick up changes.`,
-      ).catch((err) => logger.warn({ err }, 'Stale-code notify failed'));
+      // Use durable outbox — stale-code alert is a push notification (user
+      // not waiting), needs retry on failure or it joins the class of bugs
+      // that triggered building the outbox in the first place.
+      try {
+        enqueueTelegramSend({
+          agentId: AGENT_ID,
+          chatId: ALLOWED_CHAT_ID,
+          method: 'sendMessage',
+          params: {
+            text: `[${tag} ⚠️] Stale code detected — runtime running ${shortSha(r.runtimeSha)}, disk has ${shortSha(r.diskSha)}. Run /restart to pick up changes.`,
+          },
+        });
+      } catch (err) {
+        logger.warn({ err }, 'Stale-code outbox enqueue failed');
+      }
     }
     // Auto-restart for non-main agents is intentionally deferred —
     // Mission B/C/D may also touch the same launchctl path, and we
