@@ -7,6 +7,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { AGENT_MAX_TURNS, PROJECT_ROOT, agentCwd } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { classifyError } from '../errors.js';
+import { getScrubbedSdkEnv } from '../security.js';
 import { logger } from '../logger.js';
 import type {
   AgentProgressEvent,
@@ -169,34 +170,13 @@ export class ClaudeProvider implements LlmProvider {
       mcpAllowlist,
     } = options;
 
-    // Read secrets from .env without polluting process.env.
-    // CLAUDE_CODE_OAUTH_TOKEN is optional. The subprocess finds auth via
-    // ~/.claude/ automatically unless explicitly overridden here.
+    // Build a scrubbed env for the SDK subprocess. Drops session-scoped
+    // CLAUDE_CODE_* vars (so the child uses its own ~/.claude/ OAuth which
+    // auto-refreshes) and every secret-shaped var (DASHBOARD_TOKEN,
+    // DB_ENCRYPTION_KEY, third-party API keys, etc.). Re-injects auth
+    // tokens read directly from .env.
     const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
-
-    const sdkEnv: Record<string, string | undefined> = { ...process.env };
-    // Strip ALL Claude Code env vars from the child subprocess. When this
-    // process runs inside another Claude Code session, the parent injects
-    // session-scoped vars that break the child:
-    //   - CLAUDECODE / CLAUDE_CODE_ENTRYPOINT -> anti-nesting guard (exit 1)
-    //   - CLAUDE_CODE_OAUTH_TOKEN -> session-scoped token that expires
-    //   - CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST -> expects missing host auth
-    //
-    // By stripping all CLAUDE* vars, the child subprocess falls back to its
-    // own ~/.claude/ OAuth credentials, which auto-refresh.
-    for (const k of Object.keys(sdkEnv)) {
-      if (k === 'CLAUDECLAW_AGENT_ID') continue;
-      if (k.startsWith('CLAUDE') || k === '__CFBundleIdentifier') {
-        delete sdkEnv[k];
-      }
-    }
-    // Re-inject only explicitly configured auth from .env (not from parent env).
-    if (secrets.CLAUDE_CODE_OAUTH_TOKEN) {
-      sdkEnv.CLAUDE_CODE_OAUTH_TOKEN = secrets.CLAUDE_CODE_OAUTH_TOKEN;
-    }
-    if (secrets.ANTHROPIC_API_KEY) {
-      sdkEnv.ANTHROPIC_API_KEY = secrets.ANTHROPIC_API_KEY;
-    }
+    const sdkEnv = getScrubbedSdkEnv(secrets);
 
     let newSessionId: string | undefined;
     let resultText: string | null = null;

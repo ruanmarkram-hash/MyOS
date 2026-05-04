@@ -16,6 +16,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'fs';
 import yaml from 'js-yaml';
 import { readEnvFile } from './env.js';
+import { getScrubbedSdkEnv } from './security.js';
 import { initDatabase, getSession, setSession } from './db.js';
 import { buildMemoryContext } from './memory.js';
 import { loadMcpServers } from './agent.js';
@@ -76,22 +77,11 @@ async function* singleTurn(text: string): AsyncGenerator<{
 
 async function main() {
   try {
+    // Build a scrubbed env for the SDK subprocess. See security.ts for
+    // the full rationale: drops session-scoped CLAUDE_CODE_* vars + every
+    // secret-shaped var, re-injects auth tokens straight from .env.
     const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
-    const sdkEnv: Record<string, string | undefined> = { ...process.env };
-    // Strip ALL Claude Code env vars from the child subprocess. When this
-    // process runs inside another Claude Code session (e.g. launched from
-    // Claude Desktop), the parent injects session-scoped vars that break
-    // the child (expired OAuth tokens, anti-nesting guards, host-managed
-    // auth flags). Stripping all CLAUDE* vars forces the child to use its
-    // own ~/.claude/ OAuth credentials which auto-refresh.
-    for (const k of Object.keys(sdkEnv)) {
-      if (k === 'CLAUDECLAW_AGENT_ID') continue;
-      if (k.startsWith('CLAUDE') || k === '__CFBundleIdentifier') {
-        delete sdkEnv[k];
-      }
-    }
-    if (secrets.CLAUDE_CODE_OAUTH_TOKEN) sdkEnv.CLAUDE_CODE_OAUTH_TOKEN = secrets.CLAUDE_CODE_OAUTH_TOKEN;
-    if (secrets.ANTHROPIC_API_KEY) sdkEnv.ANTHROPIC_API_KEY = secrets.ANTHROPIC_API_KEY;
+    const sdkEnv = getScrubbedSdkEnv(secrets);
 
     // Validate agent ID format (prevent path traversal)
     if (agentId !== 'main' && !/^[a-z][a-z0-9_-]{0,29}$/.test(agentId)) {
