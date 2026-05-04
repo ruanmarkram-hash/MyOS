@@ -1,3 +1,4 @@
+// SAFE-SPAWN-EXEMPT: skill-health command runner — uses buildShellTaskEnv() for shell-task-class scrubbed env. Pre-Part-3 migration.
 import { exec } from 'child_process';
 
 import { upsertSkillHealth } from './db.js';
@@ -122,6 +123,7 @@ function execWithTimeout(command: string, timeoutMs: number): Promise<ExecResult
     // way as scheduled shell-tasks — strip secrets from the inherited
     // env so a hostile / compromised skill manifest cannot exfiltrate
     // them via a "health check" that's really `env | curl …`.
+    // SAFE-SPAWN-EXEMPT: shell-task-class exec, env = buildShellTaskEnv().
     const child = exec(command, {
       timeout: timeoutMs,
       env: buildShellTaskEnv(),

@@ -27,6 +27,7 @@
 
 import fs from 'fs';
 import path from 'path';
+// SAFE-SPAWN-EXEMPT: meet-cli SDK spawns — all sites below use getScrubbedSdkEnv with explicit auth re-injection. Pre-Part-3 migration.
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 
@@ -206,6 +207,7 @@ async function runPikaScript(args: string[], timeoutSec = 90): Promise<{
   });
 
   return await new Promise((resolve) => {
+    // SAFE-SPAWN-EXEMPT: pika SDK spawn, env = getScrubbedSdkEnv(...).
     const proc = spawn(WARROOM_VENV_PY, [PIKA_SCRIPT, ...args], {
       cwd: PROJECT_ROOT,
       env: env as NodeJS.ProcessEnv,
@@ -312,6 +314,7 @@ async function synthesizeBrief(params: {
         CLAUDE_CODE_OAUTH_TOKEN: briefAuth.CLAUDE_CODE_OAUTH_TOKEN,
         ANTHROPIC_API_KEY: briefAuth.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
       });
+      // SAFE-SPAWN-EXEMPT: voice-bridge SDK spawn, env = getScrubbedSdkEnv(briefAuth).
       const proc = spawn(process.execPath, [VOICE_BRIDGE_JS, '--agent', params.agentId, '--chat-id', `meet-brief-${params.briefId}`, '--message', briefingPrompt], {
         cwd: PROJECT_ROOT,
         env: briefEnv as NodeJS.ProcessEnv,
@@ -643,6 +646,7 @@ async function cmdJoinDaily(): Promise<void> {
   ]);
   const subEnv = getScrubbedSdkEnv(dailyAuth);
 
+  // SAFE-SPAWN-EXEMPT: daily-agent SDK spawn, env = getScrubbedSdkEnv(dailyAuth).
   const child = spawn(WARROOM_VENV_PY, agentArgs, {
     cwd: PROJECT_ROOT,
     env: subEnv as NodeJS.ProcessEnv,

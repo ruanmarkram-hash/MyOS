@@ -352,11 +352,13 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // so the HTTP response doesn't block on the respawn.
   async function killWarroomAsync(reason: string): Promise<number[]> {
     try {
+      // SAFE-SPAWN-EXEMPT: pgrep system-tool with hardcoded args + explicit { PATH } env. Pre-Part-3 migration.
       const { spawn } = await import('child_process');
       // SYSTEM-TOOL-EXEMPTED: pgrep with a hardcoded pattern. OS tool,
       // no agent-controlled args, no LLM in the loop. Explicit minimal
       // env so we don't default-inherit harness secrets.
       const pids: number[] = await new Promise((resolve) => {
+        // SAFE-SPAWN-EXEMPT: pgrep system-tool, hardcoded args, explicit { PATH } env.
         const p = spawn('pgrep', ['-f', 'warroom/server.py'], { env: { PATH: process.env.PATH } });
         let out = '';
         p.stdout.on('data', (chunk) => { out += chunk.toString(); });
@@ -591,12 +593,14 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     // because that would kill the dashboard process we're currently
     // running inside — the HTTP response would never be delivered.
     try {
+      // SAFE-SPAWN-EXEMPT: pgrep system-tool with hardcoded args + explicit { PATH } env. Pre-Part-3 migration.
       const { spawn } = await import('child_process');
       // pgrep is simpler than parsing ps. Matches any python process
       // whose command line includes "warroom/server.py".
       // SYSTEM-TOOL-EXEMPTED: pgrep with hardcoded pattern. Explicit
       // minimal env so we don't default-inherit harness secrets.
       const pids: number[] = await new Promise((resolve) => {
+        // SAFE-SPAWN-EXEMPT: pgrep system-tool, hardcoded args, explicit { PATH } env.
         const p = spawn('pgrep', ['-f', 'warroom/server.py'], { env: { PATH: process.env.PATH } });
         let out = '';
         p.stdout.on('data', (chunk) => { out += chunk.toString(); });
@@ -773,6 +777,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     if (!fs.existsSync(MEET_CLI)) {
       return { ok: false, data: { error: 'meet-cli not built; run npm run build' }, stderr: '', code: -1 };
     }
+    // SAFE-SPAWN-EXEMPT: meet-cli SDK spawn — getScrubbedSdkEnv with explicit auth re-injection. Pre-Part-3 migration.
     const { spawn } = await import('child_process');
     // SDK-CLASS spawn: meet-cli runs SDK queries internally (briefing
     // prompts, transcript synthesis) and consumes URL/agent args that
@@ -793,6 +798,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       ...meetAuth,
       ANTHROPIC_API_KEY: meetAuth.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
     });
+    // SAFE-SPAWN-EXEMPT: meet-cli SDK spawn, env = getScrubbedSdkEnv(meetAuth).
     const proc = spawn(process.execPath, [MEET_CLI, ...args], {
       cwd: PROJECT_ROOT,
       env: meetEnv as NodeJS.ProcessEnv,
