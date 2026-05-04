@@ -18,6 +18,7 @@ import { initOrchestrator } from './orchestrator.js';
 import { initScheduler } from './scheduler.js';
 import { setTelegramConnected, setBotInfo } from './state.js';
 import { messageQueue } from './message-queue.js';
+import { RUNTIME_BUILD_META, createStaleWatcher, shortSha } from './build-meta.js';
 
 // Parse --agent flag
 const agentFlagIndex = process.argv.indexOf('--agent');
@@ -466,6 +467,46 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
   logger.info({ agentId: AGENT_ID }, 'Starting ClaudeClaw...');
+  logger.info(
+    {
+      sha: shortSha(RUNTIME_BUILD_META.sha),
+      builtAt: RUNTIME_BUILD_META.builtAt,
+      branch: RUNTIME_BUILD_META.branch,
+      pid: process.pid,
+      agentId: AGENT_ID,
+    },
+    `ClaudeClaw starting | sha=${shortSha(RUNTIME_BUILD_META.sha)} | builtAt=${RUNTIME_BUILD_META.builtAt} | runtime PID=${process.pid}`,
+  );
+
+  // Stale-code watch: every 60s, compare the SHA we loaded at startup
+  // against dist/.build-meta.json on disk. If they differ, the live
+  // process is running stale in-memory bytes (b15c047 incident: fixes
+  // were on disk but the running process kept the cached pre-fix code).
+  // Notify ONCE per stale-window — debounced inside createStaleWatcher.
+  // Auto-restart for sub-agents only; main is locked by CLAUDE.md and
+  // would self-terminate the very supervisor that handles /restart.
+  const staleWatcher = createStaleWatcher();
+  const staleInterval = setInterval(() => {
+    const r = staleWatcher.tick();
+    if (!r.stale) return;
+    const diffMsg = `STALE_CODE_DETECTED runtime_sha=${shortSha(r.runtimeSha)} disk_sha=${shortSha(r.diskSha)}`;
+    logger.warn(
+      { runtimeSha: r.runtimeSha, diskSha: r.diskSha, agentId: AGENT_ID },
+      diffMsg,
+    );
+    if (r.shouldNotify && ALLOWED_CHAT_ID) {
+      const tag = AGENT_ID === 'main' ? 'main' : AGENT_ID;
+      bot.api.sendMessage(
+        ALLOWED_CHAT_ID,
+        `[${tag} ⚠️] Stale code detected — runtime running ${shortSha(r.runtimeSha)}, disk has ${shortSha(r.diskSha)}. Run /restart to pick up changes.`,
+      ).catch((err) => logger.warn({ err }, 'Stale-code notify failed'));
+    }
+    // Auto-restart for non-main agents is intentionally deferred —
+    // Mission B/C/D may also touch the same launchctl path, and we
+    // don't want overlapping restart logic landing in parallel.
+  }, 60_000);
+  // Don't keep the event loop alive on shutdown.
+  staleInterval.unref?.();
 
   // Clear any existing webhook so polling works cleanly (e.g., if token was
   // previously used with a webhook-based bot or another ClaudeClaw instance).
