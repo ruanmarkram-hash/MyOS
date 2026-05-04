@@ -114,8 +114,23 @@ export function scheduleOperationNotification(opts: {
   if (!opts.agentId) throw new Error('scheduleOperationNotification: agentId required');
   if (!opts.chatId) throw new Error('scheduleOperationNotification: chatId required');
   if (!opts.operationId) throw new Error('scheduleOperationNotification: operationId required');
+  if (opts.operationId.length > 256) {
+    throw new Error('scheduleOperationNotification: operationId exceeds 256 chars');
+  }
   if (!(opts.fireAt instanceof Date) || Number.isNaN(opts.fireAt.getTime())) {
     throw new Error('scheduleOperationNotification: fireAt must be a valid Date');
+  }
+  // Reject absurd timestamps. fireAt must be in the next 1 year window
+  // (negative or >1y future is almost certainly a caller bug, not a valid
+  // long-running schedule). Past timestamps within 60s of now are ok —
+  // those fire on the next worker tick.
+  const fireAtSec = Math.floor(opts.fireAt.getTime() / 1000);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const ONE_YEAR = 365 * 24 * 60 * 60;
+  if (fireAtSec < nowSec - 60 || fireAtSec > nowSec + ONE_YEAR) {
+    throw new Error(
+      `scheduleOperationNotification: fireAt out of sane range (now+0..1y), got ${fireAtSec - nowSec}s offset`,
+    );
   }
   const payload: OperationNotificationPayload = {
     method: 'sendMessage',

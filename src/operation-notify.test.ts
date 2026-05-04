@@ -231,4 +231,48 @@ describe('operation-notify', () => {
       expect(rows.map((r) => r.id)).toEqual([a, b]);
     });
   });
+
+  describe('input validation (Codex caveats)', () => {
+    it('rejects operationId exceeding 256 chars', () => {
+      expect(() =>
+        scheduleOperationNotification({
+          agentId: 'main', chatId: 'c',
+          operationId: 'x'.repeat(257),
+          fireAt: new Date(Date.now() + 60_000),
+          message: 'too long',
+        }),
+      ).toThrow(/operationId exceeds 256 chars/);
+    });
+
+    it('rejects fireAt more than 1 year in the future', () => {
+      const TWO_YEARS = 2 * 365 * 24 * 60 * 60 * 1000;
+      expect(() =>
+        scheduleOperationNotification({
+          agentId: 'main', chatId: 'c', operationId: 'op-far',
+          fireAt: new Date(Date.now() + TWO_YEARS),
+          message: 'far future',
+        }),
+      ).toThrow(/out of sane range/);
+    });
+
+    it('rejects fireAt more than 60s in the past', () => {
+      expect(() =>
+        scheduleOperationNotification({
+          agentId: 'main', chatId: 'c', operationId: 'op-stale',
+          fireAt: new Date(Date.now() - 5 * 60 * 1000),
+          message: 'stale',
+        }),
+      ).toThrow(/out of sane range/);
+    });
+
+    it('accepts fireAt within 60s past (allows for race / small clock skew)', () => {
+      expect(() =>
+        scheduleOperationNotification({
+          agentId: 'main', chatId: 'c', operationId: 'op-grace',
+          fireAt: new Date(Date.now() - 30_000),
+          message: 'grace window',
+        }),
+      ).not.toThrow();
+    });
+  });
 });

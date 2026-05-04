@@ -98,6 +98,7 @@ async function runOutboxTick(): Promise<void> {
 /** @internal — exposed for tests so they can drive a tick deterministically. */
 export async function _runOutboxTickForTest(): Promise<void> {
   await runOutboxTick();
+}
 
 /**
  * Periodic recovery sweep cadence. Long-running processes need a within-run

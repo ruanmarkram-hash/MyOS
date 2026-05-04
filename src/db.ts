@@ -2890,6 +2890,7 @@ export function getOutboxStats(): TelegramOutboxStats {
     deadLettered: counts['dead-lettered'],
     oldestUnsentAgeSeconds: oldest.m == null ? null : Math.max(0, now - oldest.m),
   };
+}
 
 // ── Operation Notifications ─────────────────────────────────────────
 //
