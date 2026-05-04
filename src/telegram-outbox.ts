@@ -29,6 +29,7 @@ import {
   markTelegramOutboxSent,
   scheduleTelegramOutboxRetry,
   markTelegramOutboxDeadLettered,
+  sweepStalledTelegramOutboxLeases,
   type TelegramOutboxRow,
 } from './db.js';
 import { logger } from './logger.js';
@@ -80,6 +81,16 @@ export function _getTelegramOutboxClient(): TelegramApiClient | null {
 
 const MAX_ATTEMPTS = 5;
 const MAX_BACKOFF_SECONDS = 60 * 60; // 1 hour cap
+/** Telegram occasionally returns retry_after values that are absurdly
+ * long (24h has been observed when accounts are flagged). Clamp to a
+ * sane upper bound — we'd rather poke the API again in 15min than sit
+ * silent for a day. */
+const MAX_RETRY_AFTER_SECONDS = 15 * 60;
+/** Independent cap for 429-only dead-lettering. Real Telegram throttles
+ * resolve in seconds-to-minutes; 10 retries with backoff buys us hours
+ * of patience before we give up. Generic-error MAX_ATTEMPTS still
+ * applies first (whichever fires earliest wins). */
+const MAX_429_ATTEMPTS = 10;
 
 /**
  * Enqueue a send. Returns the outbox row id. Never throws on the
@@ -113,9 +124,17 @@ function detectRateLimit(err: unknown): RateLimitInfo | null {
   if (err && typeof err === 'object') {
     const e = err as { error_code?: number; parameters?: { retry_after?: number } };
     if (e.error_code === 429) {
-      const ra = e.parameters?.retry_after;
+      const raw = e.parameters?.retry_after;
       // Default to 30s if Telegram didn't say
-      return { retryAfterSeconds: typeof ra === 'number' && ra > 0 ? ra : 30 };
+      const requested = typeof raw === 'number' && raw > 0 ? raw : 30;
+      const clamped = Math.min(requested, MAX_RETRY_AFTER_SECONDS);
+      if (clamped !== requested) {
+        logger.warn(
+          { requestedRetryAfter: requested, clampedTo: clamped },
+          'telegram-outbox: clamping absurd retry_after',
+        );
+      }
+      return { retryAfterSeconds: clamped };
     }
   }
   return null;
@@ -125,7 +144,9 @@ function exponentialBackoffSeconds(attemptCount: number): number {
   // attemptCount is the count BEFORE this attempt. After a failure we'll
   // schedule using the new attempt count = attemptCount + 1, so use that
   // exponent. 2^1=2, 2^2=4, 2^3=8, 2^4=16, 2^5=32 ...
-  const exp = Math.min(attemptCount + 1, 12); // 2^12 = 4096s ≈ 68min, cap below
+  // Guard against negative attempt_count (manually-set or corrupted).
+  const safe = Math.max(0, attemptCount);
+  const exp = Math.min(safe + 1, 12); // 2^12 = 4096s ≈ 68min, cap below
   return Math.min(2 ** exp, MAX_BACKOFF_SECONDS);
 }
 
@@ -142,6 +163,15 @@ function errorMessage(err: unknown): string {
  */
 export async function tickTelegramOutbox(): Promise<number> {
   const client = apiClient;
+
+  // Recovery sweep: if a previous worker crashed mid-send, its claimed
+  // rows sit in 'in_flight' with an expired lease. Reset them to
+  // 'pending' so we re-attempt delivery on this tick.
+  const recovered = sweepStalledTelegramOutboxLeases();
+  if (recovered > 0) {
+    logger.warn({ recovered }, 'telegram-outbox: recovered stalled in_flight rows');
+  }
+
   const due = claimDueTelegramOutbox(20);
   if (due.length === 0) return 0;
 
@@ -181,13 +211,16 @@ export async function tickTelegramOutbox(): Promise<number> {
       const newAttemptCount = row.attempt_count + 1;
       const errMsg = errorMessage(err);
 
-      if (newAttemptCount >= MAX_ATTEMPTS && !rate) {
-        // Don't dead-letter on a 429 — those are throttling, not
-        // permanent failures.
+      const hitGenericCap = !rate && newAttemptCount >= MAX_ATTEMPTS;
+      // Eventually dead-letter persistent 429s too: real throttles
+      // resolve within minutes, but a bot that's been outright banned
+      // or a malformed chat target can return 429 forever.
+      const hit429Cap = !!rate && newAttemptCount >= MAX_429_ATTEMPTS;
+      if (hitGenericCap || hit429Cap) {
         markTelegramOutboxDeadLettered(row.id, errMsg);
         emitDeadLetterMetaAlert(row, errMsg);
         logger.error(
-          { rowId: row.id, agentId: row.agent_id, attempts: newAttemptCount, err: errMsg },
+          { rowId: row.id, agentId: row.agent_id, attempts: newAttemptCount, err: errMsg, rate429: !!rate },
           'telegram-outbox: dead-lettered after max attempts',
         );
       } else {
@@ -209,45 +242,55 @@ export async function tickTelegramOutbox(): Promise<number> {
 }
 
 /**
- * Enqueue a meta-alert when a row hits dead-letter. Best-effort: if
- * ALLOWED_CHAT_ID is unset, we just log. Note the meta-alert ALSO goes
- * through the outbox, so if Telegram is genuinely down both messages
- * sit pending until it recovers. The point is to surface the failure
- * once, not to add a parallel emergency channel.
+ * Surface a dead-letter via three independent channels, in order of
+ * how-likely-to-fail:
+ *   1. stderr — always, unconditionally. If everything else is broken
+ *      the operator still has a log line.
+ *   2. structured logger — survives even if stderr is redirected.
+ *   3. DIRECT bot.api send — bypasses the outbox so a broken outbox
+ *      (DB write failure, bad CAS, etc.) can still produce an alert.
+ *      If THIS fails too, we log the secondary failure and stop —
+ *      we never re-queue a meta-alert through the outbox itself
+ *      (would just dead-letter recursively).
  */
 function emitDeadLetterMetaAlert(row: TelegramOutboxRow, lastError: string): void {
-  // Always log to console — a dead-letter is a real signal even if the
-  // meta-alert itself never makes it out.
+  // (1) Unconditional stderr — the lowest-common-denominator signal.
   // eslint-disable-next-line no-console
   console.error(
     `[telegram-outbox] DEAD-LETTER agent=${row.agent_id} row=${row.id} err=${lastError.slice(0, 200)}`,
   );
 
+  // (2) Structured logger — visible in pino/JSON pipelines.
+  logger.error(
+    { rowId: row.id, agentId: row.agent_id, err: lastError.slice(0, 200) },
+    'telegram-outbox: DEAD-LETTER',
+  );
+
   if (!ALLOWED_CHAT_ID) return;
 
-  // Avoid an infinite recursion on a bad ALLOWED_CHAT_ID: if a
-  // meta-alert itself dead-letters we'll see it in logs but won't
-  // enqueue another meta-meta-alert (the row's payload would already
-  // be tagged below; check before enqueuing).
-  try {
-    const isMetaAlready = row.payload.includes('"__meta_alert":true');
-    if (isMetaAlready) {
-      logger.error({ rowId: row.id }, 'telegram-outbox: meta-alert itself dead-lettered, suppressing recursion');
-      return;
-    }
-
-    enqueueTelegramSend({
-      agentId: row.agent_id,
-      chatId: String(ALLOWED_CHAT_ID),
-      method: 'sendMessage',
-      params: {
-        text: `Outbox dead-letter for agent ${row.agent_id} / row ${row.id} / err ${lastError.slice(0, 200)}`,
-        __meta_alert: true,
-      },
-    });
-  } catch (err) {
-    logger.error({ err, rowId: row.id }, 'telegram-outbox: failed to enqueue meta-alert');
+  // Suppress meta-meta-alert: if the dead-lettered row IS itself a
+  // meta-alert we already failed to deliver, don't try again.
+  if (row.payload.includes('"__meta_alert":true')) {
+    logger.error({ rowId: row.id }, 'telegram-outbox: meta-alert itself dead-lettered, suppressing recursion');
+    return;
   }
+
+  // (3) Direct send — bypass the outbox entirely. If the outbox
+  // machinery is what's broken (bad DB, schema mismatch, CAS bug),
+  // routing the meta-alert through it would make it disappear too.
+  const client = apiClient;
+  if (!client) {
+    logger.error({ rowId: row.id }, 'telegram-outbox: no client wired, cannot direct-send meta-alert');
+    return;
+  }
+  const text = `⚠️ Outbox DEAD-LETTER agent=${row.agent_id} row=${row.id} err=${lastError.slice(0, 200)}`;
+  // Fire-and-forget; we've already logged via (1) and (2) so even if
+  // this rejects we lose nothing additional.
+  void client('sendMessage', String(ALLOWED_CHAT_ID), { text, __meta_alert: true }).catch((err) => {
+    logger.error({ err, rowId: row.id }, 'telegram-outbox: direct meta-alert send failed');
+    // eslint-disable-next-line no-console
+    console.error(`[telegram-outbox] meta-alert direct send FAILED row=${row.id}: ${errorMessage(err)}`);
+  });
 }
 
 /** @internal — exposed for tests. */
@@ -256,4 +299,6 @@ export const _internals = {
   detectRateLimit,
   MAX_ATTEMPTS,
   MAX_BACKOFF_SECONDS,
+  MAX_RETRY_AFTER_SECONDS,
+  MAX_429_ATTEMPTS,
 };
