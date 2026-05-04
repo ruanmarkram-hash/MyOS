@@ -1,6 +1,8 @@
 import { query, type McpHttpServerConfig, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION, OB1_SUPABASE_URL } from '../../config.js';
+import { readEnvFile } from '../../env.js';
 import { logger } from '../../logger.js';
+import { getScrubbedSdkEnv } from '../../security.js';
 
 const CAPTURE_SYSTEM = `You are a capture agent for the user's Open Brain memory store. You are given a single item to save. Call the capture_thought tool exactly once with the provided content. Do not ask clarifying questions, do not summarise, do not rewrite the content. After the tool returns, reply with only the tool's confirmation text. End.`;
 
@@ -22,6 +24,12 @@ function mcpServerSpec(): Record<string, McpServerConfig> {
 async function runOnce(systemPrompt: string, userPrompt: string, maxTurns = 3): Promise<string> {
   const mcpServers = mcpServerSpec();
   const chunks: string[] = [];
+  // Scrub secrets from the subprocess env (DASHBOARD_TOKEN,
+  // DB_ENCRYPTION_KEY, third-party keys etc. have no business in the
+  // child) while re-injecting SDK auth straight from .env.
+  const sdkEnv = getScrubbedSdkEnv(
+    readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']),
+  );
   for await (const event of query({
     prompt: userPrompt,
     options: {
@@ -32,6 +40,7 @@ async function runOnce(systemPrompt: string, userPrompt: string, maxTurns = 3): 
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       includePartialMessages: false,
+      env: sdkEnv,
     },
   })) {
     const ev = event as Record<string, unknown>;

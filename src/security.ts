@@ -197,6 +197,125 @@ export function audit(entry: AuditEntry): void {
 
 // ── Status ───────────────────────────────────────────────────────────
 
+// ── SDK subprocess env scrubbing ─────────────────────────────────────
+//
+// When we spawn an agent SDK subprocess via `query({ env, ... })`, by
+// default the child inherits our entire process.env. That means
+// DASHBOARD_TOKEN, DB_ENCRYPTION_KEY, third-party API keys, etc. are
+// visible to the model and to whatever tools it runs. A prompt-injected
+// agent can read them trivially.
+//
+// `getScrubbedSdkEnv` returns the env to pass to `query({ env, ... })`:
+//   - Drops nested Claude-Code-session state so the child SDK process
+//     doesn't try to attach to the parent's IPC socket / use an expired
+//     session-scoped token / hit the anti-nesting guard.
+//   - Drops every secret-shaped variable the SDK doesn't actually need.
+//   - Preserves whichever of CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY
+//     the caller passed (SDK auth requires one of them; without one, the
+//     subprocess exits 1).
+//
+// Ported from upstream (earlyaidopters/claudeclaw-os) src/security.ts.
+// Fork additions: drop CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST and any
+// other CLAUDE_CODE_* prefix (except the auth tokens), and drop
+// __CFBundleIdentifier — these matched the bespoke scrub the fork
+// previously did inline at each call site.
+
+const SDK_DROP_VARS_NESTED_CLAUDE = [
+  'CLAUDECODE',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_EXECPATH',
+  'CLAUDE_CODE_SSE_PORT',
+  'CLAUDE_CODE_IPC_PORT',
+  'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
+  'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
+  'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
+  '__CFBundleIdentifier',
+] as const;
+
+// Exact secret env names we never want the SDK subprocess to see.
+const SDK_DROP_VARS_SECRETS = [
+  'DASHBOARD_TOKEN',
+  'DB_ENCRYPTION_KEY',
+  'DAILY_API_KEY',
+  'GROQ_API_KEY',
+  'OPENAI_API_KEY',
+  'GOOGLE_API_KEY',
+  'ELEVENLABS_API_KEY',
+  'PIKA_DEV_KEY',
+  'TELEGRAM_BOT_TOKEN',
+  'SLACK_USER_TOKEN',
+  'SLACK_BOT_TOKEN',
+  'SLACK_APP_TOKEN',
+  'RESEND_API_KEY',
+  'GUMROAD_ACCESS_TOKEN',
+  'STRIPE_SECRET_KEY',
+  'STRIPE_PUBLISHABLE_KEY',
+  'CLOUDFLARE_API_TOKEN',
+  'GITHUB_TOKEN',
+  'NOTION_API_KEY',
+  'PIN_HASH',
+  'DAILY_DOMAIN',
+] as const;
+
+// Heuristic: any env var whose name matches one of these patterns is a
+// likely secret (defense in depth for keys we haven't enumerated).
+// The auth vars below are exceptions — the SDK needs them.
+const SDK_SECRET_NAME_PATTERNS = [
+  /_API_KEY$/,
+  /_TOKEN$/,
+  /_SECRET$/,
+  /^SECRET_/,
+] as const;
+
+const SDK_AUTH_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'] as const;
+
+// Fork-specific: vars that are safe (or required) to pass through despite
+// matching one of the patterns above.
+const SDK_KEEP_VARS = ['CLAUDECLAW_AGENT_ID'] as const;
+
+/**
+ * Return a scrubbed env dict suitable for passing to `query({ env, ... })`.
+ * Pass `authSecrets` (loaded via readEnvFile) so secrets stripped from
+ * process.env can still be re-injected for the subprocess to authenticate.
+ */
+export function getScrubbedSdkEnv(
+  authSecrets?: Partial<Record<typeof SDK_AUTH_VARS[number], string>>,
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env };
+
+  for (const k of SDK_DROP_VARS_NESTED_CLAUDE) delete env[k];
+  for (const k of SDK_DROP_VARS_SECRETS) delete env[k];
+
+  // Pattern-based drop. Walk a snapshot of keys so we can mutate the
+  // dict during iteration. Also drop any remaining CLAUDE_CODE_* var
+  // (besides the auth ones) so a session-scoped token from a parent
+  // Claude Code process can't leak in and break the child.
+  for (const key of Object.keys(env)) {
+    if ((SDK_KEEP_VARS as readonly string[]).includes(key)) continue;
+    if ((SDK_AUTH_VARS as readonly string[]).includes(key)) continue;
+    if (key.startsWith('CLAUDE_CODE_') || key === 'CLAUDECODE') {
+      delete env[key];
+      continue;
+    }
+    if (SDK_SECRET_NAME_PATTERNS.some((re) => re.test(key))) {
+      delete env[key];
+    }
+  }
+
+  // Re-inject auth secrets the caller explicitly opted to allow. Without
+  // at least one of these, the SDK subprocess can't authenticate.
+  if (authSecrets) {
+    for (const k of SDK_AUTH_VARS) {
+      const v = authSecrets[k];
+      if (v) env[k] = v;
+    }
+  }
+
+  return env;
+}
+
+// ── Status ───────────────────────────────────────────────────────────
+
 export function getSecurityStatus(): {
   pinEnabled: boolean;
   locked: boolean;
