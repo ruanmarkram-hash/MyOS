@@ -185,6 +185,7 @@ async function main(): Promise<void> {
 
     // War Room voice server (auto-start if enabled, with auto-respawn)
     if (WARROOM_ENABLED) {
+      // SAFE-SPAWN-EXEMPT: warroom server SDK spawn — getScrubbedSdkEnv with explicit auth re-injection. Pre-Part-3 migration.
       const { spawn } = await import('child_process');
       const venvPython = path.join(PROJECT_ROOT, 'warroom', '.venv', 'bin', 'python');
       const serverScript = path.join(PROJECT_ROOT, 'warroom', 'server.py');
@@ -206,11 +207,13 @@ async function main(): Promise<void> {
 
       if (fs.existsSync(venvPython) && fs.existsSync(serverScript)) {
         // Pre-flight: verify Python dependencies are actually installed
+        // SAFE-SPAWN-EXEMPT: python pipecat probe, hardcoded args, explicit { PATH } env. Pre-Part-3 migration.
         const { spawnSync } = await import('child_process');
         // SYSTEM-TOOL-EXEMPTED: bare `python -c 'import pipecat'` import
         // probe. No agent-controlled args, no LLM in the loop. Pass
         // explicit minimal env so we don't default-inherit harness
         // secrets even for this trivial probe.
+        // SAFE-SPAWN-EXEMPT: pipecat import probe, hardcoded args, explicit { PATH } env.
         const depCheck = spawnSync(venvPython, ['-c', 'import pipecat'], {
           stdio: 'pipe',
           timeout: 10000,
@@ -257,6 +260,7 @@ async function main(): Promise<void> {
           // carry one of these voice keys we still scrub correctly.
           const warroomEnv = getScrubbedSdkEnv(warroomAuth);
           warroomEnv.WARROOM_PORT = String(WARROOM_PORT);
+          // SAFE-SPAWN-EXEMPT: warroom SDK spawn, env = getScrubbedSdkEnv(warroomAuth).
           const proc = spawn(venvPython, [serverScript], {
             cwd: PROJECT_ROOT,
             env: warroomEnv as NodeJS.ProcessEnv,

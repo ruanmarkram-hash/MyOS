@@ -4,6 +4,7 @@ import https from 'https';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+// SAFE-SPAWN-EXEMPT: pre-Part-3 migration; ffmpeg + whisper system-tool calls already pass explicit env: { PATH }
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 

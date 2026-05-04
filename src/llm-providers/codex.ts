@@ -1,7 +1,9 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+// SAFE-SPAWN-EXEMPT: codex CLI SDK spawn — uses scrubbed spawnEnv with explicit auth re-injection. Pre-Part-3 migration.
 import { spawn } from 'child_process';
+// SAFE-SPAWN-EXEMPT: type-only import; runtime spawn covered above.
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 
 import { PROJECT_ROOT, agentCwd } from '../config.js';
@@ -340,6 +342,7 @@ export class CodexProvider implements LlmProvider {
     let killTimer: NodeJS.Timeout | undefined;
 
     const typingInterval = setInterval(onTyping, 4000);
+    // SAFE-SPAWN-EXEMPT: codex SDK spawn, env = scrubbed spawnEnv (see above).
     const proc = spawn('codex', args, {
       cwd,
       env: spawnEnv,

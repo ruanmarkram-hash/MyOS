@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+// SAFE-SPAWN-EXEMPT: operator CLI. All execSync calls below are launchctl/systemctl/sleep with hardcoded args; not LLM-reachable. Pre-Part-3 migration.
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
@@ -426,11 +427,11 @@ function activateLaunchd(agentId: string): ActivationResult {
 
   // Unload if already loaded
   try {
-    execSync(`launchctl unload "${destPlist}" 2>/dev/null`, { stdio: 'ignore' });
+    execSync(`launchctl unload "${destPlist}" 2>/dev/null`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI launchctl
   } catch { /* not loaded */ }
 
   fs.writeFileSync(destPlist, content, 'utf-8');
-  execSync(`launchctl load "${destPlist}"`);
+  execSync(`launchctl load "${destPlist}"`); // SAFE-SPAWN-EXEMPT: operator CLI launchctl
 
   // Wait briefly and check if process started
   let pid: number | undefined;
@@ -447,7 +448,7 @@ function activateLaunchd(agentId: string): ActivationResult {
       }
     }
     // Brief synchronous wait
-    execSync('sleep 1', { stdio: 'ignore' });
+    execSync('sleep 1', { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI
   }
 
   logger.info({ agentId, pid }, 'Agent activated (launchd)');
@@ -457,9 +458,9 @@ function activateLaunchd(agentId: string): ActivationResult {
 function activateSystemd(agentId: string): ActivationResult {
   const serviceName = `com.claudeclaw.agent-${agentId}`;
   try {
-    execSync(`systemctl --user daemon-reload`, { stdio: 'ignore' });
-    execSync(`systemctl --user enable "${serviceName}"`, { stdio: 'ignore' });
-    execSync(`systemctl --user start "${serviceName}"`, { stdio: 'ignore' });
+    execSync(`systemctl --user daemon-reload`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI systemctl
+    execSync(`systemctl --user enable "${serviceName}"`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI systemctl
+    execSync(`systemctl --user start "${serviceName}"`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI systemctl
     logger.info({ agentId }, 'Agent activated (systemd)');
     return { ok: true };
   } catch (err) {
@@ -476,18 +477,18 @@ export function deactivateAgent(agentId: string): { ok: boolean; error?: string 
       const label = `com.claudeclaw.${agentId}`;
       const destPlist = path.join(os.homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
       if (fs.existsSync(destPlist)) {
-        try { execSync(`launchctl unload "${destPlist}"`, { stdio: 'ignore' }); } catch { /* ok */ }
+        try { execSync(`launchctl unload "${destPlist}"`, { stdio: 'ignore' }); } catch { /* ok */ } // SAFE-SPAWN-EXEMPT: operator CLI launchctl
         fs.unlinkSync(destPlist);
       }
     } else if (os.platform() === 'linux') {
       const serviceName = `com.claudeclaw.agent-${agentId}`;
       try {
-        execSync(`systemctl --user stop "${serviceName}"`, { stdio: 'ignore' });
-        execSync(`systemctl --user disable "${serviceName}"`, { stdio: 'ignore' });
+        execSync(`systemctl --user stop "${serviceName}"`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI systemctl
+        execSync(`systemctl --user disable "${serviceName}"`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI systemctl
       } catch { /* ok */ }
       const unitPath = path.join(os.homedir(), '.config', 'systemd', 'user', `${serviceName}.service`);
       if (fs.existsSync(unitPath)) fs.unlinkSync(unitPath);
-      try { execSync('systemctl --user daemon-reload', { stdio: 'ignore' }); } catch { /* ok */ }
+      try { execSync('systemctl --user daemon-reload', { stdio: 'ignore' }); } catch { /* ok */ } // SAFE-SPAWN-EXEMPT: operator CLI systemctl
     }
 
     // Kill the process if still running
@@ -583,16 +584,16 @@ export function restartAgent(agentId: string): { ok: boolean; error?: string } {
       }
       const uid = os.userInfo().uid;
       try {
-        execSync(`launchctl kickstart -k gui/${uid}/${label}`, { stdio: 'ignore' });
+        execSync(`launchctl kickstart -k gui/${uid}/${label}`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI launchctl
       } catch {
-        try { execSync(`launchctl unload "${destPlist}"`, { stdio: 'ignore' }); } catch { /* ok */ }
-        execSync(`launchctl load "${destPlist}"`);
+        try { execSync(`launchctl unload "${destPlist}"`, { stdio: 'ignore' }); } catch { /* ok */ } // SAFE-SPAWN-EXEMPT: operator CLI launchctl
+        execSync(`launchctl load "${destPlist}"`); // SAFE-SPAWN-EXEMPT: operator CLI launchctl
       }
       logger.info({ agentId }, 'Agent restarted (launchd)');
       return { ok: true };
     } else if (os.platform() === 'linux') {
       const serviceName = `com.claudeclaw.agent-${agentId}`;
-      execSync(`systemctl --user restart "${serviceName}"`, { stdio: 'ignore' });
+      execSync(`systemctl --user restart "${serviceName}"`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI systemctl
       logger.info({ agentId }, 'Agent restarted (systemd)');
       return { ok: true };
     }

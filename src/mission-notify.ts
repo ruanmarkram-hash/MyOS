@@ -6,6 +6,7 @@
  * to a terminal state (completed | failed | timed_out). The DB column
  * `mission_tasks.notified_at` provides the idempotency guard.
  */
+// SAFE-SPAWN-EXEMPT: notify.sh operator script. KNOWN LEAK — inherits process.env to bash. Args are server-controlled (notify-on-done state machine), not LLM-controlled. Scheduled for Part-3 migration via safeSpawn(envClass: 'shell-task').
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -50,6 +51,7 @@ function resolveNotifyScript(): string {
 export type NotifySpawn = (script: string, args: string[]) => void;
 
 const defaultSpawn: NotifySpawn = (script, args) => {
+  // SAFE-SPAWN-EXEMPT: notify.sh dispatch — TODO Part-3 migrate to safeSpawn with shell-task env scrub.
   const child = spawn('bash', [script, ...args], { stdio: 'ignore', detached: true });
   child.on('error', (err) => logger.warn({ err }, 'notify.sh spawn failed'));
   child.unref();
