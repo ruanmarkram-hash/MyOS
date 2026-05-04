@@ -27,8 +27,26 @@ import { processDueOperationNotifications } from './operation-notify.js';
 
 type Sender = (text: string) => Promise<void>;
 
-/** Max time (ms) a scheduled task can run before being killed. */
+/**
+ * Max time (ms) a SCHEDULED task can run before being killed. Scheduled
+ * tasks are short-lived heartbeats / health-checks / cron jobs by design;
+ * if one hangs past 10 minutes it's broken.
+ */
 const TASK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Max time (ms) a MISSION task can run before being killed. Missions
+ * are full coding sessions (multi-file edits, tests, Codex adversarial
+ * review) and routinely take 20-40 minutes of wall-clock time. The
+ * historical 10-min cap (inherited from scheduled tasks) was killing
+ * non-trivial work mid-flight before commit. Env-tunable for ops.
+ */
+const MISSION_TIMEOUT_MS = (() => {
+  const raw = process.env.MISSION_TIMEOUT_MS;
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 45 * 60 * 1000;
+})();
+const MISSION_TIMEOUT_MIN = Math.round(MISSION_TIMEOUT_MS / 60_000);
 
 let sender: Sender;
 
@@ -353,7 +371,7 @@ async function runDueMissionTasks(): Promise<void> {
   const chatId = ALLOWED_CHAT_ID || 'mission';
   messageQueue.enqueue(chatId, async () => {
     const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
+    const timeout = setTimeout(() => abortController.abort(), MISSION_TIMEOUT_MS);
 
     try {
       const result = await runAgentWithRetry(mission.prompt, undefined, () => {}, undefined, missionModel, abortController, undefined, undefined, undefined, agentMcpAllowlist);
@@ -363,7 +381,7 @@ async function runDueMissionTasks(): Promise<void> {
         const verdict = classifyMissionFailure(mission.started_at);
         const detail = verdict.status === 'partial'
           ? `Hit timeout after committing ${verdict.commitCount} change(s)`
-          : 'Timed out after 10 minutes';
+          : `Timed out after ${MISSION_TIMEOUT_MIN} minutes`;
         completeMissionTask(mission.id, null, verdict.status, detail);
         logger.warn(
           { missionId: mission.id, status: verdict.status, commitCount: verdict.commitCount },
