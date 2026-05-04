@@ -18,7 +18,7 @@ import { initOrchestrator } from './orchestrator.js';
 import { initScheduler } from './scheduler.js';
 import { setTelegramConnected, setBotInfo } from './state.js';
 import { messageQueue } from './message-queue.js';
-import { RUNTIME_BUILD_META, createStaleWatcher, shortSha } from './build-meta.js';
+import { RUNTIME_BUILD_META, createStaleWatcher, shortSha, markShuttingDown } from './build-meta.js';
 import { enqueueTelegramSend } from './telegram-outbox.js';
 
 // Parse --agent flag
@@ -430,6 +430,10 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    // Tell the stale-code watcher we're on the way out so it doesn't fire
+    // a final "I'm stale" alert during the drain. The user has already
+    // issued the remedy (/restart) — alerting again now panics them.
+    markShuttingDown();
     logger.info({ signal }, 'Shutting down...');
     setTelegramConnected(false);
 

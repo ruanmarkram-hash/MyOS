@@ -57,6 +57,42 @@ export const RUNTIME_BUILD_META: Readonly<BuildMeta> = Object.freeze(readBuildMe
 /** Process start (used for uptime in /status). */
 export const RUNTIME_STARTED_AT = Date.now();
 
+/**
+ * Stale-check suppression flags. Set by the shutdown handler so the
+ * dying process doesn't fire one final "I'm stale" alert while it's
+ * already on its way out (which it ALWAYS is during a /restart, since
+ * the restart is queued precisely because the process IS stale).
+ *
+ * The 60s startup grace period covers the symmetric case: a freshly
+ * started process briefly seeing a disk-meta from the build that just
+ * shipped — it's not stale, it's mid-reload.
+ *
+ * Witnessed 2026-05-05: alert fired during the 30s shutdown drain on
+ * /restart, leaving the user with a "stale" warning whose remediation
+ * (/restart) had already been issued.
+ */
+let isShuttingDown = false;
+
+export function markShuttingDown(): void {
+  isShuttingDown = true;
+}
+
+export function _isShuttingDownForTest(): boolean {
+  return isShuttingDown;
+}
+
+export function _resetShutdownStateForTest(): void {
+  isShuttingDown = false;
+}
+
+/**
+ * Default startup grace window (ms). The first 60 seconds after process
+ * start, we suppress stale alerts even if disk meta differs from runtime.
+ * Any divergence in that window means a build-or-restart cycle is in
+ * progress; firing would just race the user.
+ */
+const DEFAULT_STARTUP_GRACE_MS = 60_000;
+
 export interface StaleResult {
   stale: boolean;
   runtimeSha: string;
@@ -98,18 +134,53 @@ export function checkStale(filePath?: string): StaleResult {
  * about). When disk SHA changes again or matches runtime, the
  * window resets.
  */
-export function createStaleWatcher(filePath?: string) {
+export interface StaleWatcherOptions {
+  /** Override the file path checked. Tests use this. */
+  filePath?: string;
+  /** Override the startup grace window. Tests use this. */
+  startupGraceMs?: number;
+  /**
+   * Override the start timestamp. Defaults to RUNTIME_STARTED_AT.
+   * Tests use this to simulate "ticked at minute N of process life".
+   */
+  startedAt?: number;
+}
+
+export function createStaleWatcher(
+  filePathOrOpts?: string | StaleWatcherOptions,
+) {
+  // Backward-compatible: callers used to pass just a string.
+  const opts: StaleWatcherOptions = typeof filePathOrOpts === 'string'
+    ? { filePath: filePathOrOpts }
+    : filePathOrOpts ?? {};
+  const filePath = opts.filePath;
+  const graceMs = opts.startupGraceMs ?? DEFAULT_STARTUP_GRACE_MS;
+  const startedAt = opts.startedAt ?? RUNTIME_STARTED_AT;
+
   let lastWarnedDiskSha: string | null = null;
   return {
     /**
      * Run one tick. Returns the StaleResult plus `shouldNotify`:
-     * true exactly once per new stale disk-SHA observed.
+     * true exactly once per new stale disk-SHA observed, AND only when
+     * the process is neither shutting down nor still inside its startup
+     * grace window (suppresses the alert-during-restart-cycle ghost).
      */
-    tick(): StaleResult & { shouldNotify: boolean } {
+    tick(): StaleResult & { shouldNotify: boolean; suppressedReason?: string } {
       const result = checkStale(filePath);
       let shouldNotify = false;
+      let suppressedReason: string | undefined;
+
       if (result.stale) {
-        if (lastWarnedDiskSha !== result.diskSha) {
+        if (isShuttingDown) {
+          // Process is already on its way out; the user has already issued
+          // the remedy (/restart). Firing an alert now would just race the
+          // shutdown drain and panic the user about a problem in flight.
+          suppressedReason = 'shutting-down';
+        } else if (Date.now() - startedAt < graceMs) {
+          // Fresh process still picking up the post-build meta. Any
+          // divergence here is a transient race, not a real stale state.
+          suppressedReason = 'startup-grace';
+        } else if (lastWarnedDiskSha !== result.diskSha) {
           shouldNotify = true;
           lastWarnedDiskSha = result.diskSha;
         }
@@ -117,7 +188,7 @@ export function createStaleWatcher(filePath?: string) {
         // Reset so a future stale window re-notifies.
         lastWarnedDiskSha = null;
       }
-      return { ...result, shouldNotify };
+      return { ...result, shouldNotify, suppressedReason };
     },
     /** Test helper: peek at internal debounce state. */
     _lastWarned(): string | null { return lastWarnedDiskSha; },

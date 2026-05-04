@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { checkStale, createStaleWatcher, RUNTIME_BUILD_META } from './build-meta.js';
+import {
+  checkStale,
+  createStaleWatcher,
+  RUNTIME_BUILD_META,
+  markShuttingDown,
+  _resetShutdownStateForTest,
+} from './build-meta.js';
 
 let tmpDir: string;
 let metaPath: string;
@@ -71,9 +77,16 @@ describe('checkStale', () => {
 });
 
 describe('createStaleWatcher', () => {
+  beforeEach(() => {
+    _resetShutdownStateForTest();
+  });
+
   it('shouldNotify fires once per stale window then debounces', () => {
     if (RUNTIME_BUILD_META.sha === 'unknown') return;
-    const watcher = createStaleWatcher(metaPath);
+    // startedAt: 0 puts the simulated process well past the startup
+    // grace window so we exercise the actual debounce logic, not the
+    // grace suppression.
+    const watcher = createStaleWatcher({ filePath: metaPath, startedAt: 0 });
 
     // Match — no notify.
     writeMeta(RUNTIME_BUILD_META.sha);
@@ -104,5 +117,43 @@ describe('createStaleWatcher', () => {
     // Stale again later — fresh window, notify.
     writeMeta('stale-sha-3');
     expect(watcher.tick().shouldNotify).toBe(true);
+  });
+
+  it('suppresses alerts during shutdown drain (markShuttingDown)', () => {
+    if (RUNTIME_BUILD_META.sha === 'unknown') return;
+    const watcher = createStaleWatcher({ filePath: metaPath, startedAt: 0 });
+    writeMeta('stale-during-shutdown');
+    markShuttingDown();
+    const r = watcher.tick();
+    expect(r.stale).toBe(true);
+    expect(r.shouldNotify).toBe(false);
+    expect(r.suppressedReason).toBe('shutting-down');
+  });
+
+  it('suppresses alerts during the startup grace window', () => {
+    if (RUNTIME_BUILD_META.sha === 'unknown') return;
+    // startedAt = now means the process is "freshly started"; the grace
+    // window has not yet elapsed.
+    const watcher = createStaleWatcher({
+      filePath: metaPath,
+      startedAt: Date.now(),
+      startupGraceMs: 60_000,
+    });
+    writeMeta('stale-during-startup');
+    const r = watcher.tick();
+    expect(r.stale).toBe(true);
+    expect(r.shouldNotify).toBe(false);
+    expect(r.suppressedReason).toBe('startup-grace');
+  });
+
+  it('alerts fire normally once both grace and shutdown gates are clear', () => {
+    if (RUNTIME_BUILD_META.sha === 'unknown') return;
+    // startedAt: 0 (well past grace), not shutting down — the regular
+    // path. Confirms the gates only suppress when their conditions hold.
+    const watcher = createStaleWatcher({ filePath: metaPath, startedAt: 0 });
+    writeMeta('stale-when-gates-clear');
+    const r = watcher.tick();
+    expect(r.shouldNotify).toBe(true);
+    expect(r.suppressedReason).toBeUndefined();
   });
 });
