@@ -349,6 +349,31 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_skill_usage_skill ON skill_usage(skill_id, triggered_at DESC);
 
+    -- Telegram durable outbox: every Telegram send is queued here so a
+    -- transient API failure (rate limit, network blip, Telegram outage)
+    -- doesn't drop the message. A scheduler-driven worker drains pending
+    -- rows with retries + dead-letter, the same model that mission-notify
+    -- uses for delivery confirmation but generalised to ALL sends.
+    CREATE TABLE IF NOT EXISTS telegram_outbox (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id            TEXT NOT NULL,
+      chat_id             TEXT NOT NULL,
+      payload             TEXT NOT NULL,
+      status              TEXT NOT NULL DEFAULT 'pending',
+      attempt_count       INTEGER NOT NULL DEFAULT 0,
+      last_error          TEXT,
+      last_attempt_at     INTEGER,
+      next_retry_at       INTEGER,
+      lease_expires_at    INTEGER,
+      telegram_message_id INTEGER,
+      created_at          INTEGER NOT NULL,
+      sent_at             INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_telegram_outbox_pending
+      ON telegram_outbox(status, next_retry_at);
+    -- idx_telegram_outbox_inflight is created in the migration block below
+    -- (after lease_expires_at is added to existing DBs).
+
     -- Phase 6.2: Session summaries
     CREATE TABLE IF NOT EXISTS session_summaries (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -673,6 +698,19 @@ function runMigrations(database: Database.Database): void {
         ON mission_tasks(assigned_agent, status, priority DESC, created_at ASC);
     `);
     logger.info('Migration: made mission_tasks.assigned_agent nullable');
+  }
+
+  // Telegram outbox: add lease_expires_at for in-flight claim leases.
+  // Workers atomically CAS pending → in_flight with a lease; a sweep
+  // resets in_flight rows whose lease has expired (worker died mid-send).
+  const outboxCols = database.prepare(`PRAGMA table_info(telegram_outbox)`).all() as Array<{ name: string }>;
+  if (outboxCols.length > 0 && !outboxCols.some((c) => c.name === 'lease_expires_at')) {
+    database.exec(`ALTER TABLE telegram_outbox ADD COLUMN lease_expires_at INTEGER`);
+    logger.info('Migration: added lease_expires_at to telegram_outbox');
+  }
+  // Idempotent: covers fresh DBs (column created in schema) and migrated DBs (column just added above).
+  if (outboxCols.length > 0) {
+    database.exec(`CREATE INDEX IF NOT EXISTS idx_telegram_outbox_inflight ON telegram_outbox(status, lease_expires_at)`);
   }
 
   // Live Meetings: add provider column so we can track which platform
@@ -2609,4 +2647,206 @@ export function getWarRoomTranscript(meetingId: string): Array<{
   return db.prepare(
     'SELECT speaker, text, created_at FROM warroom_transcript WHERE meeting_id = ? ORDER BY created_at',
   ).all(meetingId) as any[];
+}
+
+// ── Telegram durable outbox ───────────────────────────────────────────
+//
+// Every Telegram send is INSERTed here with status='pending'. A worker
+// (src/telegram-outbox.ts, ticked from the scheduler) drains pending rows,
+// makes the actual API call, and on failure schedules a retry via
+// exponential backoff or a 429-honouring delay. After MAX_ATTEMPTS the row
+// is moved to 'dead-lettered' and a meta-alert is enqueued so the failure
+// is visible.
+
+export type TelegramOutboxStatus = 'pending' | 'in_flight' | 'sent' | 'failed' | 'dead-lettered';
+
+export interface TelegramOutboxRow {
+  id: number;
+  agent_id: string;
+  chat_id: string;
+  payload: string;
+  status: TelegramOutboxStatus;
+  attempt_count: number;
+  last_error: string | null;
+  last_attempt_at: number | null;
+  next_retry_at: number | null;
+  lease_expires_at: number | null;
+  telegram_message_id: number | null;
+  created_at: number;
+  sent_at: number | null;
+}
+
+/** Lease duration for an in_flight claim. The worker must complete the
+ * send (and call markTelegramOutboxSent / scheduleTelegramOutboxRetry /
+ * markTelegramOutboxDeadLettered, all of which clear the lease) before
+ * lease_expires_at. If a worker crashes mid-send, the recovery sweep
+ * resets the row to pending after this many seconds. */
+export const TELEGRAM_OUTBOX_LEASE_SECONDS = 60;
+
+/** Insert a pending outbox row. Returns the new row id. */
+export function insertTelegramOutbox(
+  agentId: string,
+  chatId: string,
+  payload: string,
+): number {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `INSERT INTO telegram_outbox (agent_id, chat_id, payload, status, created_at)
+     VALUES (?, ?, ?, 'pending', ?)`,
+  ).run(agentId, chatId, payload, now);
+  return Number(info.lastInsertRowid);
+}
+
+/**
+ * Atomically claim up to `limit` due rows: pending → in_flight via
+ * UPDATE-RETURNING. Two concurrent workers cannot claim the same row;
+ * whichever runs the UPDATE first wins, the loser sees zero affected
+ * rows. The lease (`lease_expires_at`) covers worker crashes — see
+ * sweepStalledTelegramOutboxLeases.
+ *
+ * Implementation note: sqlite RETURNING (>=3.35) gives us the row in
+ * one shot. Since better-sqlite3 doesn't iterate per-row UPDATE...
+ * RETURNING with LIMIT in a single statement portably across versions,
+ * we select candidate ids first then CAS each. The SELECT is advisory;
+ * the UPDATE is the real lock.
+ */
+export function claimDueTelegramOutbox(limit = 20): TelegramOutboxRow[] {
+  const now = Math.floor(Date.now() / 1000);
+  const leaseUntil = now + TELEGRAM_OUTBOX_LEASE_SECONDS;
+  const candidates = db.prepare(
+    `SELECT id FROM telegram_outbox
+     WHERE status = 'pending'
+       AND (next_retry_at IS NULL OR next_retry_at <= ?)
+     ORDER BY id ASC
+     LIMIT ?`,
+  ).all(now, limit) as Array<{ id: number }>;
+
+  const claimStmt = db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'in_flight',
+         lease_expires_at = ?,
+         last_attempt_at = ?
+     WHERE id = ?
+       AND status = 'pending'
+       AND (next_retry_at IS NULL OR next_retry_at <= ?)
+     RETURNING *`,
+  );
+
+  const claimed: TelegramOutboxRow[] = [];
+  for (const c of candidates) {
+    const row = claimStmt.get(leaseUntil, now, c.id, now) as TelegramOutboxRow | undefined;
+    if (row) claimed.push(row);
+    // If undefined, another worker beat us to this row — skip silently.
+  }
+  return claimed;
+}
+
+/**
+ * Reset rows whose in_flight lease has expired (worker crashed mid-send).
+ * Returns the number of rows recovered. Counts as an attempt so a
+ * row that consistently kills its worker eventually dead-letters.
+ */
+export function sweepStalledTelegramOutboxLeases(): number {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'pending',
+         lease_expires_at = NULL,
+         attempt_count = attempt_count + 1,
+         last_error = COALESCE(last_error, '') || ' [lease expired]'
+     WHERE status = 'in_flight'
+       AND lease_expires_at IS NOT NULL
+       AND lease_expires_at <= ?`,
+  ).run(now);
+  return info.changes;
+}
+
+export function markTelegramOutboxSent(id: number, telegramMessageId: number | null): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'sent',
+         telegram_message_id = ?,
+         sent_at = ?,
+         last_attempt_at = ?,
+         attempt_count = attempt_count + 1,
+         lease_expires_at = NULL,
+         last_error = NULL
+     WHERE id = ? AND status = 'in_flight'`,
+  ).run(telegramMessageId, now, now, id);
+}
+
+export function scheduleTelegramOutboxRetry(
+  id: number,
+  nextRetryAt: number,
+  lastError: string,
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  // Allow this to recover both the legacy 'pending' path (used by tests
+  // that fast-forward next_retry_at on a row that never got claimed)
+  // AND the new 'in_flight' path post-CAS.
+  db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'pending',
+         attempt_count = attempt_count + 1,
+         last_attempt_at = ?,
+         next_retry_at = ?,
+         lease_expires_at = NULL,
+         last_error = ?
+     WHERE id = ? AND status IN ('pending', 'in_flight')`,
+  ).run(now, nextRetryAt, lastError.slice(0, 500), id);
+}
+
+export function markTelegramOutboxDeadLettered(id: number, lastError: string): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'dead-lettered',
+         attempt_count = attempt_count + 1,
+         last_attempt_at = ?,
+         lease_expires_at = NULL,
+         last_error = ?
+     WHERE id = ? AND status IN ('pending', 'in_flight')`,
+  ).run(now, lastError.slice(0, 500), id);
+}
+
+export function getTelegramOutboxRow(id: number): TelegramOutboxRow | null {
+  const row = db.prepare(`SELECT * FROM telegram_outbox WHERE id = ?`).get(id) as TelegramOutboxRow | undefined;
+  return row ?? null;
+}
+
+export function countTelegramOutboxByStatus(): Record<TelegramOutboxStatus, number> {
+  const rows = db.prepare(
+    `SELECT status, COUNT(*) AS n FROM telegram_outbox GROUP BY status`,
+  ).all() as Array<{ status: TelegramOutboxStatus; n: number }>;
+  const out: Record<TelegramOutboxStatus, number> = { 'pending': 0, 'in_flight': 0, 'sent': 0, 'failed': 0, 'dead-lettered': 0 };
+  for (const r of rows) out[r.status] = r.n;
+  return out;
+}
+
+export interface TelegramOutboxStats {
+  pending: number;
+  in_flight: number;
+  sent: number;
+  failed: number;
+  deadLettered: number;
+  oldestUnsentAgeSeconds: number | null;
+}
+
+/** Aggregate stats for /status: counts + oldest unsent age. */
+export function getOutboxStats(): TelegramOutboxStats {
+  const counts = countTelegramOutboxByStatus();
+  const oldest = db.prepare(
+    `SELECT MIN(created_at) AS m FROM telegram_outbox
+     WHERE status IN ('pending', 'in_flight')`,
+  ).get() as { m: number | null };
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    pending: counts.pending,
+    in_flight: counts.in_flight,
+    sent: counts.sent,
+    failed: counts.failed,
+    deadLettered: counts['dead-lettered'],
+    oldestUnsentAgeSeconds: oldest.m == null ? null : Math.max(0, now - oldest.m),
+  };
 }

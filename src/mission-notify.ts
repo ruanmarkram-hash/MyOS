@@ -37,6 +37,7 @@ import {
   resetMissionNotified,
 } from './db.js';
 import { logger } from './logger.js';
+import { enqueueTelegramSend } from './telegram-outbox.js';
 
 export type MissionTerminalState = 'completed' | 'failed' | 'timed_out';
 
@@ -181,6 +182,38 @@ export async function notifyMissionDone(
   if (!markMissionNotified(task.id)) return false;
 
   const message = formatNotifyMessage(task, state, detail);
+
+  // Primary path: enqueue into the durable Telegram outbox. The outbox
+  // worker handles retries, 429 backoff, and dead-letter alerts — so we
+  // can stamp delivered_at as soon as the row is queued. If the bot
+  // process dies before the worker drains the queue, the row survives
+  // restart and the worker's first tick picks it up.
+  //
+  // notify.sh remains as a fallback for the rare case where DB writes
+  // fail (e.g. disk full mid-INSERT). It is no longer the primary path.
+  try {
+    enqueueTelegramSend({
+      agentId: task.created_by,
+      chatId,
+      method: 'sendMessage',
+      params: { text: message, parse_mode: 'HTML' },
+    });
+    markMissionDelivered(task.id);
+    logger.info(
+      { missionId: task.id, state, agent: task.created_by },
+      'Mission notify enqueued to durable outbox',
+    );
+    return true;
+  } catch (err) {
+    logger.warn(
+      { err, missionId: task.id },
+      'notifyMissionDone: outbox enqueue failed, falling back to notify.sh',
+    );
+  }
+
+  // Fallback: legacy notify.sh spawn. Kept for systems without DB access
+  // mid-flight (e.g. WAL contention, disk pressure). Will be retired
+  // once outbox proves itself in production.
   let exitCode: number;
   try {
     exitCode = await spawnImpl(resolveNotifyScript(), [message, chatId]);
@@ -193,19 +226,16 @@ export async function notifyMissionDone(
   if (exitCode !== 0) {
     logger.warn(
       { missionId: task.id, exitCode, agent: task.created_by },
-      'notifyMissionDone: notify.sh failed, releasing claim for retry',
+      'notifyMissionDone: notify.sh fallback failed, releasing claim for retry',
     );
     resetMissionNotified(task.id);
     return false;
   }
 
-  // notify.sh exited 0 → it has already verified Telegram returned
-  // ok:true (HIGH 2 fix in scripts/notify.sh). Stamp delivered_at so
-  // the sweep stops considering this row.
   markMissionDelivered(task.id);
   logger.info(
     { missionId: task.id, state, agent: task.created_by },
-    'Mission notify delivered',
+    'Mission notify delivered via notify.sh fallback',
   );
   return true;
 }

@@ -21,6 +21,7 @@ import { formatForTelegram, splitMessage } from './bot.js';
 import { classifyTaskModel, modelTierLabel } from './task-model-classifier.js';
 import { tryExtractShellCommand, runShellCommand } from './shell-task.js';
 import { notifyMissionDone } from './mission-notify.js';
+import { tickTelegramOutbox } from './telegram-outbox.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -65,7 +66,27 @@ export function initScheduler(send: Sender, agentId = 'main'): void {
   lastRecoverySweep = Date.now();
 
   setInterval(() => void runDueTasks(), 60_000);
-  logger.info({ agentId }, 'Scheduler started (checking every 60s)');
+
+  // Telegram durable outbox worker. Runs more frequently than the task
+  // tick because the user-facing latency budget is much tighter (a
+  // dropped message that retries in 60s feels broken). 5s is the
+  // recommended cadence; the worker is cheap when there's nothing due.
+  setInterval(() => void runOutboxTick(), 5_000);
+
+  logger.info({ agentId }, 'Scheduler started (tasks every 60s, outbox every 5s)');
+}
+
+async function runOutboxTick(): Promise<void> {
+  try {
+    await tickTelegramOutbox();
+  } catch (err) {
+    logger.error({ err }, 'telegram-outbox tick failed');
+  }
+}
+
+/** @internal — exposed for tests so they can drive a tick deterministically. */
+export async function _runOutboxTickForTest(): Promise<void> {
+  await runOutboxTick();
 }
 
 /**

@@ -31,7 +31,7 @@ import {
   PROJECT_ROOT,
   LLM_PROVIDER,
 } from './config.js';
-import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage, saveCompactionEvent, getCompactionCount } from './db.js';
+import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage, saveCompactionEvent, getCompactionCount, getOutboxStats } from './db.js';
 import { logger } from './logger.js';
 import { downloadMedia, buildPhotoMessage, buildDocumentMessage, buildVideoMessage } from './media.js';
 import { buildMemoryContext, evaluateMemoryRelevance, saveConversationTurn, shouldNudgeMemory, MEMORY_NUDGE_TEXT } from './memory.js';
@@ -121,6 +121,7 @@ import {
 } from './voice.js';
 import { getSlackConversations, getSlackMessages, sendSlackMessage, SlackConversation } from './slack.js';
 import { getWaChats, getWaChatMessages, sendWhatsAppMessage, WaChat } from './whatsapp.js';
+import { enqueueTelegramSend } from './telegram-outbox.js';
 
 // Per-chat voice mode toggle (in-memory, resets on restart)
 const voiceEnabledChats = new Set<string>();
@@ -460,6 +461,10 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: response, source: 'telegram' });
 
       for (const part of splitMessage(formatForTelegram(`${header}\n\n${response}`))) {
+        // OUTBOX-EXEMPT: in-band reply during user message handling.
+        // ctx.reply preserves the reply-to threading and is awaited so
+        // the message-queue serialises correctly. The outbox is for
+        // background sends; foreign-function-call style stays direct.
         await ctx.reply(part, { parse_mode: 'HTML' });
       }
     } catch (err) {
@@ -671,6 +676,9 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
           continue;
         }
         const input = new InputFile(file.filePath);
+        // OUTBOX-EXEMPT: file/photo uploads use grammY's InputFile stream
+        // which can't be JSON-serialised into the outbox payload. These
+        // are also in-band replies during user message handling.
         if (file.type === 'photo') {
           await ctx.replyWithPhoto(input, file.caption ? { caption: file.caption } : undefined);
         } else {
@@ -864,7 +872,7 @@ export function createBot(): Bot {
   if (ALLOWED_CHAT_ID) {
     setHighImportanceCallback((memoryId, summary, importance) => {
       const msg = `🧠 New memory #${memoryId} [${importance.toFixed(1)}]: ${summary.slice(0, 200)}\n\n/pin ${memoryId} to make permanent`;
-      bot.api.sendMessage(ALLOWED_CHAT_ID, msg).catch(() => {});
+      enqueueTelegramSend({ agentId: AGENT_ID, chatId: ALLOWED_CHAT_ID, method: 'sendMessage', params: { text: msg } });
     });
   }
 
@@ -1253,7 +1261,7 @@ export function createBot(): Bot {
     await ctx.reply('Session locked. Send your PIN to unlock.');
   });
 
-  // /status — show security status
+  // /status — show security status + outbox health
   bot.command('status', async (ctx) => {
     if (!isAuthorised(ctx.chat!.id)) return;
     const s = getSecurityStatus();
@@ -1267,6 +1275,28 @@ export function createBot(): Bot {
       const idleSec = Math.round((Date.now() - s.lastActivity) / 1000);
       lines.push(`Last activity: ${idleSec < 60 ? idleSec + 's ago' : Math.round(idleSec / 60) + 'm ago'}`);
     }
+
+    // Outbox health: pending + in_flight + dead-letter counts and the
+    // age of the oldest unsent row. Anything other than 0 pending /
+    // 0 dead-lettered / no stale unsent age means delivery is degraded.
+    try {
+      const stats = getOutboxStats();
+      const fmtAge = (s: number | null): string => {
+        if (s == null) return '—';
+        if (s < 60) return `${s}s`;
+        if (s < 3600) return `${Math.round(s / 60)}m`;
+        return `${Math.round(s / 3600)}h`;
+      };
+      lines.push('');
+      lines.push('Telegram outbox:');
+      lines.push(`  pending: ${stats.pending}`);
+      lines.push(`  in-flight: ${stats.in_flight}`);
+      lines.push(`  dead-lettered: ${stats.deadLettered}`);
+      lines.push(`  oldest unsent: ${fmtAge(stats.oldestUnsentAgeSeconds)}`);
+    } catch (err) {
+      logger.warn({ err }, '/status: failed to read outbox stats');
+    }
+
     await ctx.reply(lines.join('\n'));
   });
 
@@ -1748,11 +1778,20 @@ async function processDashboardMessage(
     // Emit assistant response to SSE clients
     emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: rawResponse, source: 'dashboard' });
 
-    // Relay to Telegram so the user sees it there too
+    // Relay to Telegram so the user sees it there too. This is a
+    // background relay (the dashboard is the user-facing channel here)
+    // so it MUST go through the durable outbox — a transient Telegram
+    // failure must not silently drop the message.
+    void botApi; // retained for backwards-compat callers
     const { text: responseText } = extractFileMarkers(rawResponse);
     if (responseText) {
       for (const part of splitMessage(formatForTelegram(responseText))) {
-        await botApi.sendMessage(parseInt(chatIdStr), part, { parse_mode: 'HTML' });
+        enqueueTelegramSend({
+          agentId: AGENT_ID,
+          chatId: chatIdStr,
+          method: 'sendMessage',
+          params: { text: part, parse_mode: 'HTML' },
+        });
       }
     }
 
@@ -1799,9 +1838,14 @@ export async function notifyWhatsAppIncoming(
   const origin = isGroup && groupName ? groupName : contactName;
   const text = `📱 <b>${escapeHtml(origin)}</b> — new message\n<i>/wa to view &amp; reply</i>`;
 
-  try {
-    await api.sendMessage(parseInt(ALLOWED_CHAT_ID), text, { parse_mode: 'HTML' });
-  } catch (err) {
-    logger.error({ err }, 'Failed to send WhatsApp notification');
-  }
+  // Route through the durable outbox so a flaky Telegram doesn't drop
+  // the WhatsApp ping. `api` arg is preserved for backward compatibility
+  // but is no longer used directly.
+  void api;
+  enqueueTelegramSend({
+    agentId: AGENT_ID,
+    chatId: ALLOWED_CHAT_ID,
+    method: 'sendMessage',
+    params: { text, parse_mode: 'HTML' },
+  });
 }

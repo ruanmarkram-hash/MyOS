@@ -3,7 +3,7 @@
  *   - recovery sweep replays missed notifications after a crash
  *   - migration upgrade survives a pre-nullable assigned_agent DB
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 
 import {
@@ -16,11 +16,25 @@ import {
   getMissionTasksNeedingNotificationRecovery,
   setSession,
 } from './db.js';
+
+// Mission notify now delivers via the durable telegram-outbox; mock the
+// enqueue function so the recovery-sweep replay test can observe it.
+vi.mock('./telegram-outbox.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./telegram-outbox.js')>();
+  return {
+    ...actual,
+    enqueueTelegramSend: vi.fn<typeof actual.enqueueTelegramSend>(() => 1),
+  };
+});
+
 import { _setNotifySpawn, notifyMissionDone } from './mission-notify.js';
+import { enqueueTelegramSend } from './telegram-outbox.js';
 
 describe('mission notify recovery sweep', () => {
   beforeEach(() => {
     _initTestDatabase();
+    vi.mocked(enqueueTelegramSend).mockReset();
+    vi.mocked(enqueueTelegramSend).mockImplementation(() => 1);
   });
   afterEach(() => {
     _setNotifySpawn(null);
@@ -46,11 +60,11 @@ describe('mission notify recovery sweep', () => {
     expect(aged.map((t) => t.id)).toEqual(['stale']);
   });
 
-  it('replays the missed notification: spawn fires and notified_at is set', async () => {
-    const calls: Array<{ args: string[] }> = [];
-    _setNotifySpawn(async (_script, args) => {
-      calls.push({ args });
-      return 0;
+  it('replays the missed notification: outbox enqueue fires and timestamps are set', async () => {
+    const calls: Array<{ chatId: string; params: Record<string, unknown> }> = [];
+    vi.mocked(enqueueTelegramSend).mockImplementation((opts) => {
+      calls.push({ chatId: opts.chatId, params: opts.params });
+      return 1;
     });
 
     setSession('chat-99', 'sess-r', 'sage');
@@ -63,9 +77,10 @@ describe('mission notify recovery sweep', () => {
     const fired = await notifyMissionDone(pending[0], 'completed');
     expect(fired).toBe(true);
     expect(calls).toHaveLength(1);
-    expect(calls[0].args[1]).toBe('chat-99');
+    expect(calls[0].chatId).toBe('chat-99');
 
     expect(getMissionTask('crashed')!.notified_at).not.toBeNull();
+    expect(getMissionTask('crashed')!.delivered_at).not.toBeNull();
     // Sweep is now empty.
     expect(getMissionTasksNeedingNotificationRecovery()).toHaveLength(0);
   });
