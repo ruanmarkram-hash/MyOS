@@ -2757,16 +2757,27 @@ export function insertTelegramOutbox(
  * we select candidate ids first then CAS each. The SELECT is advisory;
  * the UPDATE is the real lock.
  */
-export function claimDueTelegramOutbox(limit = 20): TelegramOutboxRow[] {
+export function claimDueTelegramOutbox(limit = 20, agentId?: string): TelegramOutboxRow[] {
   const now = Math.floor(Date.now() / 1000);
   const leaseUntil = now + TELEGRAM_OUTBOX_LEASE_SECONDS;
+  // Scope the claim to the calling agent. Each agent runs its own outbox
+  // tick on its own process and delivers via its own bot token. Without
+  // an agent_id filter, agents race each other for any pending row and
+  // send via the WRONG bot — caught 2026-05-05 when Mason's tick beat
+  // main's tick to the morning brief and delivered it via @SonkeMason_bot
+  // instead of main's bot. agentId is optional only so the legacy unit
+  // tests that don't run a real bot keep working; production callers
+  // (tickTelegramOutbox) always pass it.
+  const agentFilter = agentId ? 'AND agent_id = ?' : '';
+  const candidateParams: (number | string)[] = agentId ? [now, agentId, limit] : [now, limit];
   const candidates = db.prepare(
     `SELECT id FROM telegram_outbox
      WHERE status = 'pending'
        AND (next_retry_at IS NULL OR next_retry_at <= ?)
+       ${agentFilter}
      ORDER BY id ASC
      LIMIT ?`,
-  ).all(now, limit) as Array<{ id: number }>;
+  ).all(...candidateParams) as Array<{ id: number }>;
 
   const claimStmt = db.prepare(
     `UPDATE telegram_outbox
@@ -2776,12 +2787,15 @@ export function claimDueTelegramOutbox(limit = 20): TelegramOutboxRow[] {
      WHERE id = ?
        AND status = 'pending'
        AND (next_retry_at IS NULL OR next_retry_at <= ?)
+       ${agentId ? 'AND agent_id = ?' : ''}
      RETURNING *`,
   );
 
   const claimed: TelegramOutboxRow[] = [];
   for (const c of candidates) {
-    const row = claimStmt.get(leaseUntil, now, c.id, now) as TelegramOutboxRow | undefined;
+    const row = (agentId
+      ? claimStmt.get(leaseUntil, now, c.id, now, agentId)
+      : claimStmt.get(leaseUntil, now, c.id, now)) as TelegramOutboxRow | undefined;
     if (row) claimed.push(row);
     // If undefined, another worker beat us to this row — skip silently.
   }

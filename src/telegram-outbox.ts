@@ -180,7 +180,7 @@ function errorMessage(err: unknown): string {
  * few seconds from the scheduler. Returns the number of rows processed
  * (sent + failed + dead-lettered).
  */
-export async function tickTelegramOutbox(): Promise<number> {
+export async function tickTelegramOutbox(agentId?: string): Promise<number> {
   // Recovery sweep: if a previous worker crashed mid-send, its claimed
   // rows sit in 'in_flight' with an expired lease. Reset them to
   // 'pending' so we re-attempt delivery on this tick.
@@ -189,7 +189,9 @@ export async function tickTelegramOutbox(): Promise<number> {
     logger.warn({ recovered }, 'telegram-outbox: recovered stalled in_flight rows');
   }
 
-  const due = claimDueTelegramOutbox(20);
+  // Scope claims to this agent so we never deliver another agent's
+  // message via the wrong bot token (cross-agent delivery bug 2026-05-05).
+  const due = claimDueTelegramOutbox(20, agentId);
   if (due.length === 0) return 0;
 
   let processed = 0;

@@ -107,7 +107,10 @@ export function initScheduler(send: Sender, agentId = 'main'): void {
 
 async function runOutboxTick(): Promise<void> {
   try {
-    await tickTelegramOutbox();
+    // Pass schedulerAgentId so the outbox claim scopes to THIS agent's
+    // pending rows. Without it, every agent process races every other
+    // for any pending row and delivers via the wrong bot token.
+    await tickTelegramOutbox(schedulerAgentId);
   } catch (err) {
     logger.error({ err }, 'telegram-outbox tick failed');
   }
