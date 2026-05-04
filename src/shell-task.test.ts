@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tryExtractShellCommand, runShellCommand } from './shell-task.js';
+import { tryExtractShellCommand, runShellCommand, buildShellTaskEnv } from './shell-task.js';
 
 describe('tryExtractShellCommand', () => {
   it('extracts "Run: bash <path>" form', () => {
@@ -64,5 +64,89 @@ describe('runShellCommand', () => {
     const r = await runShellCommand('echo oops 1>&2; exit 3');
     expect(r.exitCode).toBe(3);
     expect(r.stderr).toBe('oops');
+  });
+
+  // Codex re-review 2026-05-04 (NEW HIGH): shell-task.spawn must NOT
+  // inherit secrets. The argv-controlled prompt becomes a bash command,
+  // so any inherited DASHBOARD_TOKEN / DB_ENCRYPTION_KEY / API key is
+  // exfiltratable by a malicious task definition.
+  it('does NOT inherit secret-shaped vars into the spawned shell', async () => {
+    const sentinels = {
+      DASHBOARD_TOKEN: 'leak-dashboard',
+      DB_ENCRYPTION_KEY: 'leak-dbenc',
+      ANTHROPIC_API_KEY: 'leak-anthropic',
+      OPENAI_API_KEY: 'leak-openai',
+      DATABASE_URL: 'postgres://leak',
+      MCP_ACCESS_KEY: 'leak-mcp',
+    };
+    const restore: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(sentinels)) {
+      restore[k] = process.env[k];
+      process.env[k] = v;
+    }
+    try {
+      const r = await runShellCommand(
+        'echo "DT=${DASHBOARD_TOKEN-_unset_} DB=${DB_ENCRYPTION_KEY-_unset_} AK=${ANTHROPIC_API_KEY-_unset_} OK=${OPENAI_API_KEY-_unset_} DU=${DATABASE_URL-_unset_} MC=${MCP_ACCESS_KEY-_unset_}"',
+      );
+      expect(r.exitCode).toBe(0);
+      // Every secret must be unset inside the child.
+      expect(r.stdout).toBe('DT=_unset_ DB=_unset_ AK=_unset_ OK=_unset_ DU=_unset_ MC=_unset_');
+    } finally {
+      for (const [k, v] of Object.entries(restore)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it('still exposes PATH and HOME so login shells can resolve commands', async () => {
+    const r = await runShellCommand('echo "PATH_LEN=${#PATH} HOME_SET=${HOME:+yes}"');
+    expect(r.exitCode).toBe(0);
+    // PATH must be non-empty (otherwise `echo` itself wouldn't resolve via
+    // /bin/bash builtins, but downstream scripts would break).
+    expect(r.stdout).toMatch(/^PATH_LEN=[1-9]\d* HOME_SET=yes$/);
+  });
+});
+
+describe('buildShellTaskEnv', () => {
+  it('drops every secret-shaped var', () => {
+    const env = buildShellTaskEnv({
+      PATH: '/usr/bin',
+      HOME: '/home/x',
+      DASHBOARD_TOKEN: 'leak',
+      DB_ENCRYPTION_KEY: 'leak',
+      ANTHROPIC_API_KEY: 'leak',
+      DATABASE_URL: 'postgres://leak',
+      SOMETHING_ELSE: 'leak',
+    });
+    expect(env.PATH).toBe('/usr/bin');
+    expect(env.HOME).toBe('/home/x');
+    expect(env.DASHBOARD_TOKEN).toBeUndefined();
+    expect(env.DB_ENCRYPTION_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.SOMETHING_ELSE).toBeUndefined();
+  });
+
+  it('keeps locale family (LC_*) and CLAUDECLAW_AGENT_ID', () => {
+    const env = buildShellTaskEnv({
+      PATH: '/x',
+      LC_ALL: 'en_AU.UTF-8',
+      LC_CTYPE: 'en_AU.UTF-8',
+      LANG: 'en_AU.UTF-8',
+      TZ: 'Australia/Brisbane',
+      CLAUDECLAW_AGENT_ID: 'mason',
+    });
+    expect(env.LC_ALL).toBe('en_AU.UTF-8');
+    expect(env.LC_CTYPE).toBe('en_AU.UTF-8');
+    expect(env.LANG).toBe('en_AU.UTF-8');
+    expect(env.TZ).toBe('Australia/Brisbane');
+    expect(env.CLAUDECLAW_AGENT_ID).toBe('mason');
+  });
+
+  it('skips empty-string allowlisted entries', () => {
+    const env = buildShellTaskEnv({ PATH: '', HOME: '/h' });
+    expect(env.PATH).toBeUndefined();
+    expect(env.HOME).toBe('/h');
   });
 });
