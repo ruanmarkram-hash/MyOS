@@ -4,15 +4,9 @@ import https from 'https';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-// SAFE-SPAWN-EXEMPT: /usr/bin/say + ffmpeg encode in localTts (lines below) — no agent input, system tool. TODO migrate to safeExecFileAsync.
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-
 import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
 import { safeExecFileAsync } from './safe-spawn.js';
-
-const execFileAsync = promisify(execFile);
 
 // Cache ffmpeg availability check (only needs to run once)
 let _ffmpegAvailable: boolean | null = null;
@@ -422,14 +416,14 @@ export async function synthesizeSpeechLocal(text: string): Promise<Buffer> {
   const oggPath = path.join(tmpDir, `tts_${id}.ogg`);
 
   try {
-    await execFileAsync('/usr/bin/say', ['-v', voice, '-o', aiffPath, text]);
-    await execFileAsync('ffmpeg', [
+    await safeExecFileAsync('/usr/bin/say', ['-v', voice, '-o', aiffPath, text], { envClass: 'system-tool' });
+    await safeExecFileAsync('ffmpeg', [
       '-i', aiffPath,
       '-c:a', 'libopus',
       '-b:a', '48k',
       '-y',
       oggPath,
-    ]);
+    ], { envClass: 'system-tool' });
     return fs.readFileSync(oggPath);
   } finally {
     try { fs.unlinkSync(aiffPath); } catch { /* ignore */ }
