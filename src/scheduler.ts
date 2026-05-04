@@ -426,10 +426,27 @@ async function runDueMissionTasks(): Promise<void> {
     }
   }
 
-  const missionCwd = worktree?.cwd;
-  const promptToSend = worktree
-    ? buildWorktreePromptHeader(worktree, mission.id) + mission.prompt
-    : mission.prompt;
+  // Codex HIGH #2: if anything between createMissionWorktree and the
+  // enqueue throws, the cleanup in the inner `finally` never runs and
+  // the worktree leaks on disk. Wrap the enqueue setup in try/catch so
+  // synchronous failures here also tear down the worktree.
+  let missionCwd: string | undefined;
+  let promptToSend: string;
+  try {
+    missionCwd = worktree?.cwd;
+    promptToSend = worktree
+      ? buildWorktreePromptHeader(worktree, mission.id) + mission.prompt
+      : mission.prompt;
+  } catch (setupErr) {
+    logger.error({ err: setupErr, missionId: mission.id }, 'mission setup post-worktree-create threw; cleaning up worktree');
+    if (worktree) {
+      try { removeMissionWorktree(mission.id); }
+      catch (cleanupErr) { logger.warn({ err: cleanupErr, missionId: mission.id }, 'mission-worktree: cleanup after setup-throw failed'); }
+    }
+    runningTaskIds.delete(missionKey);
+    completeMissionTask(mission.id, null, 'failed', `mission setup error: ${(setupErr as Error)?.message ?? String(setupErr)}`.slice(0, 400));
+    return;
+  }
 
   const chatId = ALLOWED_CHAT_ID || 'mission';
   messageQueue.enqueue(chatId, async () => {
@@ -487,13 +504,29 @@ async function runDueMissionTasks(): Promise<void> {
           }
         }
 
-        if (mergeStatus === 'non-ff') {
-          completeMissionTask(mission.id, text, 'partial', `branch ${worktree?.branch} could not fast-forward main; review manually`);
-          logger.warn({ missionId: mission.id, branch: worktree?.branch }, 'mission completed but branch diverged from main; marked partial');
+        // Merge-status mapping (locked post-Codex review 2026-05-05):
+        //   ok       -> mission completed, main is up to date
+        //   skipped  -> non-mason agent path; nothing to merge, completed
+        //   non-ff   -> branch diverged from main; demote to partial,
+        //               operator merges manually. Branch is preserved on
+        //               origin so no work is lost.
+        //   error    -> push or fetch broke (network/auth). Original review
+        //               flagged this falling through to 'completed' which
+        //               silently dropped work. Now demoted to partial so the
+        //               operator can re-run merge or investigate.
+        if (mergeStatus === 'non-ff' || mergeStatus === 'error') {
+          const reason = mergeStatus === 'non-ff'
+            ? `branch ${worktree?.branch} could not fast-forward main; review manually`
+            : `branch ${worktree?.branch} push/merge failed; branch is on origin, retry merge manually`;
+          const notifyMsg = mergeStatus === 'non-ff'
+            ? `Branch diverged from main; review and merge manually.`
+            : `Push/merge failed (network or auth); branch on origin, please merge manually.`;
+          completeMissionTask(mission.id, text, 'partial', reason);
+          logger.warn({ missionId: mission.id, branch: worktree?.branch, mergeStatus }, 'mission completed but merge to main did not land; marked partial');
           await notifyMissionDone(
             { ...mission, result: text, status: 'partial' },
             'partial',
-            `Branch diverged from main; review and merge manually.`,
+            notifyMsg,
             { commitCount: 1 },
           );
         } else {

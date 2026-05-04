@@ -37,6 +37,8 @@ const {
   listMissionWorktrees,
   cleanupAllMissionWorktrees,
   MAX_STALE_WORKTREES,
+  _activeMissionIdsForTest,
+  _clearActiveForTest,
 } = await import('./mission-worktree.js');
 
 function makeRepoWithOrigin(): { local: string; origin: string } {
@@ -119,14 +121,31 @@ describe('mission-worktree', () => {
     expect(all.map((w) => w.missionId).sort()).toEqual(['a1', 'b2']);
   });
 
-  it('cleanupAllMissionWorktrees nukes every leftover (recovery sweep)', () => {
+  it('cleanupAllMissionWorktrees nukes every leftover (recovery sweep, post-crash)', () => {
     createMissionWorktree('s1');
     createMissionWorktree('s2');
     expect(listMissionWorktrees()).toHaveLength(2);
 
+    // Simulate post-crash state: dirs survive on disk but the active
+    // in-memory set is empty (fresh process). Clear via test helper.
+    _clearActiveForTest();
+    expect(_activeMissionIdsForTest()).toEqual([]);
+
     const cleaned = cleanupAllMissionWorktrees();
     expect(cleaned).toBe(2);
     expect(listMissionWorktrees()).toHaveLength(0);
+  });
+
+  it('cleanupAllMissionWorktrees skips worktrees still active in-process (Codex HIGH #4)', () => {
+    createMissionWorktree('alive1');
+    createMissionWorktree('alive2');
+    expect(_activeMissionIdsForTest().sort()).toEqual(['alive1', 'alive2']);
+    // Recovery sweep called while these missions are still in flight
+    // (e.g. initScheduler called twice in same process). Must NOT nuke
+    // them — the running mission subprocess still has cwd inside.
+    const cleaned = cleanupAllMissionWorktrees();
+    expect(cleaned).toBe(0);
+    expect(listMissionWorktrees()).toHaveLength(2);
   });
 
   it('refuses to create a worktree when the leak guard cap is hit', () => {

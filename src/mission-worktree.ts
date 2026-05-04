@@ -55,11 +55,49 @@ const WORKTREE_BRANCH_PREFIX = 'mission-';
 
 /**
  * Hard cap on how many worktrees can exist before we refuse to create
- * more. If this trips it means cleanup is broken or a flood of missions
- * dispatched faster than they finished — either way, surfacing a clear
- * error beats silently filling /Users/sc/HQ with feature branches.
+ * more. Counts ALL worktrees (active + stale) — keep it well above the
+ * realistic concurrent-mission ceiling so a normal burst doesn't deadlock.
+ *
+ * Original was 5, which Codex flagged as breaking 5+ concurrent missions:
+ * all 5 would be active (not stale), the count would equal the cap, and
+ * the 6th setup would fail. 25 is comfortably above any plausible burst
+ * and still tight enough to surface a real cleanup leak.
  */
-export const MAX_STALE_WORKTREES = 5;
+export const MAX_STALE_WORKTREES = 25;
+
+/**
+ * In-process registry of worktrees currently owned by a live mission.
+ * Used by cleanupAllMissionWorktrees() so a second initScheduler() call
+ * (hot-reload, future double-init) cannot nuke a worktree that's still
+ * in flight. Set is safer than WeakSet here since we key by mission id
+ * string, not object identity. (Codex HIGH #4.)
+ */
+const activeWorktreeMissionIds = new Set<string>();
+
+/** Mark a worktree as active in this process. Internal — called by createMissionWorktree. */
+function markActive(missionId: string): void {
+  activeWorktreeMissionIds.add(missionId);
+}
+
+/** Mark a worktree as no longer active. Internal — called by removeMissionWorktree. */
+function markInactive(missionId: string): void {
+  activeWorktreeMissionIds.delete(missionId);
+}
+
+/** @internal exposed for tests. */
+export function _activeMissionIdsForTest(): string[] {
+  return [...activeWorktreeMissionIds];
+}
+
+/**
+ * @internal Test-only: clear the active-worktree registry. Used to
+ * simulate a fresh-process state where the on-disk worktrees survived
+ * a crash but the in-memory active set is empty (the realistic recovery
+ * sweep scenario).
+ */
+export function _clearActiveForTest(): void {
+  activeWorktreeMissionIds.clear();
+}
 
 export interface MissionWorktree {
   /** Absolute path to the worktree dir. */
@@ -166,6 +204,7 @@ export function createMissionWorktree(missionId: string): MissionWorktree {
 
   git(['worktree', 'add', '-B', branch, cwd, baseRef]);
 
+  markActive(missionId);
   logger.info({ missionId, cwd, branch, baseRef }, 'mission-worktree: created');
   return { cwd, branch, missionId };
 }
@@ -205,6 +244,7 @@ export function removeMissionWorktree(missionId: string): void {
   // to origin (success) or we already accepted the loss (failure).
   gitOrNull(['branch', '-D', branch]);
 
+  markInactive(missionId);
   logger.info({ missionId, cwd, branch }, 'mission-worktree: removed');
 }
 
@@ -237,21 +277,32 @@ export function listMissionWorktrees(): MissionWorktree[] {
 }
 
 /**
- * Recovery sweep: nuke every existing mission worktree. Called on
- * scheduler init so a process restart never inherits zombie worktrees
- * from a previous crash. Safe to call concurrently with no work in
- * flight (init runs before the first scheduler tick).
+ * Recovery sweep: nuke every mission worktree NOT currently active in
+ * this process. Called on scheduler init so a process restart never
+ * inherits zombie worktrees from a previous crash.
+ *
+ * Codex HIGH #4 fix: skip worktrees whose missionId is in
+ * activeWorktreeMissionIds. If initScheduler() is called twice in the
+ * same process (hot-reload edge), the second call would otherwise nuke
+ * worktrees still owned by live mission ticks — yanking the cwd out
+ * from under a running Codex/Claude subprocess.
  */
 export function cleanupAllMissionWorktrees(): number {
   const all = listMissionWorktrees();
+  let cleaned = 0;
   for (const w of all) {
+    if (activeWorktreeMissionIds.has(w.missionId)) {
+      logger.debug({ missionId: w.missionId }, 'mission-worktree: skipping active worktree in cleanup sweep');
+      continue;
+    }
     try {
       removeMissionWorktree(w.missionId);
+      cleaned++;
     } catch (err) {
       logger.warn({ err, missionId: w.missionId }, 'mission-worktree: cleanup failed');
     }
   }
-  return all.length;
+  return cleaned;
 }
 
 /**
