@@ -60,12 +60,23 @@ export function initScheduler(send: Sender, agentId = 'main'): void {
 
   // Recovery sweep: if the process died between completeMissionTask() and
   // notifyMissionDone() on a previous run, the row is in a terminal state
-  // with notified_at = NULL and the user never saw the message. Catch up.
+  // with delivered_at = NULL and the user never saw the message. Catch up.
   void recoverMissedMissionNotifications();
+  lastRecoverySweep = Date.now();
 
   setInterval(() => void runDueTasks(), 60_000);
   logger.info({ agentId }, 'Scheduler started (checking every 60s)');
 }
+
+/**
+ * Periodic recovery sweep cadence. Long-running processes need a within-run
+ * retry path: if notify.sh fails after startup (e.g. transient Telegram
+ * outage), the startup-only sweep wouldn't re-fire until the next process
+ * restart. Five minutes is a balance between user latency and not hammering
+ * a flapping API.
+ */
+const RECOVERY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let lastRecoverySweep = 0;
 
 /**
  * Map a persisted mission_tasks.status string onto the notify-state enum.
@@ -77,6 +88,10 @@ function statusToNotifyState(status: string): MissionTerminalState {
   if (status === 'completed') return 'completed';
   if (status === 'timed_out') return 'timed_out';
   return 'failed';
+}
+
+export async function _recoverMissedMissionNotificationsForTest(): Promise<void> {
+  return recoverMissedMissionNotifications();
 }
 
 async function recoverMissedMissionNotifications(): Promise<void> {
@@ -101,6 +116,16 @@ async function recoverMissedMissionNotifications(): Promise<void> {
 }
 
 async function runDueTasks(): Promise<void> {
+  // Periodic recovery sweep: replay any mission notifications whose
+  // delivery never landed (post-startup notify.sh failures, Telegram
+  // blips). Gated by RECOVERY_SWEEP_INTERVAL_MS so the per-tick cost
+  // is amortised. Bounded by notify_attempt_count in the underlying
+  // query so a permanently broken row stops retrying.
+  if (Date.now() - lastRecoverySweep >= RECOVERY_SWEEP_INTERVAL_MS) {
+    lastRecoverySweep = Date.now();
+    void recoverMissedMissionNotifications();
+  }
+
   const tasks = getDueTasks(schedulerAgentId);
 
   if (tasks.length > 0) {

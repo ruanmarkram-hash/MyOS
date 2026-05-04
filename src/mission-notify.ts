@@ -6,16 +6,23 @@
  * to a terminal state (completed | failed | timed_out). The DB column
  * `mission_tasks.notified_at` provides the idempotency guard.
  *
- * Durability rules (locked 2026-05-04):
- *   1. notified_at is set BEFORE spawn (claim) and CLEARED on non-zero exit
- *      so the recovery sweep can retry.
+ * Durability rules (locked 2026-05-04, hardened 2026-05-04 post-Codex review):
+ *   1. Two timestamps split the lifecycle:
+ *        notified_at  = claim (set before spawn, prevents concurrent re-fire)
+ *        delivered_at = confirmed delivery (set ONLY after notify.sh exit 0
+ *                       AND Telegram returned ok:true)
+ *      This is what makes a crash mid-spawn recoverable: the sweep filters
+ *      on `delivered_at IS NULL`, not `notified_at IS NULL`, so a row whose
+ *      claim was stamped but whose delivery never landed is still picked up.
  *   2. spawn is awaited with a 10s timeout; the scheduler does not block
  *      indefinitely on a hung curl.
  *   3. Untrusted task fields (title, result, error) are HTML-escaped because
  *      notify.sh sends with parse_mode=HTML.
- *   4. Missing chat_id is logged and the task is marked notified to prevent
+ *   4. Missing chat_id is logged and the task is marked DELIVERED to prevent
  *      a tight retry loop. Trade-off: the user does not see the message,
  *      but `unrouted_at` semantics live in the log only (no schema bloat).
+ *   5. Bounded retry: notify_attempt_count is incremented on every claim;
+ *      the sweep stops re-claiming once it crosses the cap (5 by default).
  */
 // SAFE-SPAWN-EXEMPT: notify.sh operator script. KNOWN LEAK — inherits process.env to bash. Args are server-controlled (notify-on-done state machine), not LLM-controlled. Scheduled for Part-3 migration via safeSpawn(envClass: 'shell-task').
 import { spawn } from 'child_process';
@@ -25,6 +32,7 @@ import { fileURLToPath } from 'url';
 import {
   type MissionTask,
   getLatestChatIdForAgent,
+  markMissionDelivered,
   markMissionNotified,
   resetMissionNotified,
 } from './db.js';
@@ -135,11 +143,13 @@ export function _setNotifySpawn(impl: NotifySpawn | null): void {
  *
  * No-op when:
  *   - task.notify_on_done is falsy
- *   - task.notified_at was already set (markMissionNotified returns false)
- *   - getLatestChatIdForAgent returns null (we mark notified to break the
+ *   - task.delivered_at was already set (durable success)
+ *   - markMissionNotified loses the claim race
+ *   - getLatestChatIdForAgent returns null (we mark delivered to break the
  *     retry loop, since we have no destination)
  *
- * Returns true iff a ping was actually delivered (notify.sh exit 0).
+ * Returns true iff a ping was actually delivered (notify.sh exit 0 AND
+ * Telegram returned ok:true).
  */
 export async function notifyMissionDone(
   task: MissionTask,
@@ -147,25 +157,27 @@ export async function notifyMissionDone(
   detail?: string,
 ): Promise<boolean> {
   if (!task.notify_on_done) return false;
-  if (task.notified_at) return false;
+  // delivered_at is the durable success marker. notified_at by itself is
+  // only a claim — a row with notified_at set but delivered_at NULL is a
+  // crash-mid-spawn that we want to recover.
+  if (task.delivered_at) return false;
 
   const chatId = getLatestChatIdForAgent(task.created_by);
   if (chatId === null) {
     // No session ever recorded for this agent ⇒ no chat to deliver to.
-    // Mark the task notified to stop the recovery sweep from looping forever
-    // on a permanently undeliverable row. Trade-off documented at top of file.
-    if (markMissionNotified(task.id)) {
-      logger.warn(
-        { missionId: task.id, agent: task.created_by },
-        'notify: no chat_id for agent, skipping delivery and marking notified',
-      );
-    }
+    // Stamp delivered_at directly so the recovery sweep stops looping on
+    // a permanently undeliverable row. Trade-off documented at top of file.
+    markMissionDelivered(task.id);
+    logger.warn(
+      { missionId: task.id, agent: task.created_by },
+      'notify: no chat_id for agent, marking delivered to stop retry loop',
+    );
     return false;
   }
 
-  // Conditional UPDATE is the real idempotency guard — wins races with
-  // the in-memory check above. We claim the slot, then release it on
-  // delivery failure so the recovery sweep can retry.
+  // Claim filter is `delivered_at IS NULL`, so the recovery sweep can
+  // re-claim a row whose previous claim never reached delivery. The
+  // attempt counter bumps on every claim and caps unbounded retries.
   if (!markMissionNotified(task.id)) return false;
 
   const message = formatNotifyMessage(task, state, detail);
@@ -187,6 +199,10 @@ export async function notifyMissionDone(
     return false;
   }
 
+  // notify.sh exited 0 → it has already verified Telegram returned
+  // ok:true (HIGH 2 fix in scripts/notify.sh). Stamp delivered_at so
+  // the sweep stops considering this row.
+  markMissionDelivered(task.id);
   logger.info(
     { missionId: task.id, state, agent: task.created_by },
     'Mission notify delivered',

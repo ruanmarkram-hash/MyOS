@@ -230,7 +230,9 @@ function createSchema(database: Database.Database): void {
       started_at      INTEGER,
       completed_at    INTEGER,
       notify_on_done  INTEGER NOT NULL DEFAULT 0,
-      notified_at     INTEGER
+      notified_at     INTEGER,
+      delivered_at    INTEGER,
+      notify_attempt_count INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS idx_mission_status
@@ -461,6 +463,19 @@ function runMigrations(database: Database.Database): void {
   if (missionColNames.length > 0 && !missionColNames.includes('notified_at')) {
     database.exec(`ALTER TABLE mission_tasks ADD COLUMN notified_at INTEGER`);
   }
+  // Mission tasks: durability split (locked 2026-05-04).
+  //   - notified_at = claim timestamp (set BEFORE spawn so concurrent fires bail)
+  //   - delivered_at = confirmed delivery (set ONLY after notify.sh exits 0
+  //     AND Telegram returns ok:true). The recovery sweep filters on
+  //     delivered_at IS NULL so a crash between claim and delivery is
+  //     recoverable. notify_attempt_count caps retries so a permanently
+  //     broken row doesn't loop forever.
+  if (missionColNames.length > 0 && !missionColNames.includes('delivered_at')) {
+    database.exec(`ALTER TABLE mission_tasks ADD COLUMN delivered_at INTEGER`);
+  }
+  if (missionColNames.length > 0 && !missionColNames.includes('notify_attempt_count')) {
+    database.exec(`ALTER TABLE mission_tasks ADD COLUMN notify_attempt_count INTEGER NOT NULL DEFAULT 0`);
+  }
 
   // ── Memory V2 migration ──────────────────────────────────────────────
   // Detect old schema (has 'sector' column but no 'importance') and migrate.
@@ -639,16 +654,18 @@ function runMigrations(database: Database.Database): void {
         started_at INTEGER, completed_at INTEGER,
         model TEXT,
         notify_on_done INTEGER NOT NULL DEFAULT 0,
-        notified_at INTEGER
+        notified_at INTEGER,
+        delivered_at INTEGER,
+        notify_attempt_count INTEGER NOT NULL DEFAULT 0
       );
       INSERT INTO mission_tasks_new
         (id, title, prompt, assigned_agent, status, result, error, created_by,
          priority, created_at, started_at, completed_at,
-         model, notify_on_done, notified_at)
+         model, notify_on_done, notified_at, delivered_at, notify_attempt_count)
       SELECT
         id, title, prompt, assigned_agent, status, result, error, created_by,
         priority, created_at, started_at, completed_at,
-        model, notify_on_done, notified_at
+        model, notify_on_done, notified_at, delivered_at, notify_attempt_count
       FROM mission_tasks;
       DROP TABLE mission_tasks;
       ALTER TABLE mission_tasks_new RENAME TO mission_tasks;
@@ -2013,6 +2030,8 @@ export interface MissionTask {
   model: string | null;
   notify_on_done: number;
   notified_at: number | null;
+  delivered_at: number | null;
+  notify_attempt_count: number;
 }
 
 export function createMissionTask(
@@ -2033,26 +2052,52 @@ export function createMissionTask(
 }
 
 /**
- * Mark a mission task as notified. Returns true if the row was updated
- * (i.e. notified_at was previously NULL and notify_on_done = 1). The
- * conditional UPDATE is the idempotency guard so the same completion
- * cannot fire two pings even on retries.
+ * Claim a mission task for notification delivery. Returns true if the
+ * row was updated (i.e. delivered_at IS NULL and notify_on_done = 1).
+ *
+ * Semantics changed 2026-05-04: the claim filter is `delivered_at IS NULL`,
+ * not `notified_at IS NULL`. This is what makes crash-mid-spawn recoverable:
+ * if a process dies between marking notified_at and spawning notify.sh,
+ * delivered_at remains NULL and the recovery sweep can re-claim the row
+ * by stamping a fresh notified_at. The same-process double-fire guard
+ * is the in-memory `runningTaskIds` set + `task.delivered_at` early-return
+ * inside notifyMissionDone. We also bump notify_attempt_count on each
+ * claim so the sweep can stop retrying a permanently broken row.
  */
 export function markMissionNotified(id: string): boolean {
   const now = Math.floor(Date.now() / 1000);
   const result = db.prepare(
-    `UPDATE mission_tasks SET notified_at = ?
-     WHERE id = ? AND notify_on_done = 1 AND notified_at IS NULL`,
+    `UPDATE mission_tasks
+       SET notified_at = ?,
+           notify_attempt_count = notify_attempt_count + 1
+     WHERE id = ? AND notify_on_done = 1 AND delivered_at IS NULL`,
   ).run(now, id);
   return result.changes > 0;
 }
 
 /**
  * Clear notified_at on a mission task. Used to release a claim when
- * delivery fails so the next recovery sweep can retry.
+ * delivery fails so the next recovery sweep can retry without waiting
+ * for an in-flight TTL. Safe no-op once delivered_at is set (we never
+ * clear notified_at on a delivered row).
  */
 export function resetMissionNotified(id: string): void {
-  db.prepare(`UPDATE mission_tasks SET notified_at = NULL WHERE id = ?`).run(id);
+  db.prepare(
+    `UPDATE mission_tasks SET notified_at = NULL
+     WHERE id = ? AND delivered_at IS NULL`,
+  ).run(id);
+}
+
+/**
+ * Stamp delivered_at after notify.sh has confirmed Telegram accepted
+ * the message (HTTP 200 + ok:true). This is the durable success marker
+ * the recovery sweep filters on.
+ */
+export function markMissionDelivered(id: string): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE mission_tasks SET delivered_at = ? WHERE id = ?`,
+  ).run(now, id);
 }
 
 /** @internal — test seam to age a row's completed_at for recovery sweep tests. */
@@ -2066,6 +2111,13 @@ export function _setMissionCompletedAtForTest(
   ).run(completedAt, status, id);
 }
 
+/** @internal — test seam to set notify_attempt_count for backoff tests. */
+export function _setMissionNotifyAttemptCountForTest(id: string, count: number): void {
+  db.prepare(
+    `UPDATE mission_tasks SET notify_attempt_count = ? WHERE id = ?`,
+  ).run(count, id);
+}
+
 /**
  * Find terminal mission tasks whose notify-on-done ping was never delivered.
  * Used by the scheduler startup sweep to recover from a crash that hit
@@ -2076,19 +2128,21 @@ export function _setMissionCompletedAtForTest(
  */
 export function getMissionTasksNeedingNotificationRecovery(
   graceSeconds = 60,
+  maxAttempts = 5,
 ): MissionTask[] {
   const cutoff = Math.floor(Date.now() / 1000) - graceSeconds;
   return db
     .prepare(
       `SELECT * FROM mission_tasks
        WHERE notify_on_done = 1
-         AND notified_at IS NULL
+         AND delivered_at IS NULL
+         AND notify_attempt_count < ?
          AND status IN ('completed', 'failed', 'timed_out')
          AND completed_at IS NOT NULL
          AND completed_at < ?
        ORDER BY completed_at ASC`,
     )
-    .all(cutoff) as MissionTask[];
+    .all(maxAttempts, cutoff) as MissionTask[];
 }
 
 /**

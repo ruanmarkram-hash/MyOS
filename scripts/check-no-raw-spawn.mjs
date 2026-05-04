@@ -88,31 +88,42 @@ function exemptOnLine(line, prevBlockComment) {
   let inLine = false;
   let inStr = null; // "'" | '"' | '`'
   let escaped = false;
+  // Track whether any non-whitespace, non-comment character has appeared
+  // before the marker. If yes, this line carries CODE alongside the
+  // marker — treat the marker as same-line-only and never let it cover
+  // the line below. (Adversarial pattern Codex 2026-05-04: an import
+  // line ending with `// SAFE-SPAWN-EXEMPT: ...` was bypassing a raw
+  // spawn() on the next line.)
+  let codeBeforeMarker = false;
   while (i < line.length) {
     const c = line[i];
     const n = line[i + 1];
     if (inBlock) {
       // marker must be inside this block
-      if (line.startsWith(EXEMPT_TEXT, i)) return { exempt: true, blockOpen: true };
+      if (line.startsWith(EXEMPT_TEXT, i)) return { exempt: true, blockOpen: true, hasCode: codeBeforeMarker };
       if (c === '*' && n === '/') { inBlock = false; i += 2; continue; }
       i++; continue;
     }
     if (inLine) {
-      if (line.startsWith(EXEMPT_TEXT, i)) return { exempt: true, blockOpen: false };
+      if (line.startsWith(EXEMPT_TEXT, i)) return { exempt: true, blockOpen: false, hasCode: codeBeforeMarker };
       i++; continue;
     }
     if (inStr) {
       if (escaped) { escaped = false; i++; continue; }
       if (c === '\\') { escaped = true; i++; continue; }
       if (c === inStr) { inStr = null; i++; continue; }
+      // chars inside a string still count as code for the purposes of
+      // "is this line just a comment".
+      codeBeforeMarker = true;
       i++; continue;
     }
     if (c === '/' && n === '/') { inLine = true; i += 2; continue; }
     if (c === '/' && n === '*') { inBlock = true; i += 2; continue; }
-    if (c === '"' || c === "'" || c === '`') { inStr = c; i++; continue; }
+    if (c === '"' || c === "'" || c === '`') { inStr = c; codeBeforeMarker = true; i++; continue; }
+    if (c !== ' ' && c !== '\t') codeBeforeMarker = true;
     i++;
   }
-  return { exempt: false, blockOpen: inBlock };
+  return { exempt: false, blockOpen: inBlock, hasCode: codeBeforeMarker };
 }
 
 /**
@@ -325,12 +336,14 @@ function checkFile(filePath) {
     if (!importHit && !callHit) continue;
 
     // Exemption: marker must be inside a comment on this line or the
-    // line above (and the comment context must carry through for
-    // line-above checks too).
+    // line above. For the "above" case, the previous line MUST be
+    // comment-only — a marker dangling off the end of an import or
+    // call must NOT bypass the next line's raw spawn (Codex 2026-05-04).
     const same = exemptOnLine(raw, blockState[i]).exempt;
     let above = false;
     if (i > 0) {
-      above = exemptOnLine(lines[i - 1], blockState[i - 1]).exempt;
+      const prev = exemptOnLine(lines[i - 1], blockState[i - 1]);
+      above = prev.exempt && !prev.hasCode;
     }
     if (same || above) continue;
 
