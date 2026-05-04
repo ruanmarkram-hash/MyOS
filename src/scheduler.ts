@@ -18,6 +18,7 @@ import { runAgentWithRetry } from './agent.js';
 import { formatForTelegram, splitMessage } from './bot.js';
 import { classifyTaskModel, modelTierLabel } from './task-model-classifier.js';
 import { tryExtractShellCommand, runShellCommand } from './shell-task.js';
+import { notifyMissionDone } from './mission-notify.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -231,10 +232,12 @@ async function runDueMissionTasks(): Promise<void> {
           // still want to see it so the user isn't silently unnotified.
           logger.warn({ err: sendErr, missionId: mission.id }, 'Failed to send mission timeout notification');
         }
+        notifyMissionDone(mission, 'timed_out', 'Timed out after 10 minutes');
       } else {
         const text = result.text?.trim() || 'Task completed with no output.';
         completeMissionTask(mission.id, text, 'completed');
         logger.info({ missionId: mission.id }, 'Mission task completed');
+        notifyMissionDone({ ...mission, result: text, status: 'completed' }, 'completed', text);
 
         // Send result to Telegram
         for (const chunk of splitMessage(formatForTelegram(text))) {
@@ -253,6 +256,7 @@ async function runDueMissionTasks(): Promise<void> {
       const errMsg = err instanceof Error ? err.message : String(err);
       completeMissionTask(mission.id, null, 'failed', errMsg.slice(0, 500));
       logger.error({ err, missionId: mission.id }, 'Mission task failed');
+      notifyMissionDone({ ...mission, error: errMsg.slice(0, 500), status: 'failed' }, 'failed', errMsg);
     } finally {
       runningTaskIds.delete(missionKey);
     }

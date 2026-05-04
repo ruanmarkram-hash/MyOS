@@ -7,6 +7,7 @@
  *
  * Usage:
  *   node dist/mission-cli.js create --agent research --title "Label" "Full prompt"
+ *   node dist/mission-cli.js create --agent research --notify-on-done "Full prompt"
  *   node dist/mission-cli.js list [--status queued]
  *   node dist/mission-cli.js result <id>
  *   node dist/mission-cli.js cancel <id>
@@ -59,14 +60,19 @@ const modelShortcuts: Record<string, string> = {
 const rawModelArg = modelFlagIdx !== -1 ? process.argv[modelFlagIdx + 1] ?? null : null;
 const cliModel = rawModelArg === 'auto' ? null : (rawModelArg ? (modelShortcuts[rawModelArg] ?? rawModelArg) : null);
 
+// --notify-on-done is a boolean toggle; ping the creating agent's chat when done.
+const notifyOnDoneIdx = process.argv.indexOf('--notify-on-done');
+const notifyOnDone = notifyOnDoneIdx !== -1;
+
 // Who created this task
 const createdBy = process.env.CLAUDECLAW_AGENT_ID ?? 'main';
 
-// Clean argv: remove all flag pairs
+// Clean argv: remove all flag pairs (and the standalone --notify-on-done)
 const flagIndices = new Set<number>();
 [agentFlagIdx, titleFlagIdx, statusFlagIdx, priorityFlagIdx, modelFlagIdx].forEach(idx => {
   if (idx !== -1) { flagIndices.add(idx); flagIndices.add(idx + 1); }
 });
+if (notifyOnDoneIdx !== -1) flagIndices.add(notifyOnDoneIdx);
 const cleanedArgv = process.argv.filter((_, i) => !flagIndices.has(i));
 const [, , command, ...rest] = cleanedArgv;
 
@@ -89,13 +95,14 @@ switch (command) {
     const id = randomBytes(4).toString('hex');
     // Auto-classify model if not explicitly set
     const model = cliModel ?? classifyTaskModel(prompt);
-    createMissionTask(id, title, prompt, targetAgent ?? null, createdBy, priorityArg, model);
+    createMissionTask(id, title, prompt, targetAgent ?? null, createdBy, priorityArg, model, notifyOnDone);
 
     console.log(`Mission task created: ${id}`);
     console.log(`  Title:    ${title}`);
     console.log(`  Agent:    ${targetAgent || 'unassigned (use dashboard to assign)'}`);
     console.log(`  Model:    ${modelTierLabel(model)}${!cliModel ? ' (auto)' : ''}`);
     console.log(`  Priority: ${priorityArg}`);
+    if (notifyOnDone) console.log(`  Notify:   on completion (Telegram ping to ${createdBy})`);
     console.log(`  Prompt:   ${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}`);
     break;
   }

@@ -228,7 +228,9 @@ function createSchema(database: Database.Database): void {
       priority        INTEGER NOT NULL DEFAULT 0,
       created_at      INTEGER NOT NULL,
       started_at      INTEGER,
-      completed_at    INTEGER
+      completed_at    INTEGER,
+      notify_on_done  INTEGER NOT NULL DEFAULT 0,
+      notified_at     INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS idx_mission_status
@@ -444,6 +446,13 @@ function runMigrations(database: Database.Database): void {
   const missionColNames = (database.prepare(`PRAGMA table_info(mission_tasks)`).all() as Array<{ name: string }>).map((c) => c.name);
   if (missionColNames.length > 0 && !missionColNames.includes('model')) {
     database.exec(`ALTER TABLE mission_tasks ADD COLUMN model TEXT`);
+  }
+  // Mission tasks: --notify-on-done flag + notified_at timestamp (idempotency guard)
+  if (missionColNames.length > 0 && !missionColNames.includes('notify_on_done')) {
+    database.exec(`ALTER TABLE mission_tasks ADD COLUMN notify_on_done INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (missionColNames.length > 0 && !missionColNames.includes('notified_at')) {
+    database.exec(`ALTER TABLE mission_tasks ADD COLUMN notified_at INTEGER`);
   }
 
   // ── Memory V2 migration ──────────────────────────────────────────────
@@ -1972,6 +1981,8 @@ export interface MissionTask {
   started_at: number | null;
   completed_at: number | null;
   model: string | null;
+  notify_on_done: number;
+  notified_at: number | null;
 }
 
 export function createMissionTask(
@@ -1982,12 +1993,41 @@ export function createMissionTask(
   createdBy = 'dashboard',
   priority = 0,
   model: string | null = null,
+  notifyOnDone = false,
 ): void {
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
-    `INSERT INTO mission_tasks (id, title, prompt, assigned_agent, status, created_by, priority, created_at, model)
-     VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
-  ).run(id, title, prompt, assignedAgent, createdBy, priority, now, model);
+    `INSERT INTO mission_tasks (id, title, prompt, assigned_agent, status, created_by, priority, created_at, model, notify_on_done)
+     VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+  ).run(id, title, prompt, assignedAgent, createdBy, priority, now, model, notifyOnDone ? 1 : 0);
+}
+
+/**
+ * Mark a mission task as notified. Returns true if the row was updated
+ * (i.e. notified_at was previously NULL and notify_on_done = 1). The
+ * conditional UPDATE is the idempotency guard so the same completion
+ * cannot fire two pings even on retries.
+ */
+export function markMissionNotified(id: string): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare(
+    `UPDATE mission_tasks SET notified_at = ?
+     WHERE id = ? AND notify_on_done = 1 AND notified_at IS NULL`,
+  ).run(now, id);
+  return result.changes > 0;
+}
+
+/**
+ * Look up the most recent chat_id this agent has had a session for.
+ * Used by the mission-task notify path to route pings to the right chat.
+ * Returns null if the agent has no session row.
+ */
+export function getLatestChatIdForAgent(agentId: string): string | null {
+  const row = db.prepare(
+    `SELECT chat_id FROM sessions WHERE agent_id = ?
+     ORDER BY updated_at DESC LIMIT 1`,
+  ).get(agentId) as { chat_id: string } | undefined;
+  return row?.chat_id ?? null;
 }
 
 export function getUnassignedMissionTasks(): MissionTask[] {
