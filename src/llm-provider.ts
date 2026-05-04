@@ -72,6 +72,20 @@ export interface RunAgentOptions {
    *   - Future providers (local Ollama etc.): MUST honor this contract.
    */
   mcpAllowlist?: string[];
+
+  /**
+   * Override the cwd passed to the underlying Claude/Codex subprocess for
+   * THIS call only. When set, providers MUST use this instead of the
+   * default `agentCwd ?? PROJECT_ROOT`. Used by the mission scheduler to
+   * isolate each mission in a per-mission git worktree (see
+   * `mission-worktree.ts`) so concurrent agents don't trip on each other's
+   * HEAD.
+   *
+   * `undefined` means "use the agent's normal cwd" — preserves the
+   * pre-worktree behavior for non-mission paths (interactive chat,
+   * scheduled tasks).
+   */
+  cwdOverride?: string;
 }
 
 export interface LlmProvider {

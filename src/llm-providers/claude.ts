@@ -173,6 +173,7 @@ export class ClaudeProvider implements LlmProvider {
       abortController,
       onStreamText,
       mcpAllowlist,
+      cwdOverride,
     } = options;
 
     // Build a scrubbed env for the SDK subprocess. Drops session-scoped
@@ -220,9 +221,11 @@ export class ClaudeProvider implements LlmProvider {
       for await (const event of query({
         prompt: singleTurn(message),
         options: {
-          // cwd = agent directory (if running as agent) or project root.
+          // cwd: per-call override (mission worktree) takes precedence over
+          // the agent's default cwd, so concurrent missions can each run in
+          // an isolated git tree without moving the shared HEAD.
           // Claude Code loads CLAUDE.md from cwd via settingSources: ['project'].
-          cwd: agentCwd ?? PROJECT_ROOT,
+          cwd: cwdOverride ?? agentCwd ?? PROJECT_ROOT,
 
           // Resume the previous session for this chat (persistent context).
           resume: sessionId,

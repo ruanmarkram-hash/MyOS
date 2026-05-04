@@ -24,6 +24,14 @@ import { tryExtractShellCommand, runShellCommand } from './shell-task.js';
 import { notifyMissionDone } from './mission-notify.js';
 import { tickTelegramOutbox } from './telegram-outbox.js';
 import { processDueOperationNotifications } from './operation-notify.js';
+import {
+  createMissionWorktree,
+  removeMissionWorktree,
+  cleanupAllMissionWorktrees,
+  pushMissionBranch,
+  fastForwardMainTo,
+  type MissionWorktree,
+} from './mission-worktree.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -77,6 +85,22 @@ export function initScheduler(send: Sender, agentId = 'main'): void {
   const recoveredMission = resetStuckMissionTasks(agentId);
   if (recoveredMission > 0) {
     logger.warn({ recovered: recoveredMission, agentId }, 'Reset stuck mission tasks from previous crash');
+  }
+
+  // Worktree recovery sweep. If the process died mid-mission, the
+  // worktree dir + mission-<id> branch are leftover. Clean them up so
+  // (a) disk doesn't leak and (b) a fresh dispatch of the same mission
+  // id never inherits stale state. Only Mason currently runs missions
+  // through worktrees; non-mission agents (sage etc.) skip this entirely.
+  if (agentId === 'mason') {
+    try {
+      const cleaned = cleanupAllMissionWorktrees();
+      if (cleaned > 0) {
+        logger.warn({ cleaned, agentId }, 'mission-worktree: recovery sweep cleaned stale worktrees');
+      }
+    } catch (err) {
+      logger.warn({ err, agentId }, 'mission-worktree: recovery sweep failed');
+    }
   }
 
   // Recovery sweep: if the process died between completeMissionTask() and
@@ -173,12 +197,19 @@ export function commitsSinceStart(cwd: string, startedAt: number): number {
  * git-lookup so both the timeout path and the catch path converge on
  * one rule.
  */
-function classifyMissionFailure(startedAt: number | null): {
+function classifyMissionFailure(
+  startedAt: number | null,
+  missionCwd?: string,
+): {
   status: 'partial' | 'failed';
   commitCount: number;
 } {
   if (!startedAt) return { status: 'failed', commitCount: 0 };
-  const cwd = agentCwd ?? PROJECT_ROOT;
+  // Mission commits land in the per-mission worktree, NOT the shared
+  // PROJECT_ROOT tree. Pre-worktree, the shared tree was authoritative;
+  // now we must inspect the worktree or we'll always count zero commits
+  // and mark every aborted mission as 'failed'.
+  const cwd = missionCwd ?? agentCwd ?? PROJECT_ROOT;
   const n = commitsSinceStart(cwd, startedAt);
   return { status: n > 0 ? 'partial' : 'failed', commitCount: n };
 }
@@ -371,17 +402,52 @@ async function runDueMissionTasks(): Promise<void> {
   const missionModel = mission.model ?? classifyTaskModel(mission.prompt);
   logger.info({ missionId: mission.id, title: mission.title, model: missionModel }, 'Running mission task');
 
+  // Per-mission worktree isolation. Only Mason runs missions through
+  // worktrees today (other agents either don't dispatch missions or
+  // don't run git commands during normal flow). If creation fails (leak
+  // guard, network blip on fetch, branch-name collision), bail the
+  // mission as failed BEFORE entering the message queue — running it
+  // in the shared tree would re-introduce the bug class.
+  let worktree: MissionWorktree | null = null;
+  if (schedulerAgentId === 'mason') {
+    try {
+      worktree = createMissionWorktree(mission.id);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logger.error({ err, missionId: mission.id }, 'mission-worktree: create failed; aborting mission');
+      completeMissionTask(mission.id, null, 'failed', `worktree setup failed: ${errMsg.slice(0, 400)}`);
+      try {
+        await sender(`❌ Mission "${mission.title}" could not start — worktree setup failed: ${errMsg.slice(0, 200)}`);
+      } catch (sendErr) {
+        logger.warn({ err: sendErr, missionId: mission.id }, 'failed to send worktree-setup error');
+      }
+      runningTaskIds.delete(missionKey);
+      return;
+    }
+  }
+
+  const missionCwd = worktree?.cwd;
+  const promptToSend = worktree
+    ? buildWorktreePromptHeader(worktree, mission.id) + mission.prompt
+    : mission.prompt;
+
   const chatId = ALLOWED_CHAT_ID || 'mission';
   messageQueue.enqueue(chatId, async () => {
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), MISSION_TIMEOUT_MS);
 
     try {
-      const result = await runAgentWithRetry(mission.prompt, undefined, () => {}, undefined, missionModel, abortController, undefined, undefined, undefined, agentMcpAllowlist);
+      const result = await runAgentWithRetry(promptToSend, undefined, () => {}, undefined, missionModel, abortController, undefined, undefined, undefined, agentMcpAllowlist, missionCwd);
       clearTimeout(timeout);
 
       if (result.aborted) {
-        const verdict = classifyMissionFailure(mission.started_at);
+        const verdict = classifyMissionFailure(mission.started_at, missionCwd);
+        // Partial-with-commits: try to push the branch so the operator can
+        // see the work even though the wall-clock budget ran out. Best
+        // effort — a push failure here doesn't change the verdict.
+        if (verdict.status === 'partial' && worktree) {
+          pushMissionBranch(worktree);
+        }
         const detail = verdict.status === 'partial'
           ? `Hit timeout after committing ${verdict.commitCount} change(s)`
           : `Timed out after ${MISSION_TIMEOUT_MIN} minutes`;
@@ -405,9 +471,36 @@ async function runDueMissionTasks(): Promise<void> {
         await notifyMissionDone(mission, notifyState, detail, { commitCount: verdict.commitCount });
       } else {
         const text = result.text?.trim() || 'Task completed with no output.';
-        completeMissionTask(mission.id, text, 'completed');
-        logger.info({ missionId: mission.id }, 'Mission task completed');
-        await notifyMissionDone({ ...mission, result: text, status: 'completed' }, 'completed', text);
+
+        // Merge strategy (locked decision): mission commits + pushes its
+        // feature branch from inside the worktree. Scheduler then pushes
+        // the branch sha to origin/main as a server-side fast-forward
+        // (no local checkout, shared HEAD never moves). If the branch
+        // diverged from main (someone landed work concurrently) we
+        // demote to 'partial' so the human can resolve.
+        let mergeStatus: 'ok' | 'non-ff' | 'error' | 'skipped' = 'skipped';
+        if (worktree) {
+          if (pushMissionBranch(worktree)) {
+            mergeStatus = fastForwardMainTo(worktree.branch);
+          } else {
+            mergeStatus = 'error';
+          }
+        }
+
+        if (mergeStatus === 'non-ff') {
+          completeMissionTask(mission.id, text, 'partial', `branch ${worktree?.branch} could not fast-forward main; review manually`);
+          logger.warn({ missionId: mission.id, branch: worktree?.branch }, 'mission completed but branch diverged from main; marked partial');
+          await notifyMissionDone(
+            { ...mission, result: text, status: 'partial' },
+            'partial',
+            `Branch diverged from main; review and merge manually.`,
+            { commitCount: 1 },
+          );
+        } else {
+          completeMissionTask(mission.id, text, 'completed');
+          logger.info({ missionId: mission.id, mergeStatus }, 'Mission task completed');
+          await notifyMissionDone({ ...mission, result: text, status: 'completed' }, 'completed', text);
+        }
 
         // Send result to Telegram
         for (const chunk of splitMessage(formatForTelegram(text))) {
@@ -428,7 +521,12 @@ async function runDueMissionTasks(): Promise<void> {
       // committed work before erroring out (e.g. max-turns surfacing as
       // a thrown classified error), preserve that signal as 'partial'
       // so the user doesn't waste a re-dispatch on already-landed work.
-      const verdict = classifyMissionFailure(mission.started_at);
+      const verdict = classifyMissionFailure(mission.started_at, missionCwd);
+      if (verdict.status === 'partial' && worktree) {
+        // Preserve any committed work for human review even though the
+        // mission errored out before we could merge.
+        pushMissionBranch(worktree);
+      }
       completeMissionTask(mission.id, null, verdict.status, errMsg.slice(0, 500));
       logger.error(
         { err, missionId: mission.id, status: verdict.status, commitCount: verdict.commitCount },
@@ -441,9 +539,46 @@ async function runDueMissionTasks(): Promise<void> {
         { commitCount: verdict.commitCount },
       );
     } finally {
+      // Tear down the worktree on every terminal path (success, partial,
+      // failed, error). The branch is preserved on origin already; the
+      // local worktree dir is disposable. If cleanup throws, log but
+      // don't surface — the leak guard on the next dispatch will catch
+      // accumulated stragglers.
+      if (worktree) {
+        try {
+          removeMissionWorktree(mission.id);
+        } catch (cleanupErr) {
+          logger.warn({ err: cleanupErr, missionId: mission.id }, 'mission-worktree: cleanup failed');
+        }
+      }
       runningTaskIds.delete(missionKey);
     }
   });
+}
+
+/**
+ * Prefix injected at the top of every mission prompt that runs inside a
+ * worktree. Tells the agent (a) where it's running, (b) which branch its
+ * commits go on, and (c) NOT to cd back to /Users/sc/HQ — that would
+ * defeat the isolation. The merge step is handled by the scheduler.
+ */
+function buildWorktreePromptHeader(wt: MissionWorktree, missionId: string): string {
+  return [
+    `IMPORTANT — MISSION ISOLATION:`,
+    `You are running in an isolated git worktree at:`,
+    `  ${wt.cwd}`,
+    `On branch:`,
+    `  ${wt.branch}`,
+    `Rules:`,
+    `  • Do NOT cd to /Users/sc/HQ or any other path. Stay in this worktree.`,
+    `  • Commit your work to this branch. Do NOT push — the scheduler pushes and fast-forwards main after you finish.`,
+    `  • The shared /Users/sc/HQ tree is read by 5 other agents simultaneously; moving its HEAD breaks them.`,
+    `  • Mission id: ${missionId}`,
+    ``,
+    `Mission brief follows:`,
+    ``,
+    ``,
+  ].join('\n');
 }
 
 export function computeNextRun(cronExpression: string): number {

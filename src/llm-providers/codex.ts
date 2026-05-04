@@ -302,9 +302,12 @@ export class CodexProvider implements LlmProvider {
       abortController,
       onStreamText,
       mcpAllowlist,
+      cwdOverride,
     } = options;
 
-    const cwd = agentCwd ?? PROJECT_ROOT;
+    // Per-call cwd override (mission worktree isolation) takes precedence
+    // over the agent default. See src/mission-worktree.ts.
+    const cwd = cwdOverride ?? agentCwd ?? PROJECT_ROOT;
     const resumeSessionId = sessionId && codexSessionExists(sessionId) ? sessionId : undefined;
     const pricingModel = codexModelForPricing(model);
     const args = buildCodexExecArgs({ cwd, sessionId: resumeSessionId, model });

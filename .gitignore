@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 
+# Per-mission git worktrees (mission-worktree.ts). Created/destroyed
+# automatically by the Mason scheduler — never commit them.
+.worktrees/
+
 # Environment — never commit API keys
 .env
 

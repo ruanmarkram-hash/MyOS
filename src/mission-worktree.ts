@@ -1,0 +1,315 @@
+/**
+ * mission-worktree — per-mission git worktree isolation.
+ *
+ * THE PROBLEM (2026-05-04 — discovered overnight):
+ * Every Mason mission used to run in /Users/sc/HQ as cwd. When a mission did
+ * `git checkout feature-branch`, every other agent (sage, warden, charter,
+ * ember, marlow) saw the new HEAD because they all share the same working
+ * tree. That caused:
+ *   - cross-agent outbox delivery via wrong bot (d7e5ba7)
+ *   - 4 spurious stale-code alerts (e006d34)
+ *   - sage's runtime drifting onto a recovery branch mid-conversation
+ *   - dist/.build-meta.json clobber loops
+ *
+ * THE FIX (this module):
+ * Each mission gets its own isolated git worktree at
+ * /Users/sc/HQ/.worktrees/mission-<id>/, cut off the latest origin/main,
+ * on a dedicated branch `mission-<id>`. The Mason runtime process keeps its
+ * cwd at /Users/sc/HQ; only the mission's Claude Code subprocess sees the
+ * worktree path. The shared HEAD never moves while a mission runs.
+ *
+ * Cleanup: removed (force) when the mission terminates (any status). A
+ * recovery sweep on scheduler init nukes any stragglers from a previous
+ * crash. A leak guard refuses new missions if >5 stale dirs accumulate.
+ *
+ * Operating principle #4: this is the central helper. Every caller routes
+ * through {create,remove,list}MissionWorktree so the bug class can't
+ * re-emerge from a different code path.
+ */
+
+import { existsSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
+import path from 'node:path';
+
+import { PROJECT_ROOT } from './config.js';
+import { logger } from './logger.js';
+import { safeSpawnSync } from './safe-spawn.js';
+
+/**
+ * Where worktrees live. Inside .worktrees/ at the repo root so .gitignore
+ * can ignore them in one line and a recovery sweep finds them quickly.
+ *
+ * Computed lazily because PROJECT_ROOT is a live binding that some test
+ * harnesses override via module mocks AFTER this module is imported. A
+ * top-level const would freeze the wrong value.
+ */
+export function worktreesDir(): string {
+  return path.join(PROJECT_ROOT, '.worktrees');
+}
+
+/**
+ * Branch + dir prefix. Keep these in sync — listMissionWorktrees() relies
+ * on the dir prefix; cleanupMissionBranch() relies on the branch prefix.
+ */
+const WORKTREE_DIR_PREFIX = 'mission-';
+const WORKTREE_BRANCH_PREFIX = 'mission-';
+
+/**
+ * Hard cap on how many worktrees can exist before we refuse to create
+ * more. If this trips it means cleanup is broken or a flood of missions
+ * dispatched faster than they finished — either way, surfacing a clear
+ * error beats silently filling /Users/sc/HQ with feature branches.
+ */
+export const MAX_STALE_WORKTREES = 5;
+
+export interface MissionWorktree {
+  /** Absolute path to the worktree dir. */
+  cwd: string;
+  /** Branch name checked out in the worktree. */
+  branch: string;
+  /** Mission id this worktree belongs to. */
+  missionId: string;
+}
+
+/**
+ * Run a git command at PROJECT_ROOT and return stdout. Throws on non-zero
+ * exit so callers don't silently proceed on a half-broken worktree state.
+ */
+function git(args: string[], opts: { cwd?: string } = {}): string {
+  const r = safeSpawnSync('git', args, {
+    envClass: 'system-tool',
+    cwd: opts.cwd ?? PROJECT_ROOT,
+    encoding: 'utf-8',
+    timeout: 30_000,
+  });
+  if (r.status !== 0) {
+    const stderr = typeof r.stderr === 'string' ? r.stderr : r.stderr?.toString('utf8') ?? '';
+    throw new Error(`git ${args.join(' ')} failed (exit ${r.status}): ${stderr.trim()}`);
+  }
+  return (typeof r.stdout === 'string' ? r.stdout : r.stdout?.toString('utf8') ?? '').trim();
+}
+
+/**
+ * Best-effort git: returns null on failure instead of throwing. Use only
+ * in cleanup paths where a missing branch / worktree is itself a success.
+ */
+function gitOrNull(args: string[], opts: { cwd?: string } = {}): string | null {
+  try {
+    return git(args, opts);
+  } catch (err) {
+    logger.debug({ err, args }, 'git command failed (best-effort)');
+    return null;
+  }
+}
+
+function dirForMission(missionId: string): string {
+  return path.join(worktreesDir(), `${WORKTREE_DIR_PREFIX}${missionId}`);
+}
+
+function branchForMission(missionId: string): string {
+  return `${WORKTREE_BRANCH_PREFIX}${missionId}`;
+}
+
+/**
+ * Validate the mission id is safe for filesystem + git refs. We only
+ * accept the shape mission-cli already produces (8 lowercase hex chars
+ * via randomBytes(4).toString('hex')), but allow alphanum + dash for
+ * forward-compat.
+ */
+function assertSafeMissionId(missionId: string): void {
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(missionId)) {
+    throw new Error(`Refusing unsafe mission id: ${JSON.stringify(missionId)}`);
+  }
+}
+
+/**
+ * Create a fresh worktree for a mission. Steps:
+ *   1. Ensure worktreesDir() exists.
+ *   2. Refuse if MAX_STALE_WORKTREES already in flight (leak guard).
+ *   3. `git fetch origin` so we branch off the latest main.
+ *   4. `git worktree add -B <branch> <dir> origin/main` to create the
+ *      branch + checkout in one step. -B forces the branch to point at
+ *      origin/main even if a stale branch of the same name exists.
+ *
+ * Idempotent for recovery: if the worktree dir already exists from a
+ * previous run, we remove + recreate to guarantee a clean origin/main
+ * baseline.
+ */
+export function createMissionWorktree(missionId: string): MissionWorktree {
+  assertSafeMissionId(missionId);
+
+  if (!existsSync(worktreesDir())) {
+    mkdirSync(worktreesDir(), { recursive: true });
+  }
+
+  const existing = listMissionWorktrees();
+  if (existing.length >= MAX_STALE_WORKTREES) {
+    throw new Error(
+      `Worktree leak guard tripped: ${existing.length} stale mission worktrees in ${worktreesDir()}. ` +
+      `Run cleanup before dispatching new missions. Current: ${existing.map((w) => w.missionId).join(', ')}`,
+    );
+  }
+
+  const cwd = dirForMission(missionId);
+  const branch = branchForMission(missionId);
+
+  // Stale leftover from a crash: tear down before recreating.
+  if (existsSync(cwd)) {
+    logger.warn({ missionId, cwd }, 'mission-worktree: stale dir exists, tearing down before recreate');
+    removeMissionWorktree(missionId);
+  }
+
+  // Fetch so we branch off the freshest origin/main. Failure here is
+  // non-fatal (offline / transient network) — fall back to local main.
+  gitOrNull(['fetch', 'origin', 'main', '--quiet']);
+
+  const baseRef = gitOrNull(['rev-parse', '--verify', 'origin/main']) ? 'origin/main' : 'main';
+
+  git(['worktree', 'add', '-B', branch, cwd, baseRef]);
+
+  logger.info({ missionId, cwd, branch, baseRef }, 'mission-worktree: created');
+  return { cwd, branch, missionId };
+}
+
+/**
+ * Remove a mission's worktree + delete the branch. Force flags everywhere
+ * because a half-finished mission may have uncommitted state we don't
+ * want to preserve — terminal state already lives in mission_tasks.result
+ * or the pushed branch on origin.
+ *
+ * Always best-effort: a partial failure (e.g. worktree dir already gone)
+ * must not block the next mission. Logs every step for forensics.
+ */
+export function removeMissionWorktree(missionId: string): void {
+  assertSafeMissionId(missionId);
+  const cwd = dirForMission(missionId);
+  const branch = branchForMission(missionId);
+
+  // 1. git worktree remove --force (handles dir + git metadata in one shot)
+  if (existsSync(cwd)) {
+    gitOrNull(['worktree', 'remove', '--force', cwd]);
+  }
+
+  // 2. Belt-and-braces: rm the dir if step 1 left anything behind
+  if (existsSync(cwd)) {
+    try {
+      rmSync(cwd, { recursive: true, force: true });
+    } catch (err) {
+      logger.warn({ err, cwd }, 'mission-worktree: rmSync fallback failed');
+    }
+  }
+
+  // 3. Prune git's worktree registry (kills dangling .git/worktrees/<id> entries)
+  gitOrNull(['worktree', 'prune']);
+
+  // 4. Delete the local branch. Safe because the work was either pushed
+  // to origin (success) or we already accepted the loss (failure).
+  gitOrNull(['branch', '-D', branch]);
+
+  logger.info({ missionId, cwd, branch }, 'mission-worktree: removed');
+}
+
+/**
+ * List active mission worktrees by scanning worktreesDir(). Used for the
+ * startup recovery sweep and the leak guard. Tolerates a missing dir
+ * (first-ever boot) by returning [].
+ */
+export function listMissionWorktrees(): MissionWorktree[] {
+  if (!existsSync(worktreesDir())) return [];
+  let entries: string[];
+  try {
+    entries = readdirSync(worktreesDir());
+  } catch (err) {
+    logger.warn({ err, dir: worktreesDir() }, 'mission-worktree: list failed');
+    return [];
+  }
+  const result: MissionWorktree[] = [];
+  for (const name of entries) {
+    if (!name.startsWith(WORKTREE_DIR_PREFIX)) continue;
+    const missionId = name.slice(WORKTREE_DIR_PREFIX.length);
+    if (!missionId) continue;
+    result.push({
+      cwd: path.join(worktreesDir(), name),
+      branch: branchForMission(missionId),
+      missionId,
+    });
+  }
+  return result;
+}
+
+/**
+ * Recovery sweep: nuke every existing mission worktree. Called on
+ * scheduler init so a process restart never inherits zombie worktrees
+ * from a previous crash. Safe to call concurrently with no work in
+ * flight (init runs before the first scheduler tick).
+ */
+export function cleanupAllMissionWorktrees(): number {
+  const all = listMissionWorktrees();
+  for (const w of all) {
+    try {
+      removeMissionWorktree(w.missionId);
+    } catch (err) {
+      logger.warn({ err, missionId: w.missionId }, 'mission-worktree: cleanup failed');
+    }
+  }
+  return all.length;
+}
+
+/**
+ * Push the mission branch to origin. Returns true on success, false on
+ * any failure (network, auth, non-fast-forward race). Caller decides
+ * whether to mark the mission partial.
+ */
+export function pushMissionBranch(wt: MissionWorktree): boolean {
+  try {
+    git(['push', '--force-with-lease', 'origin', `${wt.branch}:${wt.branch}`], { cwd: wt.cwd });
+    return true;
+  } catch (err) {
+    logger.warn({ err, branch: wt.branch }, 'mission-worktree: push failed');
+    return false;
+  }
+}
+
+/**
+ * Fast-forward main to the mission branch from PROJECT_ROOT, then push.
+ * This is the post-mission merge step that runs in the SHARED tree —
+ * but only briefly, and only if the merge is a clean fast-forward.
+ *
+ * Decision (locked): we use --ff-only. If the mission branch diverged
+ * from main (someone else pushed), we refuse to merge and return
+ * 'non-ff' so the mission is marked 'partial' for human review.
+ *
+ * Returns 'ok' on success, 'non-ff' on divergence, 'error' on anything else.
+ */
+export function fastForwardMainTo(branch: string): 'ok' | 'non-ff' | 'error' {
+  try {
+    git(['fetch', 'origin', 'main', '--quiet']);
+    git(['fetch', 'origin', branch, '--quiet']);
+  } catch (err) {
+    logger.warn({ err, branch }, 'fastForwardMainTo: fetch failed');
+    return 'error';
+  }
+
+  // Use a worktree-safe merge: never check out, never move HEAD on the
+  // shared tree. update-ref with the FF check is the surgical move.
+  // 1. Confirm branch is a descendant of main (FF possible).
+  const mainSha = gitOrNull(['rev-parse', 'origin/main']);
+  const branchSha = gitOrNull(['rev-parse', `origin/${branch}`]);
+  if (!mainSha || !branchSha) return 'error';
+  if (mainSha === branchSha) return 'ok'; // nothing to do
+
+  const mergeBase = gitOrNull(['merge-base', mainSha, branchSha]);
+  if (mergeBase !== mainSha) {
+    logger.warn({ branch, mainSha, branchSha, mergeBase }, 'fastForwardMainTo: non-FF, refusing');
+    return 'non-ff';
+  }
+
+  // 2. Push branch SHA to origin/main directly. This is server-side FF;
+  // no local checkout needed.
+  try {
+    git(['push', 'origin', `${branchSha}:refs/heads/main`]);
+    return 'ok';
+  } catch (err) {
+    logger.warn({ err, branch }, 'fastForwardMainTo: push to main failed');
+    return 'error';
+  }
+}
