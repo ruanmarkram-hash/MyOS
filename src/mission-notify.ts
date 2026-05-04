@@ -39,11 +39,12 @@ import {
 import { logger } from './logger.js';
 import { enqueueTelegramSend } from './telegram-outbox.js';
 
-export type MissionTerminalState = 'completed' | 'failed' | 'timed_out';
+export type MissionTerminalState = 'completed' | 'failed' | 'partial' | 'timed_out';
 
 const STATE_EMOJI: Record<MissionTerminalState, string> = {
   completed: '✓',
   failed: '✗',
+  partial: '⚠️',
   timed_out: '⏱',
 };
 
@@ -73,12 +74,24 @@ export function formatNotifyMessage(
   task: Pick<MissionTask, 'created_by' | 'title' | 'result' | 'error'>,
   state: MissionTerminalState,
   detail?: string,
+  opts?: { commitCount?: number },
 ): string {
   const emoji = STATE_EMOJI[state];
-  const rawSnippet = (detail ?? task.result ?? task.error ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
   const title = escapeTelegramHtml(task.title);
-  const snippet = escapeTelegramHtml(rawSnippet);
   const createdBy = escapeTelegramHtml(task.created_by);
+
+  // Partial uses a distinct body that surfaces the commit count so the
+  // user immediately knows real work landed before the agent ran out of
+  // turns. Avoids the failure-loop confusion of marking "ran out of
+  // budget but committed N changes" as a flat 'failed'.
+  if (state === 'partial') {
+    const n = opts?.commitCount ?? 0;
+    const verb = n === 1 ? 'change' : 'changes';
+    return `[${createdBy} ${emoji}] ${title} — partial: ran out of turns but committed ${n} ${verb}; review and re-dispatch if needed`;
+  }
+
+  const rawSnippet = (detail ?? task.result ?? task.error ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const snippet = escapeTelegramHtml(rawSnippet);
   const tail = snippet ? `: ${snippet}` : '';
   return `[${createdBy} ${emoji}] ${title}${tail}`;
 }
@@ -156,6 +169,7 @@ export async function notifyMissionDone(
   task: MissionTask,
   state: MissionTerminalState,
   detail?: string,
+  opts?: { commitCount?: number },
 ): Promise<boolean> {
   if (!task.notify_on_done) return false;
   // delivered_at is the durable success marker. notified_at by itself is
@@ -181,7 +195,7 @@ export async function notifyMissionDone(
   // attempt counter bumps on every claim and caps unbounded retries.
   if (!markMissionNotified(task.id)) return false;
 
-  const message = formatNotifyMessage(task, state, detail);
+  const message = formatNotifyMessage(task, state, detail, opts);
 
   // Primary path: enqueue into the durable Telegram outbox. The outbox
   // worker handles retries, 429 backoff, and dead-letter alerts — so we

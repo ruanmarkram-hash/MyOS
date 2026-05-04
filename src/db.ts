@@ -2052,12 +2052,31 @@ export function getInterAgentTasks(
 
 // ── Mission Tasks (one-shot async tasks for Mission Control) ─────────
 
+/**
+ * Valid values for `mission_tasks.status` (TEXT column, no CHECK constraint
+ * — values documented here):
+ *   - queued       Created, not yet claimed by an agent
+ *   - running      Claimed and executing
+ *   - completed    Terminal: agent finished cleanly with a result
+ *   - failed       Terminal: agent errored / aborted with NO commits since
+ *                  dispatch. True zero-progress failure
+ *   - partial      Terminal (added 2026-05-04): agent hit max-turns/timeout
+ *                  BUT made >=1 commit since dispatch. Distinguishes
+ *                  "ran out of runway with real work landed" from "dead
+ *                  on arrival." Read-side queries that filter for
+ *                  `status = 'completed'` correctly EXCLUDE partial — a
+ *                  partial requires human review and re-dispatch
+ *   - cancelled    Terminal: user cancelled before completion
+ *
+ * Forward-compat: notify-state 'timed_out' is NOT persisted as a status
+ * (timeouts collapse into 'failed' or 'partial' depending on commits)
+ */
 export interface MissionTask {
   id: string;
   title: string;
   prompt: string;
   assigned_agent: string | null;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'partial' | 'cancelled';
   result: string | null;
   error: string | null;
   created_by: string;
@@ -2142,7 +2161,7 @@ export function markMissionDelivered(id: string): void {
 export function _setMissionCompletedAtForTest(
   id: string,
   completedAt: number,
-  status: 'completed' | 'failed' | 'timed_out' = 'completed',
+  status: 'completed' | 'failed' | 'partial' | 'timed_out' = 'completed',
 ): void {
   db.prepare(
     `UPDATE mission_tasks SET completed_at = ?, status = ? WHERE id = ?`,
@@ -2175,7 +2194,7 @@ export function getMissionTasksNeedingNotificationRecovery(
        WHERE notify_on_done = 1
          AND delivered_at IS NULL
          AND notify_attempt_count < ?
-         AND status IN ('completed', 'failed', 'timed_out')
+         AND status IN ('completed', 'failed', 'partial', 'timed_out')
          AND completed_at IS NOT NULL
          AND completed_at < ?
        ORDER BY completed_at ASC`,
@@ -2255,7 +2274,7 @@ export function claimNextMissionTask(agentId: string): MissionTask | null {
 export function completeMissionTask(
   id: string,
   result: string | null,
-  status: 'completed' | 'failed',
+  status: 'completed' | 'failed' | 'partial',
   error?: string,
 ): void {
   const now = Math.floor(Date.now() / 1000);
@@ -2273,7 +2292,7 @@ export function cancelMissionTask(id: string): boolean {
 
 export function deleteMissionTask(id: string): boolean {
   const result = db.prepare(
-    `DELETE FROM mission_tasks WHERE id = ? AND status IN ('completed', 'cancelled', 'failed')`,
+    `DELETE FROM mission_tasks WHERE id = ? AND status IN ('completed', 'cancelled', 'failed', 'partial')`,
   ).run(id);
   return result.changes > 0;
 }
@@ -2281,7 +2300,7 @@ export function deleteMissionTask(id: string): boolean {
 export function cleanupOldMissionTasks(olderThanDays = 7): number {
   const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 86400;
   const result = db.prepare(
-    `DELETE FROM mission_tasks WHERE status IN ('completed', 'cancelled', 'failed') AND completed_at < ?`,
+    `DELETE FROM mission_tasks WHERE status IN ('completed', 'cancelled', 'failed', 'partial') AND completed_at < ?`,
   ).run(cutoff);
   return result.changes;
 }
@@ -2302,10 +2321,10 @@ export function assignMissionTask(id: string, agent: string): boolean {
 
 export function getMissionTaskHistory(limit = 30, offset = 0): { tasks: MissionTask[]; total: number } {
   const total = (db.prepare(
-    `SELECT COUNT(*) as c FROM mission_tasks WHERE status IN ('completed', 'failed', 'cancelled')`,
+    `SELECT COUNT(*) as c FROM mission_tasks WHERE status IN ('completed', 'failed', 'cancelled', 'partial')`,
   ).get() as { c: number }).c;
   const tasks = db.prepare(
-    `SELECT * FROM mission_tasks WHERE status IN ('completed', 'failed', 'cancelled')
+    `SELECT * FROM mission_tasks WHERE status IN ('completed', 'failed', 'cancelled', 'partial')
      ORDER BY completed_at DESC LIMIT ? OFFSET ?`,
   ).all(limit, offset) as MissionTask[];
   return { tasks, total };
