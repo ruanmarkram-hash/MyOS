@@ -353,8 +353,11 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   async function killWarroomAsync(reason: string): Promise<number[]> {
     try {
       const { spawn } = await import('child_process');
+      // SYSTEM-TOOL-EXEMPTED: pgrep with a hardcoded pattern. OS tool,
+      // no agent-controlled args, no LLM in the loop. Explicit minimal
+      // env so we don't default-inherit harness secrets.
       const pids: number[] = await new Promise((resolve) => {
-        const p = spawn('pgrep', ['-f', 'warroom/server.py']);
+        const p = spawn('pgrep', ['-f', 'warroom/server.py'], { env: { PATH: process.env.PATH } });
         let out = '';
         p.stdout.on('data', (chunk) => { out += chunk.toString(); });
         p.on('close', () => {
@@ -591,8 +594,10 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       const { spawn } = await import('child_process');
       // pgrep is simpler than parsing ps. Matches any python process
       // whose command line includes "warroom/server.py".
+      // SYSTEM-TOOL-EXEMPTED: pgrep with hardcoded pattern. Explicit
+      // minimal env so we don't default-inherit harness secrets.
       const pids: number[] = await new Promise((resolve) => {
-        const p = spawn('pgrep', ['-f', 'warroom/server.py']);
+        const p = spawn('pgrep', ['-f', 'warroom/server.py'], { env: { PATH: process.env.PATH } });
         let out = '';
         p.stdout.on('data', (chunk) => { out += chunk.toString(); });
         p.on('close', () => {
