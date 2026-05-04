@@ -6,6 +6,9 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "check:no-raw-spawn": "node scripts/check-no-raw-spawn.mjs",
+    "prebuild": "node scripts/check-no-raw-spawn.mjs",
+    "pretest": "node scripts/check-no-raw-spawn.mjs",
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",

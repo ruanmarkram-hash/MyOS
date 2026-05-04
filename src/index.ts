@@ -207,17 +207,13 @@ async function main(): Promise<void> {
 
       if (fs.existsSync(venvPython) && fs.existsSync(serverScript)) {
         // Pre-flight: verify Python dependencies are actually installed
-        // SAFE-SPAWN-EXEMPT: python pipecat probe, hardcoded args, explicit { PATH } env. Pre-Part-3 migration.
-        const { spawnSync } = await import('child_process');
-        // SYSTEM-TOOL-EXEMPTED: bare `python -c 'import pipecat'` import
-        // probe. No agent-controlled args, no LLM in the loop. Pass
-        // explicit minimal env so we don't default-inherit harness
-        // secrets even for this trivial probe.
-        // SAFE-SPAWN-EXEMPT: pipecat import probe, hardcoded args, explicit { PATH } env.
-        const depCheck = spawnSync(venvPython, ['-c', 'import pipecat'], {
+        const { safeSpawnSync } = await import('./safe-spawn.js');
+        // bare `python -c 'import pipecat'` import probe. No
+        // agent-controlled args, no LLM in the loop.
+        const depCheck = safeSpawnSync(venvPython, ['-c', 'import pipecat'], {
+          envClass: 'system-tool',
           stdio: 'pipe',
           timeout: 10000,
-          env: { PATH: process.env.PATH },
         });
         if (depCheck.status !== 0) {
           const msg = 'War Room Python dependencies not installed. Run:\n\n'

@@ -1,11 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-// SAFE-SPAWN-EXEMPT: `which claude` resolver probe. KNOWN MINOR LEAK — inherits process.env to `which` (which ignores env). Scheduled for Part-3 migration with explicit { PATH } env.
-import { execFileSync } from 'child_process';
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import { AGENT_MAX_TURNS, PROJECT_ROOT, agentCwd } from '../config.js';
+import { safeSpawnSync } from '../safe-spawn.js';
 import { readEnvFile } from '../env.js';
 import { classifyError } from '../errors.js';
 import { getScrubbedSdkEnv } from '../security.js';
@@ -128,8 +127,12 @@ async function* singleTurn(text: string): AsyncGenerator<{
 function resolveClaudeExecutable(): string {
   if (process.env.CLAUDE_EXECUTABLE) return process.env.CLAUDE_EXECUTABLE;
   try {
-    // SAFE-SPAWN-EXEMPT: `which claude` probe; TODO Part-3 add explicit { PATH } env to plug minor inherit-env leak.
-    return execFileSync('which', ['claude'], { encoding: 'utf8' }).trim();
+    const r = safeSpawnSync('which', ['claude'], { envClass: 'system-tool', encoding: 'utf8' });
+    if (r.status === 0 && typeof r.stdout === 'string') {
+      const out = r.stdout.trim();
+      if (out) return out;
+    }
+    throw new Error('which claude failed');
   } catch {
     // Fall back to common npm-global locations.
     const candidates = [

@@ -352,16 +352,13 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // so the HTTP response doesn't block on the respawn.
   async function killWarroomAsync(reason: string): Promise<number[]> {
     try {
-      // SAFE-SPAWN-EXEMPT: pgrep system-tool with hardcoded args + explicit { PATH } env. Pre-Part-3 migration.
-      const { spawn } = await import('child_process');
-      // SYSTEM-TOOL-EXEMPTED: pgrep with a hardcoded pattern. OS tool,
-      // no agent-controlled args, no LLM in the loop. Explicit minimal
-      // env so we don't default-inherit harness secrets.
+      const { safeSpawn } = await import('./safe-spawn.js');
+      // pgrep with a hardcoded pattern. OS tool, no agent-controlled
+      // args, no LLM in the loop.
       const pids: number[] = await new Promise((resolve) => {
-        // SAFE-SPAWN-EXEMPT: pgrep system-tool, hardcoded args, explicit { PATH } env.
-        const p = spawn('pgrep', ['-f', 'warroom/server.py'], { env: { PATH: process.env.PATH } });
+        const p = safeSpawn('pgrep', ['-f', 'warroom/server.py'], { envClass: 'system-tool' });
         let out = '';
-        p.stdout.on('data', (chunk) => { out += chunk.toString(); });
+        p.stdout?.on('data', (chunk) => { out += chunk.toString(); });
         p.on('close', () => {
           resolve(out.trim().split(/\s+/).map((s) => parseInt(s, 10)).filter((n) => Number.isFinite(n)));
         });
@@ -593,17 +590,13 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     // because that would kill the dashboard process we're currently
     // running inside — the HTTP response would never be delivered.
     try {
-      // SAFE-SPAWN-EXEMPT: pgrep system-tool with hardcoded args + explicit { PATH } env. Pre-Part-3 migration.
-      const { spawn } = await import('child_process');
+      const { safeSpawn } = await import('./safe-spawn.js');
       // pgrep is simpler than parsing ps. Matches any python process
       // whose command line includes "warroom/server.py".
-      // SYSTEM-TOOL-EXEMPTED: pgrep with hardcoded pattern. Explicit
-      // minimal env so we don't default-inherit harness secrets.
       const pids: number[] = await new Promise((resolve) => {
-        // SAFE-SPAWN-EXEMPT: pgrep system-tool, hardcoded args, explicit { PATH } env.
-        const p = spawn('pgrep', ['-f', 'warroom/server.py'], { env: { PATH: process.env.PATH } });
+        const p = safeSpawn('pgrep', ['-f', 'warroom/server.py'], { envClass: 'system-tool' });
         let out = '';
-        p.stdout.on('data', (chunk) => { out += chunk.toString(); });
+        p.stdout?.on('data', (chunk) => { out += chunk.toString(); });
         p.on('close', () => {
           resolve(out.trim().split(/\s+/).map((s) => parseInt(s, 10)).filter((n) => Number.isFinite(n)));
         });

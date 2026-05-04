@@ -11,7 +11,9 @@ import {
   claimNextMissionTask,
   completeMissionTask,
   resetStuckMissionTasks,
+  getMissionTasksNeedingNotificationRecovery,
 } from './db.js';
+import type { MissionTerminalState } from './mission-notify.js';
 import { logger } from './logger.js';
 import { messageQueue } from './message-queue.js';
 import { runAgentWithRetry } from './agent.js';
@@ -56,11 +58,74 @@ export function initScheduler(send: Sender, agentId = 'main'): void {
     logger.warn({ recovered: recoveredMission, agentId }, 'Reset stuck mission tasks from previous crash');
   }
 
+  // Recovery sweep: if the process died between completeMissionTask() and
+  // notifyMissionDone() on a previous run, the row is in a terminal state
+  // with delivered_at = NULL and the user never saw the message. Catch up.
+  void recoverMissedMissionNotifications();
+  lastRecoverySweep = Date.now();
+
   setInterval(() => void runDueTasks(), 60_000);
   logger.info({ agentId }, 'Scheduler started (checking every 60s)');
 }
 
+/**
+ * Periodic recovery sweep cadence. Long-running processes need a within-run
+ * retry path: if notify.sh fails after startup (e.g. transient Telegram
+ * outage), the startup-only sweep wouldn't re-fire until the next process
+ * restart. Five minutes is a balance between user latency and not hammering
+ * a flapping API.
+ */
+const RECOVERY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let lastRecoverySweep = 0;
+
+/**
+ * Map a persisted mission_tasks.status string onto the notify-state enum.
+ * The DB only ever writes 'completed' or 'failed' today (timeouts are
+ * collapsed into 'failed'), but we accept 'timed_out' for forward-compat
+ * in case a future writer starts using it.
+ */
+function statusToNotifyState(status: string): MissionTerminalState {
+  if (status === 'completed') return 'completed';
+  if (status === 'timed_out') return 'timed_out';
+  return 'failed';
+}
+
+export async function _recoverMissedMissionNotificationsForTest(): Promise<void> {
+  return recoverMissedMissionNotifications();
+}
+
+async function recoverMissedMissionNotifications(): Promise<void> {
+  let pending;
+  try {
+    pending = getMissionTasksNeedingNotificationRecovery();
+  } catch (err) {
+    logger.warn({ err }, 'notify recovery sweep: query failed');
+    return;
+  }
+  if (pending.length === 0) return;
+  logger.warn({ count: pending.length }, 'notify recovery sweep: replaying missed notifications');
+  for (const task of pending) {
+    logger.info({ missionId: task.id, status: task.status }, 'recovering missed notification for task');
+    const detail = task.error ?? task.result ?? undefined;
+    try {
+      await notifyMissionDone(task, statusToNotifyState(task.status), detail ?? undefined);
+    } catch (err) {
+      logger.warn({ err, missionId: task.id }, 'notify recovery: notifyMissionDone threw');
+    }
+  }
+}
+
 async function runDueTasks(): Promise<void> {
+  // Periodic recovery sweep: replay any mission notifications whose
+  // delivery never landed (post-startup notify.sh failures, Telegram
+  // blips). Gated by RECOVERY_SWEEP_INTERVAL_MS so the per-tick cost
+  // is amortised. Bounded by notify_attempt_count in the underlying
+  // query so a permanently broken row stops retrying.
+  if (Date.now() - lastRecoverySweep >= RECOVERY_SWEEP_INTERVAL_MS) {
+    lastRecoverySweep = Date.now();
+    void recoverMissedMissionNotifications();
+  }
+
   const tasks = getDueTasks(schedulerAgentId);
 
   if (tasks.length > 0) {
@@ -232,12 +297,12 @@ async function runDueMissionTasks(): Promise<void> {
           // still want to see it so the user isn't silently unnotified.
           logger.warn({ err: sendErr, missionId: mission.id }, 'Failed to send mission timeout notification');
         }
-        notifyMissionDone(mission, 'timed_out', 'Timed out after 10 minutes');
+        await notifyMissionDone(mission, 'timed_out', 'Timed out after 10 minutes');
       } else {
         const text = result.text?.trim() || 'Task completed with no output.';
         completeMissionTask(mission.id, text, 'completed');
         logger.info({ missionId: mission.id }, 'Mission task completed');
-        notifyMissionDone({ ...mission, result: text, status: 'completed' }, 'completed', text);
+        await notifyMissionDone({ ...mission, result: text, status: 'completed' }, 'completed', text);
 
         // Send result to Telegram
         for (const chunk of splitMessage(formatForTelegram(text))) {
@@ -256,7 +321,7 @@ async function runDueMissionTasks(): Promise<void> {
       const errMsg = err instanceof Error ? err.message : String(err);
       completeMissionTask(mission.id, null, 'failed', errMsg.slice(0, 500));
       logger.error({ err, missionId: mission.id }, 'Mission task failed');
-      notifyMissionDone({ ...mission, error: errMsg.slice(0, 500), status: 'failed' }, 'failed', errMsg);
+      await notifyMissionDone({ ...mission, error: errMsg.slice(0, 500), status: 'failed' }, 'failed', errMsg);
     } finally {
       runningTaskIds.delete(missionKey);
     }
