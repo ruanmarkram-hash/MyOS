@@ -6,7 +6,7 @@ import { createBot } from './bot.js';
 import { checkPendingMigrations } from './migrations.js';
 import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, WARROOM_ENABLED, WARROOM_PORT } from './config.js';
 import { startDashboard } from './dashboard.js';
-import { initDatabase, cleanupOldMissionTasks, insertAuditLog, pruneSentTelegramOutbox } from './db.js';
+import { initDatabase, cleanupOldMissionTasks, insertAuditLog, pruneSentTelegramOutbox, pruneWaMessages, pruneSlackMessages } from './db.js';
 import { initSecurity, setAuditCallback, getScrubbedSdkEnv } from './security.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
@@ -159,10 +159,23 @@ async function main(): Promise<void> {
     runDecaySweep();
     cleanupOldMissionTasks(7);
     pruneSentTelegramOutbox(7);
+    // Phase A1: 3-day purge for WhatsApp + Slack message bodies. Bodies
+    // are AES-256-GCM encrypted at rest (encryptField/decryptField), so
+    // on-disk leak risk is already low — but unbounded retention is
+    // still a privacy gap. 3 days is the upstream default and matches
+    // the "we use it for context, not archival" pattern.
+    const wa1 = pruneWaMessages(3);
+    const sl1 = pruneSlackMessages(3);
+    const waTotal1 = wa1.messages + wa1.outbox + wa1.map;
+    if (waTotal1 > 0 || sl1 > 0) logger.info({ whatsapp: wa1, slack: sl1 }, 'pruned WA/Slack message bodies (startup)');
     setInterval(() => {
       runDecaySweep();
       cleanupOldMissionTasks(7);
       pruneSentTelegramOutbox(7);
+      const wa = pruneWaMessages(3);
+      const sl = pruneSlackMessages(3);
+      const waTotal = wa.messages + wa.outbox + wa.map;
+      if (waTotal > 0 || sl > 0) logger.info({ whatsapp: wa, slack: sl }, 'pruned WA/Slack message bodies (daily)');
     }, 24 * 60 * 60 * 1000);
 
     // Memory consolidation: find patterns across recent memories every 30 minutes
