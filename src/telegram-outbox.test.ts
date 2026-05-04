@@ -287,7 +287,7 @@ describe('telegram durable outbox', () => {
     });
 
     it('claimDueTelegramOutbox returns FIFO order', async () => {
-      const client = vi.fn(async () => ({ message_id: 1 }));
+      const client: TelegramApiClient = vi.fn(async () => ({ message_id: 1 }));
       setTelegramOutboxClient(client);
 
       const a = enqueueTelegramSend({ agentId: 'main', chatId: '1', method: 'sendMessage', params: { text: 'a' } });
@@ -295,8 +295,9 @@ describe('telegram durable outbox', () => {
 
       await tickTelegramOutbox();
 
-      // Calls happen in id order
-      const calls = client.mock.calls;
+      // Calls happen in id order. Cast to a typed mock so .mock.calls
+      // tuples are narrowed (vi.fn's default inferred call shape is `[]`).
+      const calls = vi.mocked(client).mock.calls;
       expect(calls).toHaveLength(2);
       expect((calls[0][2] as { text: string }).text).toBe('a');
       expect((calls[1][2] as { text: string }).text).toBe('b');
