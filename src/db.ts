@@ -760,6 +760,16 @@ export function _initTestDatabase(): void {
   runMigrations(db);
 }
 
+/**
+ * @internal — test-only handle to the active DB so atomicity tests can
+ * inject controlled failure modes (e.g. drop a table mid-transaction to
+ * verify rollback). Production code MUST NOT import this; it bypasses
+ * every safety the regular API provides.
+ */
+export function _testDbHandle(): Database.Database {
+  return db;
+}
+
 export function getSession(chatId: string, agentId = 'main'): string | undefined {
   const row = db
     .prepare('SELECT session_id FROM sessions WHERE chat_id = ? AND agent_id = ?')

@@ -290,6 +290,57 @@ describe('operation-notify', () => {
       // The outbox now owns durability — the message will be retried by the
       // outbox worker's existing retry/lease/dead-letter machinery.
     });
+
+    it('atomic rollback: enqueue failure leaves op-notify row as pending (Codex CRITICAL #2 regression guard)', async () => {
+      // Codex M2 review CRITICAL #2: the happy-path test above only proves
+      // both writes happen; a regression that splits the helper into two
+      // non-transactional calls (UPDATE then separate INSERT) would still
+      // pass it. This test forces the INSERT to fail and asserts the UPDATE
+      // is rolled back — only possible if both are inside a single
+      // db.transaction(). If someone refactors them apart, this test fails
+      // because the op-notify row would be 'fired' with no outbox row.
+      const id = scheduleOperationNotification({
+        agentId: 'main',
+        chatId: 'chat-rollback',
+        operationId: 'op-rollback',
+        fireAt: new Date(Date.now() - 1_000),
+        message: 'should roll back',
+      });
+
+      // Force the outbox INSERT to throw inside the transaction by dropping
+      // the table. The transaction wrapper must catch this, roll back the
+      // claim UPDATE, and propagate the error.
+      const { _testDbHandle } = await import('./db.js');
+      _testDbHandle().exec('DROP TABLE telegram_outbox');
+
+      // processDueOperationNotifications swallows per-row errors and logs.
+      // Either way, the op-notify row must NOT be in 'fired' state — that
+      // would mean the UPDATE landed without the corresponding INSERT.
+      await processDueOperationNotifications().catch(() => {});
+
+      const row = getOperationNotification(id);
+      expect(row?.status).toBe('pending');
+      expect(row?.fired_at).toBeNull();
+
+      // Restore so afterEach _initTestDatabase doesn't trip
+      _testDbHandle().exec(`
+        CREATE TABLE telegram_outbox (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          agent_id TEXT NOT NULL,
+          chat_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          last_attempt_at INTEGER,
+          next_retry_at INTEGER,
+          telegram_message_id INTEGER,
+          created_at INTEGER NOT NULL,
+          sent_at INTEGER,
+          lease_expires_at INTEGER
+        );
+      `);
+    });
   });
 
   describe('input validation (Codex caveats)', () => {

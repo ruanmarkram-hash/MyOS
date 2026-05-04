@@ -6,16 +6,29 @@
  * to a terminal state (completed | failed | timed_out). The DB column
  * `mission_tasks.notified_at` provides the idempotency guard.
  *
- * Durability rules (locked 2026-05-04, hardened 2026-05-04 post-Codex review):
+ * Durability rules (locked 2026-05-04, hardened post-Codex 2026-05-04,
+ * contract clarified 2026-05-05 after Mason's M2 chain-test review):
  *   1. Two timestamps split the lifecycle:
  *        notified_at  = claim (set before spawn, prevents concurrent re-fire)
- *        delivered_at = confirmed delivery (set ONLY after notify.sh exit 0
- *                       AND Telegram returned ok:true)
- *      This is what makes a crash mid-spawn recoverable: the sweep filters
- *      on `delivered_at IS NULL`, not `notified_at IS NULL`, so a row whose
- *      claim was stamped but whose delivery never landed is still picked up.
+ *        delivered_at = HANDED OFF TO DURABLE TELEGRAM OUTBOX. Originally
+ *                       this meant "Telegram acked HTTP 200 + ok:true",
+ *                       but since the outbox migration (098768e), durable
+ *                       delivery is the OUTBOX's responsibility. We stamp
+ *                       delivered_at when enqueueTelegramSend succeeds —
+ *                       i.e. when the row is in telegram_outbox with
+ *                       status='pending'. From there the outbox worker
+ *                       handles retries, dead-letters, and the meta-alert
+ *                       on failure. The outbox is the source of truth for
+ *                       actual Telegram delivery; this column means
+ *                       "successfully handed off to durable storage".
+ *      This is still recoverable across crashes: the sweep filters on
+ *      `delivered_at IS NULL`, so a row whose enqueue threw (DB locked,
+ *      table missing) is replayed by the next sweep. The narrower window
+ *      it no longer covers — outbox accepted the row but worker never
+ *      drained — is covered by the outbox's own dead-letter alert path.
  *   2. spawn is awaited with a 10s timeout; the scheduler does not block
- *      indefinitely on a hung curl.
+ *      indefinitely on a hung curl. (notify.sh is now a fallback path
+ *      only, used when the outbox enqueue itself throws.)
  *   3. Untrusted task fields (title, result, error) are HTML-escaped because
  *      notify.sh sends with parse_mode=HTML.
  *   4. Missing chat_id is logged and the task is marked DELIVERED to prevent
