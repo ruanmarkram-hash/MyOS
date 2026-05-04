@@ -43,6 +43,7 @@ import {
 } from './db.js';
 import { loadAgentConfig, listAgentIds } from './agent-config.js';
 import { readEnvFile } from './env.js';
+import { getScrubbedSdkEnv } from './security.js';
 import { createRoom as dailyCreateRoom, deleteRoom as dailyDeleteRoom, DailyApiError } from './daily-client.js';
 
 initDatabase();
@@ -181,21 +182,28 @@ async function runPikaScript(args: string[], timeoutSec = 90): Promise<{
     throw new Error('PIKA_DEV_KEY not set. Get one at https://www.pika.me/dev/ and add to .env');
   }
 
-  // Strip CLAUDECODE* env vars so the Pika subprocess doesn't inherit
-  // a wrapping Claude Code session's env (same pitfall that bit the
-  // voice bridge — documented in feedback_warroom_pitfalls.md #2).
-  const env: Record<string, string | undefined> = { ...process.env, PIKA_DEV_KEY: devKey };
-  for (const k of [
-    'CLAUDECODE',
-    'CLAUDE_CODE_ENTRYPOINT',
-    'CLAUDE_CODE_EXECPATH',
-    'CLAUDE_CODE_SSE_PORT',
-    'CLAUDE_CODE_IPC_PORT',
-    'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
-    'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
-  ]) {
-    delete env[k];
-  }
+  // SHELL-TASK-CLASS spawn: Pika is a third-party Python script that
+  // accepts agent-influenced args (room URL, prompt, voice config). A
+  // raw process.env spread would expose every harness secret to a
+  // process we don't fully control. Use the central scrubber and
+  // re-inject only what Pika actually needs (its own dev key + Daily/
+  // ElevenLabs/Cartesia keys if present in .env).
+  // Codex round-4: replaces an inline CLAUDE_CODE_* strip that left
+  // every other harness secret reachable.
+  const pikaAuth = readEnvFile([
+    'PIKA_DEV_KEY',
+    'PIKA_API_KEY',
+    'DAILY_API_KEY',
+    'ELEVENLABS_API_KEY',
+    'CARTESIA_API_KEY',
+    'DEEPGRAM_API_KEY',
+    'GROQ_API_KEY',
+    'OPENAI_API_KEY',
+  ]);
+  const env = getScrubbedSdkEnv({
+    ...pikaAuth,
+    PIKA_DEV_KEY: devKey, // resolved from .env or env override above
+  });
 
   return await new Promise((resolve) => {
     const proc = spawn(WARROOM_VENV_PY, [PIKA_SCRIPT, ...args], {
@@ -293,9 +301,20 @@ async function synthesizeBrief(params: {
 
   try {
     const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+      // SDK-CLASS spawn: agent-voice-bridge runs an SDK query against the
+      // briefingPrompt. Scrub env so the LLM session can't see harness
+      // secrets; re-inject only the auth tokens it needs.
+      // Round-4 structural fix: explicit re-injection. ANTHROPIC_API_KEY
+      // falls back to process.env (shell-exported dev key); OAuth never
+      // does (would re-introduce the HIGH-1 ride-along).
+      const briefAuth = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+      const briefEnv = getScrubbedSdkEnv({
+        CLAUDE_CODE_OAUTH_TOKEN: briefAuth.CLAUDE_CODE_OAUTH_TOKEN,
+        ANTHROPIC_API_KEY: briefAuth.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+      });
       const proc = spawn(process.execPath, [VOICE_BRIDGE_JS, '--agent', params.agentId, '--chat-id', `meet-brief-${params.briefId}`, '--message', briefingPrompt], {
         cwd: PROJECT_ROOT,
-        env: process.env,
+        env: briefEnv as NodeJS.ProcessEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       let stdout = '';
@@ -606,20 +625,23 @@ async function cmdJoinDaily(): Promise<void> {
   ];
   if (briefPath) agentArgs.push('--brief', briefPath);
 
-  // Strip CLAUDECODE* env vars so the Pipecat python subprocess doesn't
-  // inherit a wrapping Claude Code session's env.
-  const subEnv: Record<string, string | undefined> = { ...process.env };
-  for (const k of [
-    'CLAUDECODE',
-    'CLAUDE_CODE_ENTRYPOINT',
-    'CLAUDE_CODE_EXECPATH',
-    'CLAUDE_CODE_SSE_PORT',
-    'CLAUDE_CODE_IPC_PORT',
-    'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
-    'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
-  ]) {
-    delete subEnv[k];
-  }
+  // SDK-CLASS spawn: the Daily Pipecat agent runs LLM/STT/TTS pipelines
+  // (Gemini Live, Deepgram, Cartesia, ElevenLabs, OpenAI Realtime), so
+  // a prompt-injected response could attempt to exfil any env-borne
+  // secret. Use the central scrubber and re-inject only the API keys
+  // the agent actually needs from .env. Codex round-4: replaces an
+  // inline CLAUDE_CODE_* strip that left every other harness secret
+  // reachable.
+  const dailyAuth = readEnvFile([
+    'DAILY_API_KEY',
+    'GOOGLE_API_KEY',
+    'DEEPGRAM_API_KEY',
+    'CARTESIA_API_KEY',
+    'ELEVENLABS_API_KEY',
+    'GROQ_API_KEY',
+    'OPENAI_API_KEY',
+  ]);
+  const subEnv = getScrubbedSdkEnv(dailyAuth);
 
   const child = spawn(WARROOM_VENV_PY, agentArgs, {
     cwd: PROJECT_ROOT,

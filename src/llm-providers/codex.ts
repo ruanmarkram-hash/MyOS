@@ -8,6 +8,7 @@ import { PROJECT_ROOT, agentCwd } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { classifyError } from '../errors.js';
 import { logger } from '../logger.js';
+import { getScrubbedSdkEnv } from '../security.js';
 import type { AgentResult, LlmProvider, RunAgentOptions, UsageInfo } from '../llm-provider.js';
 import { prepareCodexHome } from './codex-mcp-filter.js';
 
@@ -312,9 +313,18 @@ export class CodexProvider implements LlmProvider {
     // and Codex uses the user's normal global config. See
     // ./codex-mcp-filter.ts for rationale.
     const homePrep = mcpAllowlist ? prepareCodexHome(mcpAllowlist) : undefined;
+
+    // Scrub secrets from the spawned `codex exec` env. Codex authenticates
+    // via ~/.codex/auth.json (OAuth on disk) so it does not need
+    // ANTHROPIC_API_KEY or any other harness secret. If a future code path
+    // needs OPENAI_API_KEY (or similar) for a non-OAuth deployment, read
+    // it out of .env and pass it through the authSecrets parameter — never
+    // by reverting to raw process.env. See security.ts HIGH-3 fix.
+    const codexAuth = readEnvFile(['OPENAI_API_KEY']);
+    const scrubbedEnv = getScrubbedSdkEnv(codexAuth) as NodeJS.ProcessEnv;
     const spawnEnv: NodeJS.ProcessEnv = homePrep
-      ? { ...process.env, CODEX_HOME: homePrep.home }
-      : process.env;
+      ? { ...scrubbedEnv, CODEX_HOME: homePrep.home }
+      : scrubbedEnv;
     if (homePrep) {
       logger.info({ tempHome: homePrep.home, mcpAllowlist }, 'Codex: applied per-call MCP allowlist');
     }

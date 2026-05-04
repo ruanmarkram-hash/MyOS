@@ -17,7 +17,10 @@ let _ffmpegAvailable: boolean | null = null;
 async function hasFfmpeg(): Promise<boolean> {
   if (_ffmpegAvailable !== null) return _ffmpegAvailable;
   try {
-    await execFileAsync('ffmpeg', ['-version']);
+    // SYSTEM-TOOL-EXEMPTED: ffmpeg version probe. System tool, no
+    // agent-controlled args, no LLM in the loop. Explicit minimal env
+    // so we don't default-inherit harness secrets even here.
+    await execFileAsync('ffmpeg', ['-version'], { env: { PATH: process.env.PATH } });
     _ffmpegAvailable = true;
   } catch {
     _ffmpegAvailable = false;

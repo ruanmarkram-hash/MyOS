@@ -7,7 +7,8 @@ import { checkPendingMigrations } from './migrations.js';
 import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, WARROOM_ENABLED, WARROOM_PORT } from './config.js';
 import { startDashboard } from './dashboard.js';
 import { initDatabase, cleanupOldMissionTasks, insertAuditLog } from './db.js';
-import { initSecurity, setAuditCallback } from './security.js';
+import { initSecurity, setAuditCallback, getScrubbedSdkEnv } from './security.js';
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { cleanupOldUploads } from './media.js';
 import { runConsolidation } from './memory-consolidate.js';
@@ -206,7 +207,15 @@ async function main(): Promise<void> {
       if (fs.existsSync(venvPython) && fs.existsSync(serverScript)) {
         // Pre-flight: verify Python dependencies are actually installed
         const { spawnSync } = await import('child_process');
-        const depCheck = spawnSync(venvPython, ['-c', 'import pipecat'], { stdio: 'pipe', timeout: 10000 });
+        // SYSTEM-TOOL-EXEMPTED: bare `python -c 'import pipecat'` import
+        // probe. No agent-controlled args, no LLM in the loop. Pass
+        // explicit minimal env so we don't default-inherit harness
+        // secrets even for this trivial probe.
+        const depCheck = spawnSync(venvPython, ['-c', 'import pipecat'], {
+          stdio: 'pipe',
+          timeout: 10000,
+          env: { PATH: process.env.PATH },
+        });
         if (depCheck.status !== 0) {
           const msg = 'War Room Python dependencies not installed. Run:\n\n'
             + 'source warroom/.venv/bin/activate\n'
@@ -233,9 +242,24 @@ async function main(): Promise<void> {
 
         const spawnWarroom = (): void => {
           if (shuttingDown) return;
+          // SDK-CLASS spawn: the warroom Python server pipes user voice
+          // and text to LLM providers (Gemini Live, Deepgram, Cartesia),
+          // so a prompt-injected response could attempt to exfil any
+          // env-borne secret. Scrub the spawn env to break that chain
+          // and re-inject only the API keys the server actually needs.
+          const warroomAuth = readEnvFile([
+            'GOOGLE_API_KEY',
+            'DEEPGRAM_API_KEY',
+            'CARTESIA_API_KEY',
+          ]);
+          // Round-4 structural fix: no natural pass-through. Warroom
+          // doesn't need ANTHROPIC_API_KEY directly, but if .env doesn't
+          // carry one of these voice keys we still scrub correctly.
+          const warroomEnv = getScrubbedSdkEnv(warroomAuth);
+          warroomEnv.WARROOM_PORT = String(WARROOM_PORT);
           const proc = spawn(venvPython, [serverScript], {
             cwd: PROJECT_ROOT,
-            env: { ...process.env, WARROOM_PORT: String(WARROOM_PORT) },
+            env: warroomEnv as NodeJS.ProcessEnv,
             stdio: ['ignore', 'pipe', 'pipe'],
           });
           currentProc = proc;

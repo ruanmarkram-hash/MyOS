@@ -175,8 +175,17 @@ export class ClaudeProvider implements LlmProvider {
     // auto-refreshes) and every secret-shaped var (DASHBOARD_TOKEN,
     // DB_ENCRYPTION_KEY, third-party API keys, etc.). Re-injects auth
     // tokens read directly from .env.
-    const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
-    const sdkEnv = getScrubbedSdkEnv(secrets);
+    // Explicit re-injection (round-4 structural fix): SDK_NATURAL_PASS_VARS
+    // is gone, so any auth value the child needs must be passed in by
+    // name. Read from .env first; fall back to process.env so a shell-
+    // exported ANTHROPIC_API_KEY still works without surviving the scrub
+    // implicitly. CLAUDE_CODE_OAUTH_TOKEN deliberately does NOT fall back
+    // to process.env — that path would re-introduce the HIGH-1 ride-along.
+    const dotenv = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+    const sdkEnv = getScrubbedSdkEnv({
+      CLAUDE_CODE_OAUTH_TOKEN: dotenv.CLAUDE_CODE_OAUTH_TOKEN,
+      ANTHROPIC_API_KEY: dotenv.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+    });
 
     let newSessionId: string | undefined;
     let resultText: string | null = null;

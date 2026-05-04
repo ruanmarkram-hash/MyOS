@@ -27,6 +27,72 @@
  */
 import { spawn } from 'node:child_process';
 import { logger } from './logger.js';
+import { isLikelySecretEnvName } from './security.js';
+
+/**
+ * Allowlisted env vars that survive into a shell-bypass subprocess.
+ *
+ * Codex re-review 2026-05-04 (NEW HIGH): the schedule-cli → scheduler →
+ * shell-task call chain runs an argv-controlled prompt as a bash command
+ * with the FULL inherited process.env. That is the same exfil surface
+ * the HIGH-3 fix closed for codex.ts, just one indirection deeper.
+ *
+ * Audited existing silent shell tasks (sqlite scheduled_tasks WHERE
+ * silent=1): every task that needs secrets sources `.env` explicitly
+ * inside its own bash command (e.g. `set -a && source /Users/sc/HQ/.env
+ * && set +a && psql ...`). None rely on env inheritance for secrets.
+ *
+ * So the safe behaviour is to drop the entire parent env and pass only
+ * the bare-minimum locale/path vars a login shell needs to resolve
+ * pyenv / nvm / homebrew shims and run scripts. Anything secret-shaped
+ * MUST be sourced explicitly by the task itself.
+ */
+const SHELL_TASK_ENV_ALLOWLIST = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'PWD',
+  'TERM',
+  'LANG',
+  'TZ',
+  'TMPDIR',
+  // Keep the agent id so log lines / hive-mind writes know who fired.
+  'CLAUDECLAW_AGENT_ID',
+] as const;
+
+// Locale family — LC_ALL, LC_CTYPE, LC_MESSAGES, etc. — kept as a prefix
+// so we don't enumerate every variant.
+const SHELL_TASK_ENV_ALLOW_PREFIXES = ['LC_'] as const;
+
+/**
+ * Build a scrubbed env for a shell-bypass subprocess.
+ *
+ * Exported so the test suite can assert that secrets do not leak.
+ * Pure function: takes an explicit `source` (defaults to process.env)
+ * so tests don't have to mutate the live env.
+ */
+export function buildShellTaskEnv(
+  source: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of SHELL_TASK_ENV_ALLOWLIST) {
+    if (isLikelySecretEnvName(key)) continue; // defence in depth
+    const v = source[key];
+    if (typeof v === 'string' && v.length > 0) out[key] = v;
+  }
+  for (const key of Object.keys(source)) {
+    if (!SHELL_TASK_ENV_ALLOW_PREFIXES.some((p) => key.startsWith(p))) continue;
+    // Codex round-3 fix: prefix-allowed keys must still pass the
+    // shared secret-name denylist. Otherwise a planted LC_FOO_SECRET
+    // would slip through the LC_* sweep.
+    if (isLikelySecretEnvName(key)) continue;
+    const v = source[key];
+    if (typeof v === 'string' && v.length > 0) out[key] = v;
+  }
+  return out;
+}
 
 /** Command extracted from a prompt that's safe to run without the agent. */
 export interface ExtractedCommand {
@@ -109,6 +175,12 @@ export function runShellCommand(command: string): Promise<ShellTaskResult> {
   return new Promise((resolve) => {
     const child = spawn('/bin/bash', ['-lc', command], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      // Codex re-review 2026-05-04: do NOT inherit process.env. The
+      // command string is argv-controlled (silent scheduled-task
+      // prompt), so inheriting parent secrets would re-open the same
+      // exfil surface HIGH-3 closed for codex.ts. Tasks that need
+      // secrets must source .env explicitly inside the command.
+      env: buildShellTaskEnv(),
     });
 
     let stdout = '';

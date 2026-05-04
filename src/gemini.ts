@@ -111,9 +111,15 @@ export async function generateContent(
     let collected = '';
     // Scrub secrets from the subprocess env. The SDK does not need
     // DASHBOARD_TOKEN, DB_ENCRYPTION_KEY, third-party API keys, etc.
-    const sdkEnv = getScrubbedSdkEnv(
-      readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']),
-    );
+    // Round-4 structural fix: explicit re-injection (no
+    // SDK_NATURAL_PASS_VARS). Fall back to process.env only for
+    // ANTHROPIC_API_KEY; CLAUDE_CODE_OAUTH_TOKEN must never ride along
+    // from the harness session.
+    const dotenv = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+    const sdkEnv = getScrubbedSdkEnv({
+      CLAUDE_CODE_OAUTH_TOKEN: dotenv.CLAUDE_CODE_OAUTH_TOKEN,
+      ANTHROPIC_API_KEY: dotenv.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+    });
     for await (const event of query({
       prompt,
       options: {
