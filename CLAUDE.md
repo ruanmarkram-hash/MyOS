@@ -291,6 +291,37 @@ node "$PROJECT_ROOT/dist/mission-cli.js" cancel <task-id>         # cancel a que
 
 Available agents: main, research, comms, content, ops. Use `--priority 10` for high priority, `--priority 0` for low (default is 5).
 
+## Operation Notifications (durable check-backs — use INSTEAD of ScheduleWakeup)
+
+ScheduleWakeup is unreliable for "I'll check back in X minutes" promises: the
+SDK cancels it the moment the user replies, so the check never fires. Use
+`scheduleOperationNotification` instead. The row lives in SQLite and the
+main scheduler tick (every 30s) fires it regardless of session state.
+
+```ts
+import {
+  scheduleOperationNotification,
+  cancelOperationNotification,
+} from './src/operation-notify.js';
+
+const opId = `sage-checkback-${Date.now()}`;
+scheduleOperationNotification({
+  agentId: 'main',
+  chatId: ALLOWED_CHAT_ID,
+  operationId: opId,
+  fireAt: new Date(Date.now() + 30 * 60 * 1000),
+  message: 'Reminder: check status of mission XYZ',
+});
+
+// If the operation completes early, drop the reminder:
+cancelOperationNotification(opId);
+```
+
+Survives session end, bot restart, and arbitrary user replies. `operationId`
+is a caller-supplied scoping key — multiple rows can share one id and a single
+cancel kills them all. Prefer this over ScheduleWakeup for any reminder that
+needs to outlive the current turn.
+
 ## Sending Files via Telegram
 
 When [YOUR NAME] asks you to create a file and send it to them (PDF, spreadsheet, image, etc.), include a file marker in your response. The bot will parse these markers and send the files as Telegram attachments.

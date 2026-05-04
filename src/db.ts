@@ -384,6 +384,28 @@ function createSchema(database: Database.Database): void {
       total_cost  REAL NOT NULL DEFAULT 0,
       created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     );
+
+    -- Operation notifications: durable replacement for ScheduleWakeup.
+    -- An agent can promise "I'll check back in X" by enqueuing a row here;
+    -- the scheduler tick reads, fires, and stamps status='fired'. Survives
+    -- the agent's session ending (unlike ScheduleWakeup, which is cancelled
+    -- the moment the user replies).
+    CREATE TABLE IF NOT EXISTS operation_notifications (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id      TEXT NOT NULL,
+      chat_id       TEXT NOT NULL,
+      operation_id  TEXT NOT NULL,
+      fire_at       INTEGER NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'pending',
+      payload       TEXT NOT NULL,
+      fired_at      INTEGER,
+      cancelled_at  INTEGER,
+      created_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_op_notifications_pending
+      ON operation_notifications(status, fire_at);
+    CREATE INDEX IF NOT EXISTS idx_op_notifications_op
+      ON operation_notifications(operation_id);
   `);
 }
 
@@ -2868,4 +2890,97 @@ export function getOutboxStats(): TelegramOutboxStats {
     deadLettered: counts['dead-lettered'],
     oldestUnsentAgeSeconds: oldest.m == null ? null : Math.max(0, now - oldest.m),
   };
+}
+
+// ── Operation Notifications ─────────────────────────────────────────
+//
+// Durable, scheduler-driven notifications. Replaces ScheduleWakeup, which
+// is cancelled the moment the user replies and therefore can't survive the
+// agent's session ending. Rows fire from the main process tick.
+//
+// Status lifecycle: pending → fired | cancelled | expired.
+
+export interface OperationNotificationRow {
+  id: number;
+  agent_id: string;
+  chat_id: string;
+  operation_id: string;
+  fire_at: number;
+  status: 'pending' | 'fired' | 'cancelled' | 'expired';
+  payload: string;
+  fired_at: number | null;
+  cancelled_at: number | null;
+  created_at: number;
+}
+
+export function insertOperationNotification(opts: {
+  agentId: string;
+  chatId: string;
+  operationId: string;
+  fireAt: number;
+  payload: string;
+}): number {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `INSERT INTO operation_notifications
+       (agent_id, chat_id, operation_id, fire_at, status, payload, created_at)
+     VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+  ).run(opts.agentId, opts.chatId, opts.operationId, opts.fireAt, opts.payload, now);
+  return Number(info.lastInsertRowid);
+}
+
+export function getDueOperationNotifications(now?: number): OperationNotificationRow[] {
+  const cutoff = now ?? Math.floor(Date.now() / 1000);
+  return db.prepare(
+    `SELECT * FROM operation_notifications
+       WHERE status = 'pending' AND fire_at <= ?
+       ORDER BY fire_at ASC`,
+  ).all(cutoff) as OperationNotificationRow[];
+}
+
+export function getOperationNotification(id: number): OperationNotificationRow | undefined {
+  return db.prepare('SELECT * FROM operation_notifications WHERE id = ?')
+    .get(id) as OperationNotificationRow | undefined;
+}
+
+export function getOperationNotificationsByOpId(operationId: string): OperationNotificationRow[] {
+  return db.prepare(
+    'SELECT * FROM operation_notifications WHERE operation_id = ? ORDER BY id ASC',
+  ).all(operationId) as OperationNotificationRow[];
+}
+
+/**
+ * Atomically claim a pending row by id. Returns true iff this caller won
+ * the claim race. Stamps status='fired' + fired_at; safe against double-fire
+ * across overlapping ticks.
+ */
+export function claimOperationNotification(id: number): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `UPDATE operation_notifications
+       SET status = 'fired', fired_at = ?
+       WHERE id = ? AND status = 'pending'`,
+  ).run(now, id);
+  return info.changes > 0;
+}
+
+/**
+ * Cancel all pending rows for an operation_id. Already-fired rows are
+ * untouched. Returns the number of rows actually cancelled.
+ */
+export function cancelOperationNotificationsByOpId(operationId: string): number {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `UPDATE operation_notifications
+       SET status = 'cancelled', cancelled_at = ?
+       WHERE operation_id = ? AND status = 'pending'`,
+  ).run(now, operationId);
+  return info.changes;
+}
+
+/** @internal — test seam, lets a test claim back a row to retry. */
+export function _resetOperationNotificationForTest(id: number): void {
+  db.prepare(
+    `UPDATE operation_notifications SET status = 'pending', fired_at = NULL WHERE id = ?`,
+  ).run(id);
 }

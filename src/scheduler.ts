@@ -23,6 +23,7 @@ import { classifyTaskModel, modelTierLabel } from './task-model-classifier.js';
 import { tryExtractShellCommand, runShellCommand } from './shell-task.js';
 import { notifyMissionDone } from './mission-notify.js';
 import { tickTelegramOutbox } from './telegram-outbox.js';
+import { processDueOperationNotifications } from './operation-notify.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -74,7 +75,16 @@ export function initScheduler(send: Sender, agentId = 'main'): void {
   // recommended cadence; the worker is cheap when there's nothing due.
   setInterval(() => void runOutboxTick(), 5_000);
 
-  logger.info({ agentId }, 'Scheduler started (tasks every 60s, outbox every 5s)');
+  // Operation notifications run on a tighter cadence (30s). They're a
+  // user-promised "I'll check back in X minutes" — letting them slip a full
+  // minute past fire_at would be noticeable.
+  setInterval(() => {
+    void processDueOperationNotifications().catch((err) => {
+      logger.warn({ err }, 'operation-notify tick failed');
+    });
+  }, 30_000);
+
+  logger.info({ agentId }, 'Scheduler started (tasks 60s, outbox 5s, op-notifications 30s)');
 }
 
 async function runOutboxTick(): Promise<void> {
