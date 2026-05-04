@@ -14,9 +14,6 @@
  * surfaces immediately.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 
 import {
   _initTestDatabase,
@@ -42,12 +39,7 @@ import {
   tickTelegramOutbox,
   type TelegramApiClient,
 } from './telegram-outbox.js';
-import {
-  RUNTIME_BUILD_META,
-  checkStale,
-  createStaleWatcher,
-  _resetShutdownStateForTest,
-} from './build-meta.js';
+import { _resetShutdownStateForTest } from './build-meta.js';
 import { createStaleCodeAlerter } from './stale-code-alert.js';
 
 /**
@@ -227,28 +219,24 @@ describe('chain: mission-notify → outbox → API', () => {
 });
 
 describe('chain: stale-code → outbox → API + fallbacks', () => {
-  let tmpDir: string;
-  let metaPath: string;
-
   beforeEach(() => {
     _initTestDatabase();
     setTelegramOutboxClient(null);
     _resetShutdownStateForTest();
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-stale-'));
-    metaPath = path.join(tmpDir, '.build-meta.json');
   });
   afterEach(() => {
     setTelegramOutboxClient(null);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
-  function writeMeta(sha: string, branch = 'main'): void {
-    fs.writeFileSync(metaPath, JSON.stringify({ sha, branch, builtAt: '2026-05-04T00:00:00Z' }));
-  }
-
-  it('full chain: stale build-meta → watcher.tick().shouldNotify → alerter.notify → outbox → sender (NOT direct-send)', async () => {
-    if (RUNTIME_BUILD_META.sha === 'unknown') return; // env without git build-meta
+  // NOTE: we deliberately bypass createStaleWatcher / RUNTIME_BUILD_META
+  // here. In vitest source-mode, build-meta.ts resolves dist/.build-meta.json
+  // relative to src/, finds nothing, and RUNTIME_BUILD_META.sha falls back
+  // to 'unknown'. Any test that gates on a real SHA mismatch then silently
+  // no-ops (Codex stream-2 review caught this regression). The chain
+  // we care about for M2 is alerter → outbox → sender; the watcher's job
+  // (decide WHEN to alert) is covered by stale-code.test.ts.
+  it('full chain: alerter.notify → real outbox enqueue → DB row → sender → API client (NOT direct-send)', async () => {
     const { client, calls } = makeApiCapture(7777);
     setTelegramOutboxClient(client);
 
@@ -268,28 +256,29 @@ describe('chain: stale-code → outbox → API + fallbacks', () => {
       stderr: (l) => stderrLines.push(l),
     });
 
-    // Disk SHA differs from runtime → watcher fires shouldNotify.
-    writeMeta('different-stale-sha-deadbeef');
-    const watcher = createStaleWatcher({ filePath: metaPath, startedAt: 0 });
-    const tickResult = watcher.tick();
-    expect(tickResult.stale).toBe(true);
-    expect(tickResult.shouldNotify).toBe(true);
-
-    const text = `stale runtime=${RUNTIME_BUILD_META.sha.slice(0, 7)} disk=different`;
+    const text = 'stale runtime=abc1234 disk=def5678';
     const rowId = alerter.notify(text);
     expect(rowId).not.toBeNull();
     expect(stderrLines).toEqual([]); // happy path: no fallback
 
-    // Outbox row exists and is pending.
+    // Outbox row exists, agent-scoped, and pending.
     const outboxRow = getTelegramOutboxRow(rowId!);
     expect(outboxRow).not.toBeNull();
     expect(outboxRow!.status).toBe('pending');
     expect(outboxRow!.agent_id).toBe('main');
+    const persistedPayload = JSON.parse(outboxRow!.payload) as {
+      method: string;
+      params: { text: string };
+    };
+    expect(persistedPayload.method).toBe('sendMessage');
+    expect(persistedPayload.params.text).toBe(text);
 
     // Sender drains it; the API client receives the alert text.
     const processed = await tickTelegramOutbox('main');
     expect(processed).toBe(1);
     expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe('sendMessage');
+    expect(calls[0].chatId).toBe('chat-stale');
     expect((calls[0].params as { text: string }).text).toBe(text);
 
     const final = getTelegramOutboxRow(rowId!)!;
@@ -352,12 +341,7 @@ describe('chain: stale-code → outbox → API + fallbacks', () => {
     expect(row.status).toBe('pending');
   });
 
-  it('checkStale honours the on-main branch gate (regression guard for shared-tree mid-mission)', () => {
-    if (RUNTIME_BUILD_META.sha === 'unknown') return;
-    // Same SHA-mismatch but on a feature branch → not stale (other agent in flight).
-    writeMeta('different-sha-but-feature-branch', 'recovery/some-feature');
-    const r = checkStale(metaPath);
-    expect(r.stale).toBe(false);
-    expect(r.diskMeta.branch).toBe('recovery/some-feature');
-  });
+  // (on-main branch gate is exercised in stale-code.test.ts where the
+  // skip-on-unknown pattern is acceptable per its scope; we don't duplicate
+  // the same silently-skipped assertion here.)
 });
