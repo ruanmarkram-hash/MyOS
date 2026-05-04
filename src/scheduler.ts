@@ -1,6 +1,7 @@
 import { CronExpressionParser } from 'cron-parser';
 
-import { AGENT_ID, ALLOWED_CHAT_ID, agentMcpAllowlist } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, PROJECT_ROOT, agentCwd, agentMcpAllowlist } from './config.js';
+import { safeSpawnSync } from './safe-spawn.js';
 import {
   getDueTasks,
   getSession,
@@ -101,14 +102,54 @@ let lastRecoverySweep = 0;
 
 /**
  * Map a persisted mission_tasks.status string onto the notify-state enum.
- * The DB only ever writes 'completed' or 'failed' today (timeouts are
- * collapsed into 'failed'), but we accept 'timed_out' for forward-compat
- * in case a future writer starts using it.
+ * The DB writes 'completed', 'failed', or 'partial' today (timeouts are
+ * collapsed into 'failed'/'partial' depending on commits), but we accept
+ * 'timed_out' for forward-compat in case a future writer starts using it.
  */
 function statusToNotifyState(status: string): MissionTerminalState {
   if (status === 'completed') return 'completed';
+  if (status === 'partial') return 'partial';
   if (status === 'timed_out') return 'timed_out';
   return 'failed';
+}
+
+/**
+ * Count git commits made in the agent's working tree since `startedAt`
+ * (unix seconds). Used to distinguish "agent hit max-turns/timeout but
+ * landed real work" (=> 'partial') from "agent failed with zero progress"
+ * (=> 'failed'). Failures and non-git cwds return 0 — we never block a
+ * terminal state on a git lookup.
+ */
+export function commitsSinceStart(cwd: string, startedAt: number): number {
+  try {
+    const r = safeSpawnSync(
+      'git',
+      ['rev-list', '--count', 'HEAD', `--since=${startedAt}`],
+      { envClass: 'system-tool', cwd, timeout: 5_000, encoding: 'utf-8' },
+    );
+    if (r.status !== 0) return 0;
+    const out = (typeof r.stdout === 'string' ? r.stdout : r.stdout?.toString('utf8') ?? '').trim();
+    const n = parseInt(out, 10);
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Decide whether a max-turns / timeout / error should be persisted as
+ * 'partial' (work landed) or 'failed' (zero progress). Centralises the
+ * git-lookup so both the timeout path and the catch path converge on
+ * one rule.
+ */
+function classifyMissionFailure(startedAt: number | null): {
+  status: 'partial' | 'failed';
+  commitCount: number;
+} {
+  if (!startedAt) return { status: 'failed', commitCount: 0 };
+  const cwd = agentCwd ?? PROJECT_ROOT;
+  const n = commitsSinceStart(cwd, startedAt);
+  return { status: n > 0 ? 'partial' : 'failed', commitCount: n };
 }
 
 export async function _recoverMissedMissionNotificationsForTest(): Promise<void> {
@@ -309,16 +350,28 @@ async function runDueMissionTasks(): Promise<void> {
       clearTimeout(timeout);
 
       if (result.aborted) {
-        completeMissionTask(mission.id, null, 'failed', 'Timed out after 10 minutes');
-        logger.warn({ missionId: mission.id }, 'Mission task timed out');
+        const verdict = classifyMissionFailure(mission.started_at);
+        const detail = verdict.status === 'partial'
+          ? `Hit timeout after committing ${verdict.commitCount} change(s)`
+          : 'Timed out after 10 minutes';
+        completeMissionTask(mission.id, null, verdict.status, detail);
+        logger.warn(
+          { missionId: mission.id, status: verdict.status, commitCount: verdict.commitCount },
+          `mission ${mission.id} timed out; ${verdict.commitCount} commits since dispatch -> status=${verdict.status}`,
+        );
         try {
-          await sender('Mission task timed out: "' + mission.title + '"');
+          if (verdict.status === 'partial') {
+            await sender(`Mission "${mission.title}" hit timeout but committed ${verdict.commitCount} changes — review and re-dispatch if needed.`);
+          } else {
+            await sender('Mission task timed out: "' + mission.title + '"');
+          }
         } catch (sendErr) {
           // Sender can fail for Telegram API blips or chat-not-found. We
           // still want to see it so the user isn't silently unnotified.
           logger.warn({ err: sendErr, missionId: mission.id }, 'Failed to send mission timeout notification');
         }
-        await notifyMissionDone(mission, 'timed_out', 'Timed out after 10 minutes');
+        const notifyState: MissionTerminalState = verdict.status === 'partial' ? 'partial' : 'timed_out';
+        await notifyMissionDone(mission, notifyState, detail, { commitCount: verdict.commitCount });
       } else {
         const text = result.text?.trim() || 'Task completed with no output.';
         completeMissionTask(mission.id, text, 'completed');
@@ -340,9 +393,22 @@ async function runDueMissionTasks(): Promise<void> {
     } catch (err) {
       clearTimeout(timeout);
       const errMsg = err instanceof Error ? err.message : String(err);
-      completeMissionTask(mission.id, null, 'failed', errMsg.slice(0, 500));
-      logger.error({ err, missionId: mission.id }, 'Mission task failed');
-      await notifyMissionDone({ ...mission, error: errMsg.slice(0, 500), status: 'failed' }, 'failed', errMsg);
+      // Same partial vs failed split as the timeout path: if the agent
+      // committed work before erroring out (e.g. max-turns surfacing as
+      // a thrown classified error), preserve that signal as 'partial'
+      // so the user doesn't waste a re-dispatch on already-landed work.
+      const verdict = classifyMissionFailure(mission.started_at);
+      completeMissionTask(mission.id, null, verdict.status, errMsg.slice(0, 500));
+      logger.error(
+        { err, missionId: mission.id, status: verdict.status, commitCount: verdict.commitCount },
+        `mission ${mission.id} errored; ${verdict.commitCount} commits since dispatch -> status=${verdict.status}`,
+      );
+      await notifyMissionDone(
+        { ...mission, error: errMsg.slice(0, 500), status: verdict.status },
+        verdict.status,
+        errMsg,
+        { commitCount: verdict.commitCount },
+      );
     } finally {
       runningTaskIds.delete(missionKey);
     }
