@@ -120,6 +120,45 @@ describe('getScrubbedSdkEnv', () => {
     expect(env.OPENAI_API_KEY).toBe('sk-from-dotenv');
   });
 
+  // Codex round-4 spawn-site shape regression. Mirrors the auth shapes
+  // used by meet-cli runPikaScript / cmdJoinDaily, dashboard meet spawn,
+  // and index.ts warroom spawn. Ensures the scrubbed env returned for a
+  // spawn site contains ONLY the explicitly-injected keys (plus
+  // CLAUDECLAW_AGENT_ID and non-secret PATH-style vars), never raw
+  // process.env secrets.
+  it('spawn-site shape: only explicit-injected auth survives next to PATH', () => {
+    process.env.DASHBOARD_TOKEN = 'leaked';
+    process.env.MCP_ACCESS_KEY = 'leaked';
+    process.env.OPENAI_API_KEY = 'leaked-from-shell';
+    process.env.PIKA_DEV_KEY = 'leaked-from-shell';
+    process.env.DAILY_API_KEY = 'leaked-from-shell';
+    process.env.GOOGLE_API_KEY = 'leaked-from-shell';
+    process.env.ANTHROPIC_API_KEY = 'leaked-from-shell';
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'leaked-from-shell';
+    process.env.PATH = '/usr/bin:/bin';
+    process.env.CLAUDECLAW_AGENT_ID = 'mason';
+
+    // Caller passes only the keys it explicitly intends to forward.
+    const env = getScrubbedSdkEnv({
+      PIKA_DEV_KEY: 'from-dotenv',
+      DAILY_API_KEY: 'from-dotenv',
+    });
+
+    // Explicit re-injection survives.
+    expect(env.PIKA_DEV_KEY).toBe('from-dotenv');
+    expect(env.DAILY_API_KEY).toBe('from-dotenv');
+    // Non-secret keep-list survives.
+    expect(env.PATH).toBe('/usr/bin:/bin');
+    expect(env.CLAUDECLAW_AGENT_ID).toBe('mason');
+    // Everything else from process.env is gone.
+    expect(env.DASHBOARD_TOKEN).toBeUndefined();
+    expect(env.MCP_ACCESS_KEY).toBeUndefined();
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(env.GOOGLE_API_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+  });
+
   it('does not inject empty-string auth secrets', () => {
     const env = getScrubbedSdkEnv({ ANTHROPIC_API_KEY: '' });
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
