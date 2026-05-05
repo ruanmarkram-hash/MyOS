@@ -44,15 +44,33 @@ function formatCountdown(unixSeconds: number): string {
 }
 
 export function Scheduled() {
+  return (
+    <div class="flex flex-col h-full">
+      <ScheduledTasksPanel fullPage />
+    </div>
+  );
+}
+
+export function ScheduledTasksPanel({ fullPage = false }: { fullPage?: boolean }) {
   const { data, loading, error, refresh } = useFetch<{ tasks: ScheduledTask[] }>('/api/tasks', 30_000);
   const tasks = data?.tasks ?? [];
 
   return (
-    <div class="flex flex-col h-full">
-      <PageHeader
-        title="Scheduled"
-        actions={<span class="text-[11px] text-[var(--color-text-muted)] tabular-nums">{tasks.length} scheduled</span>}
-      />
+    <>
+      {fullPage ? (
+        <PageHeader
+          title="Scheduled"
+          actions={<span class="text-[11px] text-[var(--color-text-muted)] tabular-nums">{tasks.length} scheduled</span>}
+        />
+      ) : (
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <div class="text-[12px] font-medium text-[var(--color-text)]">Scheduled</div>
+            <div class="text-[11px] text-[var(--color-text-muted)]">Recurring agent and OS jobs</div>
+          </div>
+          <span class="text-[11px] text-[var(--color-text-muted)] tabular-nums">{tasks.length} scheduled</span>
+        </div>
+      )}
 
       {error && <PageState error={error} />}
       {loading && !data && <PageState loading />}
@@ -65,13 +83,13 @@ export function Scheduled() {
       )}
 
       {tasks.length > 0 && (
-        <div class="flex-1 overflow-y-auto p-6">
+        <div class={fullPage ? 'flex-1 overflow-y-auto p-6' : ''}>
           <div class="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))' }}>
             {tasks.map((t) => <TaskRow key={t.id} task={t} onChange={refresh} />)}
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

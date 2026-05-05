@@ -1,5 +1,5 @@
 import {
-  Home, LayoutGrid, ListTodo, Users, MessageSquare,
+  Home, LayoutGrid, Users, MessageSquare,
   Brain, BrainCircuit, Network, Activity, ShieldCheck,
   Radio, Cpu,
   Mic, Settings, FileText, Inbox,
@@ -21,7 +21,6 @@ export const ROUTES: RouteDef[] = [
   { path: '/home',       label: 'Home',            section: 'workspace',    icon: Home,          shortcut: 'g d' },
   { path: '/review',     label: 'Review Inbox',    section: 'workspace',    icon: Inbox,         shortcut: 'g i' },
   { path: '/mission',    label: 'Mission Control', section: 'workspace',    icon: LayoutGrid,    shortcut: 'g m' },
-  { path: '/scheduled',  label: 'Scheduled',       section: 'workspace',    icon: ListTodo,      shortcut: 'g s' },
   { path: '/agents',     label: 'Agents',          section: 'workspace',    icon: Users,         shortcut: 'g a' },
   { path: '/chat',       label: 'Chat',            section: 'workspace',    icon: MessageSquare, shortcut: 'g c' },
   { path: '/runtime',    label: 'Runtime Stack',   section: 'workspace',    icon: Cpu,           shortcut: 'g r' },

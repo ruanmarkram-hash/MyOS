@@ -79,9 +79,9 @@ interface HomeAttentionItem {
 
 interface HomeAgendaItem {
   id: string;
-  source: 'schedule';
+  source: 'calendar' | 'schedule';
   title: string;
-  agentId: string;
+  agentId: string | null;
   status: 'active' | 'paused' | 'running';
   dueAt: number;
   overdue: boolean;
@@ -166,7 +166,7 @@ export function HomeDashboard() {
         <div class="flex-1 overflow-y-auto p-6 space-y-4">
           <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
             <Metric icon={<Sunrise size={16} />} label="Today" value={attentionItems.length + ' attention items'} detail={`${activeMissions.length} mission loops · ${runningMissions.length} running · ${unassigned.length} unassigned`} tone={attentionItems.some((item) => item.severity === 'high') ? 'medium' : 'neutral'} onClick={() => navigate('/review')} />
-            <Metric icon={<CalendarDays size={16} />} label="Calendar" value={calendarConnected ? 'connected' : 'pending'} detail={calendarConnected ? agenda.data?.externalCalendar.provider || 'personal calendar' : 'personal calendar connector pending'} tone="medium" onClick={() => navigate('/scheduled')} />
+            <Metric icon={<CalendarDays size={16} />} label="Calendar" value={calendarConnected ? 'connected' : 'pending'} detail={calendarConnected ? agenda.data?.externalCalendar.provider || 'personal calendar' : 'personal calendar connector pending'} tone="medium" onClick={() => navigate('/agents')} />
             <Metric icon={<Users size={16} />} label="Agents" value={`${liveAgents.length}/${agents.data?.agents.length ?? 0} live`} detail={liveAgents.map((a) => a.name || a.id).slice(0, 3).join(', ') || 'none live'} onClick={() => navigate('/agents')} />
             <Metric
               icon={<Cpu size={16} />}
@@ -233,11 +233,11 @@ export function HomeDashboard() {
               <Panel title="Today / Calendar" icon={<CalendarDays size={15} />}>
                 {!agenda.data?.externalCalendar.connected && (
                   <div class="rounded-md border border-dashed border-[var(--color-border)] p-3 mb-3">
-                    <div class="text-[12px] text-[var(--color-text)]">External calendar is not wired into Mission Control yet.</div>
+                    <div class="text-[12px] text-[var(--color-text)]">Personal calendar is not available right now.</div>
                     <div class="text-[11px] text-[var(--color-text-muted)] mt-1">{agenda.data?.externalCalendar.note}</div>
                   </div>
                 )}
-                {personalCalendarItems.length === 0 ? <EmptyLine text={calendarConnected ? 'No personal calendar items in the next 24 hours.' : 'Personal calendar connector pending. Agent schedules live under Scheduled.'} /> : (
+                {personalCalendarItems.length === 0 ? <EmptyLine text={calendarConnected ? 'No personal calendar items in the next 24 hours.' : 'Personal calendar connector pending. Agent schedules live under Agents.'} /> : (
                   <div class="space-y-2">
                     {personalCalendarItems.map((item) => <ScheduledLine key={item.id} item={item} />)}
                   </div>

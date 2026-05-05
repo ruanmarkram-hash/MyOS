@@ -10,6 +10,7 @@ import { useFetch } from '@/lib/useFetch';
 import { useDebouncedValue } from '@/lib/useDebounce';
 import { apiPost, apiPatch, apiDelete, chatId } from '@/lib/api';
 import { formatCost } from '@/lib/format';
+import { ScheduledTasksPanel } from '@/pages/Scheduled';
 
 interface Agent {
   id: string;
@@ -90,10 +91,16 @@ export function Agents() {
         <PageState empty emptyTitle="No agents configured" emptyDescription="Click New Agent to create your first one." />
       )}
 
-      {agents.length > 0 && (
-        <div class="flex-1 overflow-y-auto p-6">
-          <div class="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
-            {agents.map((a) => <AgentCard key={a.id} agent={a} onChange={refresh} />)}
+      {!loading && !error && (
+        <div class="flex-1 overflow-y-auto p-6 space-y-6">
+          {agents.length > 0 && (
+            <div class="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+              {agents.map((a) => <AgentCard key={a.id} agent={a} onChange={refresh} />)}
+            </div>
+          )}
+
+          <div class="border-t border-[var(--color-border)] pt-5">
+            <ScheduledTasksPanel />
           </div>
         </div>
       )}

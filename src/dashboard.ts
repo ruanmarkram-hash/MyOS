@@ -161,6 +161,7 @@ function writeEnvValue(key: string, value: string): void {
 const REVIEW_FILE_MAX_BYTES = 50 * 1024 * 1024;
 const REVIEW_EXPORT_DIR = path.join('/tmp', 'claudeclaw-review-exports');
 const MSGRAPH_SEND_SCRIPT = path.join(PROJECT_ROOT, 'skills', 'msgraph', 'send_graph_email.py');
+const MSGRAPH_CALENDAR_SCRIPT = path.join(PROJECT_ROOT, 'skills', 'msgraph', 'calendar_ops.py');
 
 type ReviewDeliverable = {
   id: string;
@@ -170,6 +171,18 @@ type ReviewDeliverable = {
   href: string | null;
   exists: boolean;
   sizeBytes: number | null;
+};
+
+type GraphCalendarEvent = {
+  id?: string;
+  subject?: string;
+  start?: string;
+  start_tz?: string;
+  end?: string;
+  end_tz?: string;
+  location?: string;
+  organizer?: string;
+  preview?: string;
 };
 
 function userHomeDir(): string {
@@ -922,10 +935,95 @@ function describeCron(cron: string): string {
   return cron;
 }
 
-function buildHomeAgenda(tasks: ScheduledTask[]) {
+function parseGraphCalendarTime(value: string | undefined): number | null {
+  if (!value) return null;
+  const normalized = /Z$|[+-]\d\d:\d\d$/.test(value) ? value : value + 'Z';
+  const ms = Date.parse(normalized);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+
+function formatCalendarDetail(event: GraphCalendarEvent): string {
+  const parts = [
+    event.location?.trim(),
+    event.organizer ? `organizer ${event.organizer}` : '',
+    event.preview?.trim(),
+  ].filter(Boolean);
+  return parts.join(' · ');
+}
+
+async function fetchHomeCalendarItems() {
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+    return {
+      connected: false,
+      items: [] as any[],
+      note: 'Microsoft Graph calendar read disabled in tests.',
+    };
+  }
+
+  const graphEnv = readEnvFile(['GRAPH_CLIENT_ID', 'GRAPH_TENANT_ID', 'GRAPH_CLIENT_SECRET', 'GRAPH_REFRESH_TOKEN']);
+  if (!graphEnv.GRAPH_REFRESH_TOKEN) {
+    return {
+      connected: false,
+      items: [] as any[],
+      note: 'Microsoft Graph calendar refresh token is not configured.',
+    };
+  }
+
+  const { safeExecFileAsync } = await import('./safe-spawn.js');
+  try {
+    const { stdout } = await safeExecFileAsync('python3', [
+      MSGRAPH_CALENDAR_SCRIPT,
+      'list',
+      '--days',
+      '1',
+      '--top',
+      '12',
+    ], {
+      envClass: 'sdk',
+      extraEnv: graphEnv,
+      cwd: PROJECT_ROOT,
+      timeout: 30_000,
+    });
+
+    const events = JSON.parse(stdout || '[]') as GraphCalendarEvent[];
+    const now = Math.floor(Date.now() / 1000);
+    const items = events
+      .map((event) => {
+        const dueAt = parseGraphCalendarTime(event.start);
+        if (!event.id || !dueAt) return null;
+        return {
+          id: event.id,
+          source: 'calendar',
+          title: event.subject || '(untitled calendar event)',
+          agentId: null,
+          status: 'active',
+          dueAt,
+          overdue: dueAt < now,
+          detail: formatCalendarDetail(event),
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => !!item)
+      .sort((a, b) => a.dueAt - b.dueAt);
+
+    return {
+      connected: true,
+      items,
+      note: items.length ? 'Microsoft Graph calendar connected.' : 'Microsoft Graph calendar connected. No personal calendar items in the next 24 hours.',
+    };
+  } catch (err: any) {
+    const raw = String(err?.stderr || err?.message || err || '');
+    const note = /No refresh token|refresh|token|auth|login|device code/i.test(raw)
+      ? 'Microsoft Graph calendar authentication needs attention.'
+      : 'Microsoft Graph calendar read failed. Check Sage logs for details.';
+    logger.warn({ err: raw.slice(0, 500) }, 'Home calendar read failed');
+    return { connected: false, items: [] as any[], note };
+  }
+}
+
+function buildHomeScheduleAgenda(tasks: ScheduledTask[]) {
   const now = Math.floor(Date.now() / 1000);
   const horizon = now + 24 * 60 * 60;
-  const items = tasks
+  return tasks
     .filter((task) => task.status !== 'paused')
     .filter((task) => task.next_run <= horizon || task.next_run < now)
     .sort((a, b) => a.next_run - b.next_run)
@@ -940,15 +1038,6 @@ function buildHomeAgenda(tasks: ScheduledTask[]) {
       overdue: task.next_run < now,
       detail: describeCron(task.schedule),
     }));
-
-  return {
-    externalCalendar: {
-      connected: false,
-      provider: null,
-      note: 'External calendar connector is not wired yet. This view currently shows OS scheduled work only.',
-    },
-    items,
-  };
 }
 
 function providerRuntime(provider: LlmProviderName, model: string | undefined, sessionId: string | undefined) {
@@ -1700,11 +1789,17 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     });
   });
 
-  app.get('/api/home/agenda', (c) => {
+  app.get('/api/home/agenda', async (c) => {
     const tasks = getAllScheduledTasks();
+    const calendar = await fetchHomeCalendarItems();
     return c.json({
       updatedAt: new Date().toISOString(),
-      ...buildHomeAgenda(tasks),
+      externalCalendar: {
+        connected: calendar.connected,
+        provider: calendar.connected ? 'Microsoft Graph' : null,
+        note: calendar.note,
+      },
+      items: calendar.connected ? calendar.items : buildHomeScheduleAgenda(tasks),
     });
   });
 
