@@ -1,7 +1,7 @@
 import {
-  LayoutGrid, ListTodo, Users, MessageSquare,
+  Home, LayoutGrid, ListTodo, Users, MessageSquare,
   Brain, BrainCircuit, Network, Activity, ShieldCheck,
-  Radio,
+  Radio, Cpu,
   Mic, Settings, FileText,
 } from 'lucide-preact';
 import type { ComponentChildren } from 'preact';
@@ -18,10 +18,12 @@ export interface RouteDef {
 
 // Single source of truth for the sidebar, command palette, and router.
 export const ROUTES: RouteDef[] = [
+  { path: '/home',       label: 'Home',            section: 'workspace',    icon: Home,          shortcut: 'g d' },
   { path: '/mission',    label: 'Mission Control', section: 'workspace',    icon: LayoutGrid,    shortcut: 'g m' },
   { path: '/scheduled',  label: 'Scheduled',       section: 'workspace',    icon: ListTodo,      shortcut: 'g s' },
   { path: '/agents',     label: 'Agents',          section: 'workspace',    icon: Users,         shortcut: 'g a' },
   { path: '/chat',       label: 'Chat',            section: 'workspace',    icon: MessageSquare, shortcut: 'g c' },
+  { path: '/runtime',    label: 'Runtime Stack',   section: 'workspace',    icon: Cpu,           shortcut: 'g r' },
 
   { path: '/brain',      label: 'Brain',           section: 'intelligence', icon: BrainCircuit,  shortcut: 'g b' },
   { path: '/memories',   label: 'Memories',        section: 'intelligence', icon: Brain,         shortcut: 'g e' },
@@ -43,7 +45,7 @@ export const SECTION_LABEL: Record<RouteSection, string> = {
   configure:    'Configure',
 };
 
-export const DEFAULT_ROUTE = '/mission';
+export const DEFAULT_ROUTE = '/home';
 
 // Lightly typed children helper for placeholder pages.
 export type PageProps = { children?: ComponentChildren };

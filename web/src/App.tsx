@@ -2,11 +2,13 @@ import { Route, Switch, Redirect, Router } from 'wouter-preact';
 import { Sidebar } from '@/components/Sidebar';
 import { CommandPalette } from '@/components/CommandPalette';
 import { Placeholder } from '@/pages/Placeholder';
+import { HomeDashboard } from '@/pages/HomeDashboard';
 import { MissionControl } from '@/pages/MissionControl';
 import { Brain } from '@/pages/Brain';
 import { Memories } from '@/pages/Memories';
 import { HiveMind } from '@/pages/HiveMind';
 import { Agents } from '@/pages/Agents';
+import { RuntimeStack } from '@/pages/RuntimeStack';
 import { Scheduled } from '@/pages/Scheduled';
 import { Audit } from '@/pages/Audit';
 import { Usage } from '@/pages/Usage';
@@ -28,10 +30,12 @@ export function App() {
         <Sidebar />
         <main class="flex-1 min-w-0 overflow-hidden">
           <Switch>
+            <Route path="/home"><HomeDashboard /></Route>
             <Route path="/mission"><MissionControl /></Route>
             <Route path="/scheduled"><Scheduled /></Route>
             <Route path="/agents"><Agents /></Route>
             <Route path="/chat"><Chat /></Route>
+            <Route path="/runtime"><RuntimeStack /></Route>
             <Route path="/brain"><Brain /></Route>
             <Route path="/memories"><Memories /></Route>
             <Route path="/hive"><HiveMind /></Route>

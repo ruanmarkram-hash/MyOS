@@ -1377,6 +1377,149 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     });
   });
 
+  app.get('/api/runtime/stack', (c) => {
+    const chatId = dashboardChatId(c);
+    const { provider, providerError } = currentProviderStatus();
+    const sessionId = getSession(chatId, AGENT_ID, provider);
+    const runtime = providerRuntime(provider, agentDefaultModel || MAIN_AGENT_MODEL, sessionId);
+    const memoryStats = getDashboardMemoryStats(chatId);
+    const mutationsEnabled = killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true);
+    const llmSpawnEnabled = killSwitchFlag('LLM_SPAWN_ENABLED', true);
+    const activeCall = getIsProcessing().processing;
+
+    return c.json({
+      updatedAt: new Date().toISOString(),
+      runtime: {
+        activeProvider: runtime.provider,
+        configuredProvider: configuredProviderValue(),
+        supportedProviders: getSupportedLlmProviders(),
+        configuredModel: runtime.configuredModel,
+        resolvedModel: runtime.resolvedModel,
+        hasSession: runtime.hasSession,
+        sessionShort: runtime.sessionShort,
+        providerError,
+      },
+      components: [
+        {
+          id: 'provider-adapter',
+          name: 'Provider adapter',
+          category: 'LLM',
+          status: providerError ? 'degraded' : 'healthy',
+          active: runtime.provider,
+          configured: configuredProviderValue(),
+          implementations: getSupportedLlmProviders(),
+          contract: [
+            'runAgent(options)',
+            'stream progress events',
+            'honor MCP allowlists',
+            'return usage and session metadata',
+            'map model tiers across providers',
+          ],
+          signals: {
+            configuredModel: runtime.configuredModel,
+            resolvedModel: runtime.resolvedModel,
+            spawnEnabled: llmSpawnEnabled,
+            activeCall,
+          },
+          actions: {
+            smoke: '/api/provider/smoke',
+            switch: '/api/provider/switch',
+          },
+          error: providerError,
+        },
+        {
+          id: 'memory-backend',
+          name: 'Memory backend',
+          category: 'Memory',
+          status: BRAIN === 'ob1' && !openBrainConfigured() ? 'degraded' : 'healthy',
+          active: BRAIN === 'ob1' ? 'OpenBrain' : 'SQLite',
+          configured: BRAIN,
+          implementations: ['sqlite', 'ob1'],
+          contract: [
+            'retrieve context for agent turns',
+            'capture distilled memories',
+            'keep local history inspectable',
+          ],
+          signals: {
+            sqliteMemories: memoryStats.total,
+            sqlitePinned: memoryStats.pinned,
+            avgSalience: memoryStats.avgSalience,
+            openBrainConfigured: openBrainConfigured(),
+            functionName: OB1_BRAIN_FUNCTION,
+          },
+          actions: {
+            search: '/api/brain/search',
+            capture: '/api/brain/capture',
+          },
+          error: BRAIN === 'ob1' && !openBrainConfigured() ? 'OpenBrain selected but not fully configured.' : null,
+        },
+        {
+          id: 'tool-boundary',
+          name: 'Tool boundary',
+          category: 'Tools',
+          status: 'healthy',
+          active: 'MCP allowlist',
+          configured: 'provider enforced',
+          implementations: ['Claude MCP loader', 'Codex temp CODEX_HOME'],
+          contract: [
+            'allowed MCP servers only',
+            'empty allowlist exposes no MCP servers',
+            'undefined allowlist preserves provider defaults',
+          ],
+          signals: {
+            provider: runtime.provider,
+            securityBoundary: true,
+          },
+          actions: {},
+          error: null,
+        },
+        {
+          id: 'session-store',
+          name: 'Session store',
+          category: 'State',
+          status: 'healthy',
+          active: runtime.hasSession ? 'resumable' : 'fresh',
+          configured: 'SQLite sessions',
+          implementations: ['chat/agent/provider scoped sessions'],
+          contract: [
+            'isolate sessions by chat, agent, and provider',
+            'never resume a Codex session through Claude',
+            'preserve provider-specific continuity',
+          ],
+          signals: {
+            chatId,
+            agentId: AGENT_ID,
+            provider: runtime.provider,
+            sessionShort: runtime.sessionShort,
+          },
+          actions: {},
+          error: null,
+        },
+        {
+          id: 'safety-gates',
+          name: 'Safety gates',
+          category: 'Safety',
+          status: mutationsEnabled && llmSpawnEnabled ? 'healthy' : 'limited',
+          active: mutationsEnabled ? 'writes enabled' : 'writes locked',
+          configured: 'env kill switches',
+          implementations: ['DASHBOARD_MUTATIONS_ENABLED', 'LLM_SPAWN_ENABLED'],
+          contract: [
+            'dashboard writes fail closed when disabled',
+            'LLM spawning can be blocked independently',
+            'active model calls block provider switches',
+          ],
+          signals: {
+            dashboardMutationsEnabled: mutationsEnabled,
+            llmSpawnEnabled,
+            activeCall,
+          },
+          actions: {},
+          error: mutationsEnabled ? null : 'Dashboard mutations are disabled.',
+        },
+      ],
+    });
+  });
+
   app.post('/api/provider/switch', async (c) => {
     if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
       return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);

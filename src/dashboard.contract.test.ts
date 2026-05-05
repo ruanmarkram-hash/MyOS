@@ -303,6 +303,30 @@ describe('POST /api/provider/switch', () => {
   });
 });
 
+describe('GET /api/runtime/stack', () => {
+  it('returns provider, memory, tool, session, and safety components', async () => {
+    const res = await get('/api/runtime/stack');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      updatedAt: expect.any(String),
+      runtime: expect.objectContaining({
+        activeProvider: expect.stringMatching(/^(claude|codex)$/),
+        configuredProvider: expect.any(String),
+        supportedProviders: expect.arrayContaining(['claude', 'codex']),
+      }),
+      components: expect.any(Array),
+    });
+    expect(body.components.map((c: any) => c.id)).toEqual(expect.arrayContaining([
+      'provider-adapter',
+      'memory-backend',
+      'tool-boundary',
+      'session-store',
+      'safety-gates',
+    ]));
+  });
+});
+
 describe('GET /api/tasks (scheduled)', () => {
   it('returns { tasks: [] }', async () => {
     const res = await get('/api/tasks');
