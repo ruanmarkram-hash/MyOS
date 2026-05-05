@@ -406,7 +406,78 @@ function createSchema(database: Database.Database): void {
       ON operation_notifications(status, fire_at);
     CREATE INDEX IF NOT EXISTS idx_op_notifications_op
       ON operation_notifications(operation_id);
+
+    -- Agent file edit history (Phase C1.a). Every successful save of a
+    -- gated agent file (initially just /HQ/CLAUDE.md, expands in C1.b)
+    -- appends a row here so we can revert from the dashboard and audit
+    -- who-changed-what. file_path is the user-facing logical path; real_path
+    -- is the post-realpath() absolute path written to disk (matters once
+    -- C1.b adds symlink-resolved per-agent files).
+    CREATE TABLE IF NOT EXISTS agent_file_history (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_path          TEXT NOT NULL,
+      real_path          TEXT NOT NULL,
+      content            TEXT NOT NULL,
+      content_sha        TEXT NOT NULL,
+      edited_by_chat_id  TEXT,
+      created_at         INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_file_history_path_time
+      ON agent_file_history(file_path, created_at DESC);
   `);
+}
+
+export interface AgentFileHistoryRow {
+  id: number;
+  file_path: string;
+  real_path: string;
+  content: string;
+  content_sha: string;
+  edited_by_chat_id: string | null;
+  created_at: number;
+}
+
+/**
+ * Append a row to agent_file_history. Returns the inserted row id.
+ * Caller is responsible for sha computation so the value stored here
+ * matches the bytes actually written to disk (atomic-write boundary).
+ */
+export function appendAgentFileHistory(row: {
+  filePath: string;
+  realPath: string;
+  content: string;
+  contentSha: string;
+  editedByChatId?: string | null;
+}): number {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db
+    .prepare(
+      `INSERT INTO agent_file_history
+         (file_path, real_path, content, content_sha, edited_by_chat_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      row.filePath,
+      row.realPath,
+      row.content,
+      row.contentSha,
+      row.editedByChatId ?? null,
+      now,
+    );
+  return Number(result.lastInsertRowid);
+}
+
+/** Most-recent-first history for a single file_path. */
+export function listAgentFileHistory(filePath: string, limit = 50): AgentFileHistoryRow[] {
+  return db
+    .prepare(
+      `SELECT id, file_path, real_path, content, content_sha, edited_by_chat_id, created_at
+         FROM agent_file_history
+        WHERE file_path = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?`,
+    )
+    .all(filePath, limit) as AgentFileHistoryRow[];
 }
 
 export function initDatabase(): void {

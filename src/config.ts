@@ -81,6 +81,16 @@ export function setAgentOverrides(opts: {
   agentMcpAllowlist = opts.mcpServers;
 }
 
+/**
+ * Hot-reload entry point: refresh ONLY the in-memory CLAUDE.md system prompt
+ * without disturbing botToken / cwd / model / mcp overrides. Called by the
+ * dashboard's agent-files editor after a successful atomic write so a brand-
+ * new session (no SDK resume) immediately picks up the new rules.
+ */
+export function setAgentSystemPrompt(newPrompt: string | undefined): void {
+  agentSystemPrompt = newPrompt;
+}
+
 export const TELEGRAM_BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN || envConfig.TELEGRAM_BOT_TOKEN || '';
 

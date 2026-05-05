@@ -68,6 +68,14 @@ import {
 } from './agent-create.js';
 import { processMessageFromDashboard } from './bot.js';
 import { getDashboardHtml } from './dashboard-html.js';
+import {
+  listEditableFiles,
+  readEditableFile,
+  saveEditableFile,
+  listHistory,
+  isEditableFileId,
+  EditorError,
+} from './agent-files.js';
 import { getWarRoomHtml } from './warroom-html.js';
 import { WARROOM_ENABLED, WARROOM_PORT } from './config.js';
 import { logger } from './logger.js';
@@ -1516,6 +1524,88 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     // Fire-and-forget: response comes via SSE
     void processMessageFromDashboard(botApi, message);
     return c.json({ ok: true });
+  });
+
+  // ── Agent files editor (Phase C1.a) ───────────────────────────────
+  // Live-edit Sage's main CLAUDE.md from the dashboard with atomic writes,
+  // SQLite-backed history, and hot-reload of the running main process. Path
+  // allowlist enforced inside src/agent-files.ts; all writes refused for
+  // unknown ids with a clear 400.
+
+  app.get('/api/agent-files', (c) => {
+    return c.json({ files: listEditableFiles() });
+  });
+
+  app.get('/api/agent-files/:id', (c) => {
+    const id = c.req.param('id');
+    if (!isEditableFileId(id)) {
+      return c.json({ error: 'Unknown file id' }, 400);
+    }
+    try {
+      return c.json(readEditableFile(id));
+    } catch (err) {
+      logger.error({ err, id }, 'agent-files read failed');
+      return c.json({ error: 'Read failed' }, 500);
+    }
+  });
+
+  app.get('/api/agent-files/:id/history', (c) => {
+    const id = c.req.param('id');
+    if (!isEditableFileId(id)) {
+      return c.json({ error: 'Unknown file id' }, 400);
+    }
+    const limit = Math.max(1, Math.min(200, parseInt(c.req.query('limit') ?? '50', 10) || 50));
+    const rows = listHistory(id, limit);
+    // Strip large `content` from the list response — clients fetch a
+    // specific revision via /history/:rowId if they want the body.
+    return c.json({
+      history: rows.map((r) => ({
+        id: r.id,
+        file_path: r.file_path,
+        real_path: r.real_path,
+        content_sha: r.content_sha,
+        edited_by_chat_id: r.edited_by_chat_id,
+        created_at: r.created_at,
+        size: r.content.length,
+      })),
+    });
+  });
+
+  app.put('/api/agent-files/:id', async (c) => {
+    const id = c.req.param('id');
+    if (!isEditableFileId(id)) {
+      return c.json({ error: 'Unknown file id' }, 400);
+    }
+    let body: { content?: unknown; expectedSha?: unknown };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+    if (typeof body.content !== 'string') {
+      return c.json({ error: 'content (string) required' }, 400);
+    }
+    // Belt-and-braces size cap: refuse anything wildly larger than the
+    // largest sane CLAUDE.md (~256 KiB). Stops a runaway client/UI bug
+    // from blowing out SQLite history rows.
+    if (body.content.length > 256 * 1024) {
+      return c.json({ error: 'content exceeds 256 KiB cap' }, 413);
+    }
+    const expectedSha =
+      typeof body.expectedSha === 'string' ? body.expectedSha : undefined;
+    try {
+      const result = saveEditableFile(id, body.content, {
+        editedByChatId: ALLOWED_CHAT_ID || null,
+        expectedSha,
+      });
+      return c.json({ ok: true, ...result });
+    } catch (err) {
+      if (err instanceof EditorError) {
+        return c.json({ error: err.message }, err.status as 400 | 409);
+      }
+      logger.error({ err, id }, 'agent-files save failed');
+      return c.json({ error: 'Save failed' }, 500);
+    }
   });
 
   // Abort current processing
