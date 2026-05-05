@@ -5,7 +5,7 @@ import { serve } from '@hono/node-server';
 
 import fs from 'fs';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel, LLM_PROVIDER } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel, LLM_PROVIDER, BRAIN, OB1_SUPABASE_URL, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION } from './config.js';
 import crypto from 'crypto';
 import {
   getAllScheduledTasks,
@@ -112,6 +112,41 @@ function setDashboardAuthCookie(c: any): void {
     'Set-Cookie',
     `${DASHBOARD_AUTH_COOKIE}=${dashboardCookieValue()}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
   );
+}
+
+function dashboardChatId(c: any): string {
+  return c.req.query('chatId') || ALLOWED_CHAT_ID || '';
+}
+
+function configuredProviderValue(): string {
+  return process.env.LLM_PROVIDER || readEnvFile(['LLM_PROVIDER']).LLM_PROVIDER || LLM_PROVIDER;
+}
+
+function writeEnvValue(key: string, value: string): void {
+  const envPath = path.join(PROJECT_ROOT, '.env');
+  let content = '';
+  try {
+    content = fs.readFileSync(envPath, 'utf-8');
+  } catch {
+    content = '';
+  }
+
+  const lines = content.split('\n');
+  let found = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().startsWith(`${key}=`)) {
+      lines[i] = `${key}=${value}`;
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) {
+    if (content.length > 0 && !content.endsWith('\n')) lines.push('');
+    lines.push(`${key}=${value}`);
+  }
+
+  fs.writeFileSync(envPath, lines.join('\n'), { encoding: 'utf-8', mode: 0o600 });
 }
 
 function currentProvider(): LlmProviderName {
@@ -1175,7 +1210,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
   // Memory stats
   app.get('/api/memories', (c) => {
-    const chatId = c.req.query('chatId') || '';
+    const chatId = dashboardChatId(c);
     const stats = getDashboardMemoryStats(chatId);
     const fading = getDashboardLowSalienceMemories(chatId, 10);
     const topAccessed = getDashboardTopAccessedMemories(chatId, 5);
@@ -1186,23 +1221,48 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
   // Memory list (for drill-down drawer)
   app.get('/api/memories/pinned', (c) => {
-    const chatId = c.req.query('chatId') || '';
+    const chatId = dashboardChatId(c);
     const memories = getDashboardPinnedMemories(chatId);
     return c.json({ memories });
   });
 
   app.get('/api/memories/list', (c) => {
-    const chatId = c.req.query('chatId') || '';
+    const chatId = dashboardChatId(c);
     const limit = parseInt(c.req.query('limit') || '50', 10);
     const offset = parseInt(c.req.query('offset') || '0', 10);
     const sortBy = (c.req.query('sort') || 'importance') as 'importance' | 'salience' | 'recent';
     const result = getDashboardMemoriesList(chatId, limit, offset, sortBy);
-    return c.json(result);
+    return c.json({ ...result, chatId });
+  });
+
+  app.get('/api/brain/status', (c) => {
+    const chatId = dashboardChatId(c);
+    const stats = getDashboardMemoryStats(chatId);
+    return c.json({
+      backend: BRAIN,
+      openBrain: {
+        enabled: BRAIN === 'ob1',
+        configured: !!OB1_SUPABASE_URL && !!MCP_ACCESS_KEY && !!OB1_BRAIN_FUNCTION,
+        functionName: OB1_BRAIN_FUNCTION,
+        supabaseConfigured: !!OB1_SUPABASE_URL,
+        accessKeyConfigured: !!MCP_ACCESS_KEY,
+      },
+      sqlite: {
+        enabled: true,
+        chatId,
+        totalMemories: stats.total,
+        pinned: stats.pinned,
+        avgSalience: stats.avgSalience,
+      },
+      notes: BRAIN === 'ob1'
+        ? 'OpenBrain is the active capture/retrieval backend. SQLite remains visible for local history and fallback.'
+        : 'SQLite is the active memory backend. OpenBrain/OB1 is configured by BRAIN=ob1 plus OB1_SUPABASE_URL and MCP_ACCESS_KEY.',
+    });
   });
 
   // System health
   app.get('/api/health', (c) => {
-    const chatId = c.req.query('chatId') || '';
+    const chatId = dashboardChatId(c);
     const { provider, providerError } = currentProviderStatus();
     const sessionId = getSession(chatId, AGENT_ID, provider);
     const runtime = providerRuntime(provider, agentDefaultModel || MAIN_AGENT_MODEL, sessionId);
@@ -1244,7 +1304,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       sessionAge,
       model: runtime.configuredModel,
       provider: runtime.provider,
-      configuredProvider: LLM_PROVIDER,
+      configuredProvider: configuredProviderValue(),
       providerError,
       supportedProviders: getSupportedLlmProviders(),
       configuredModel: runtime.configuredModel,
@@ -1257,6 +1317,40 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       killSwitches: killSwitchesShape,
       killSwitchRefusals: {},
       warroom: { textOpenMeetings: 0 },
+    });
+  });
+
+  app.post('/api/provider/switch', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+    if (getIsProcessing().processing) {
+      return c.json({ ok: false, error: 'A model call is currently active. Try again once it finishes.' }, 409);
+    }
+
+    let body: { provider?: string } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+
+    let provider: LlmProviderName;
+    try {
+      provider = normalizeLlmProvider(body.provider);
+    } catch (err: any) {
+      return c.json({ ok: false, error: err?.message || 'Unsupported provider' }, 400);
+    }
+
+    writeEnvValue('LLM_PROVIDER', provider);
+    return c.json({
+      ok: true,
+      provider,
+      previousProvider: currentProviderStatus().provider,
+      restartRequired: provider !== currentProviderStatus().provider,
+      message: provider === currentProviderStatus().provider
+        ? 'LLM_PROVIDER already matches the active runtime provider.'
+        : 'LLM_PROVIDER updated. Restart Sage to activate this provider.',
     });
   });
 

@@ -125,6 +125,27 @@ describe('GET /api/health', () => {
   });
 });
 
+describe('GET /api/brain/status', () => {
+  it('returns local and OpenBrain status', async () => {
+    const res = await get('/api/brain/status');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      backend: expect.any(String),
+      openBrain: expect.objectContaining({
+        enabled: expect.any(Boolean),
+        configured: expect.any(Boolean),
+        functionName: expect.any(String),
+      }),
+      sqlite: expect.objectContaining({
+        chatId: expect.any(String),
+        totalMemories: expect.any(Number),
+      }),
+      notes: expect.any(String),
+    });
+  });
+});
+
 describe('GET /api/info', () => {
   it('returns botName, botUsername, pid, chatId', async () => {
     const res = await get('/api/info');
@@ -192,6 +213,37 @@ describe('POST /api/provider/smoke', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ provider: 'bad-provider' }),
+    });
+    expect(res.status).toBe(400);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({ ok: false, error: expect.any(String) });
+  });
+});
+
+describe('POST /api/provider/switch', () => {
+  it('respects DASHBOARD_MUTATIONS_ENABLED=false', async () => {
+    const prev = process.env.DASHBOARD_MUTATIONS_ENABLED;
+    process.env.DASHBOARD_MUTATIONS_ENABLED = 'false';
+    try {
+      const res = await app.request('/api/provider/switch' + Q, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'codex' }),
+      });
+      expect(res.status).toBe(423);
+      const body = await jsonOf(res);
+      expect(body).toMatchObject({ ok: false, error: expect.any(String) });
+    } finally {
+      if (prev === undefined) delete process.env.DASHBOARD_MUTATIONS_ENABLED;
+      else process.env.DASHBOARD_MUTATIONS_ENABLED = prev;
+    }
+  });
+
+  it('rejects unsupported provider before writing config', async () => {
+    const res = await app.request('/api/provider/switch' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'openbrain' }),
     });
     expect(res.status).toBe(400);
     const body = await jsonOf(res);

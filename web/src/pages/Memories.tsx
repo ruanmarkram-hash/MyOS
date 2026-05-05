@@ -26,6 +26,24 @@ interface Memory {
   accessed_at: number;
 }
 
+interface BrainStatus {
+  backend: 'sqlite' | 'ob1';
+  openBrain: {
+    enabled: boolean;
+    configured: boolean;
+    functionName: string;
+    supabaseConfigured: boolean;
+    accessKeyConfigured: boolean;
+  };
+  sqlite: {
+    chatId: string;
+    totalMemories: number;
+    pinned: number;
+    avgSalience: number;
+  };
+  notes: string;
+}
+
 const PAGE_SIZE = 30;
 
 export function Memories() {
@@ -33,6 +51,7 @@ export function Memories() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const path = `/api/memories/list?chatId=${encodeURIComponent(chatId)}&sort=${sort}&limit=${PAGE_SIZE}&offset=0`;
   const { data, loading, error } = useFetch<{ memories: Memory[]; total: number }>(path);
+  const brain = useFetch<BrainStatus>(`/api/brain/status?chatId=${encodeURIComponent(chatId)}`, 30_000);
 
   const memories = data?.memories ?? [];
   const total = data?.total ?? 0;
@@ -59,6 +78,18 @@ export function Memories() {
         }
       />
 
+      {brain.data && (
+        <div class="px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-card)]">
+          <div class="grid grid-cols-4 gap-3">
+            <BrainStat label="Active brain" value={brain.data.backend === 'ob1' ? 'OpenBrain' : 'SQLite'} />
+            <BrainStat label="OpenBrain" value={brain.data.openBrain.configured ? 'configured' : 'not configured'} />
+            <BrainStat label="SQLite memories" value={String(brain.data.sqlite.totalMemories)} />
+            <BrainStat label="Function" value={brain.data.openBrain.functionName || 'brain-mcp'} />
+          </div>
+          <div class="mt-2 text-[11px] text-[var(--color-text-muted)]">{brain.data.notes}</div>
+        </div>
+      )}
+
       {error && <PageState error={error} />}
       {loading && !data && <PageState loading />}
       {!loading && !error && memories.length === 0 && (
@@ -76,6 +107,15 @@ export function Memories() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function BrainStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div class="text-[10px] text-[var(--color-text-faint)] uppercase tracking-wider mb-0.5">{label}</div>
+      <div class="text-[12.5px] text-[var(--color-text)] truncate" title={value}>{value}</div>
     </div>
   );
 }

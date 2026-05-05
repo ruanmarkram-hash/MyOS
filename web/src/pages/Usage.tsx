@@ -47,6 +47,14 @@ interface ProviderSmokeResult {
   error?: string;
 }
 
+interface ProviderSwitchResult {
+  ok: boolean;
+  provider: 'claude' | 'codex';
+  restartRequired: boolean;
+  message: string;
+  error?: string;
+}
+
 export function Usage() {
   const tokens = useFetch<{ stats: TokenStats; costTimeline: CostTimelineEntry[] }>(
     `/api/tokens?chatId=${encodeURIComponent(chatId)}`, 60_000,
@@ -54,6 +62,8 @@ export function Usage() {
   const health = useFetch<Health>(`/api/health?chatId=${encodeURIComponent(chatId)}`, 30_000);
   const [smoke, setSmoke] = useState<ProviderSmokeResult | null>(null);
   const [smoking, setSmoking] = useState(false);
+  const [switching, setSwitching] = useState<'claude' | 'codex' | null>(null);
+  const [switchResult, setSwitchResult] = useState<ProviderSwitchResult | null>(null);
 
   const stats = tokens.data?.stats;
   const timeline = tokens.data?.costTimeline ?? [];
@@ -80,6 +90,27 @@ export function Usage() {
       });
     } finally {
       setSmoking(false);
+    }
+  }
+
+  async function switchProvider(provider: 'claude' | 'codex') {
+    if (switching || !health.data) return;
+    setSwitching(provider);
+    setSwitchResult(null);
+    try {
+      const result = await apiPost<ProviderSwitchResult>('/api/provider/switch', { provider });
+      setSwitchResult(result);
+      health.refresh();
+    } catch (err: any) {
+      setSwitchResult({
+        ok: false,
+        provider,
+        restartRequired: false,
+        message: err?.body?.error || err?.message || String(err),
+        error: err?.body?.error || err?.message || String(err),
+      });
+    } finally {
+      setSwitching(null);
     }
   }
 
@@ -160,6 +191,27 @@ export function Usage() {
                     {smoke.error}
                   </div>
                 )}
+                <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
+                  <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-2">Switch provider</div>
+                  <div class="grid grid-cols-2 gap-2">
+                    {(['claude', 'codex'] as const).map((provider) => (
+                      <button
+                        key={provider}
+                        type="button"
+                        onClick={() => switchProvider(provider)}
+                        disabled={switching !== null || provider === health.data?.provider}
+                        class="px-2 py-1.5 rounded text-[11px] bg-[var(--color-elevated)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+                      >
+                        {switching === provider ? 'Switching...' : provider}
+                      </button>
+                    ))}
+                  </div>
+                  {switchResult && (
+                    <div class={'mt-2 text-[11px] ' + (switchResult.ok ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-status-failed)]')}>
+                      {switchResult.message}
+                    </div>
+                  )}
+                </div>
               </div>
               <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
                 <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-3">Connections</div>
