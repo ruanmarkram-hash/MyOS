@@ -85,8 +85,14 @@ class MSGraphAuth:
 
     def set_refresh_token(self, token):
         """Store refresh token in pass (GPG-encrypted)."""
-        self._write_refresh_token(token)
         self.refresh_token = token
+        try:
+            self._write_refresh_token(token)
+        except Exception as e:
+            # The launchd/dashboard environment may not have `pass` on PATH.
+            # Keep the refreshed token in memory so the current send succeeds;
+            # the caller can still provide GRAPH_REFRESH_TOKEN via .env.
+            print(f"warn: could not persist refreshed token to pass: {e}", file=sys.stderr)
 
     def refresh_access_token(self):
         """Refresh access token using stored refresh token."""

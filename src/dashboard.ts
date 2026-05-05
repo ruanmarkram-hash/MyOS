@@ -237,6 +237,19 @@ function maskEmail(email: string): string {
   return `${visible}@${domain}`;
 }
 
+function safeEmailExportError(err: any): string {
+  const raw = String(err?.stderr || err?.message || err || '');
+  if (/device code|login\.microsoft|authenticate|Authentication failed/i.test(raw)) {
+    return 'Microsoft Graph email authentication failed. Refresh the Graph token, then try again.';
+  }
+  if (/Mail\.Send|Authorization|Unauthorized|Forbidden|InvalidAuthenticationToken/i.test(raw)) {
+    return 'Microsoft Graph rejected the email send. Check Mail.Send consent and the stored Graph refresh token.';
+  }
+  if (/Attachment not found/i.test(raw)) return 'The export was created but the attachment could not be found.';
+  if (/Request error|timeout|ETIMEDOUT|ECONNRESET/i.test(raw)) return 'Microsoft Graph email send timed out or hit a network error.';
+  return 'Email export failed. Check the Sage logs for the detailed MS Graph error.';
+}
+
 function configuredOwnerEmail(): string | null {
   const env = readEnvFile(['OWNER_EMAIL', 'RUAN_EMAIL', 'APPLE_ID_EMAIL', 'GRAPH_USER_EMAIL', 'MSGRAPH_USER_EMAIL']);
   return process.env.OWNER_EMAIL
@@ -1947,7 +1960,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     } catch (err: any) {
       return c.json({
         ok: false,
-        error: err?.message || String(err),
+        error: safeEmailExportError(err),
         exported,
         to: maskEmail(ownerEmail),
       }, 502);
