@@ -49,6 +49,7 @@ const envConfig = readEnvFile([
   'OB1_SUPABASE_URL',
   'MCP_ACCESS_KEY',
   'OB1_BRAIN_FUNCTION',
+  'MISSION_CONTROL_V2',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -171,6 +172,15 @@ export const DASHBOARD_TOKEN =
   process.env.DASHBOARD_TOKEN || envConfig.DASHBOARD_TOKEN || '';
 export const DASHBOARD_URL =
   process.env.DASHBOARD_URL || envConfig.DASHBOARD_URL || '';
+
+// Mission Control v2 (React/Vite) router shim.
+//   0 (default) — legacy single-file dashboard served at `/`,
+//                 v2 (if built) reachable at `/v2` for cutover smoke-tests.
+//   1           — v2 React app served at `/`, legacy reachable at `/legacy`.
+// Either way, both UIs are reachable as long as `dist/web/` exists
+// (produced by the root `npm run build` postbuild step that builds web/).
+export const MISSION_CONTROL_V2 =
+  (process.env.MISSION_CONTROL_V2 ?? envConfig.MISSION_CONTROL_V2 ?? '0') === '1';
 
 // Database encryption key (SQLCipher). Required for encrypted database access.
 export const DB_ENCRYPTION_KEY =

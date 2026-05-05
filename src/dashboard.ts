@@ -5,7 +5,7 @@ import { serve } from '@hono/node-server';
 
 import fs from 'fs';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, agentDefaultModel } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel } from './config.js';
 import crypto from 'crypto';
 import {
   getAllScheduledTasks,
@@ -149,8 +149,38 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     return c.json({ error: 'Internal server error' }, 500);
   });
 
-  // Token auth middleware
+  // Token auth middleware. V2 static bundle assets (immutable, hashed, no
+  // secrets) bypass the gate so the React app can boot without the token
+  // appearing on every <script>/<link> URL. The HTML entry point itself
+  // still requires the token, so unauthenticated callers can't even
+  // discover the asset paths.
   app.use('*', async (c, next) => {
+    const reqPath = new URL(c.req.url).pathname;
+    // Codex HIGH (A.3 review): decode the path BEFORE classifying as an
+    // unauth asset. Otherwise `/assets/%2f..%2findex.html` slips past
+    // the raw-prefix check, then `serveV2` decodes inside resolveV2Path
+    // and serves the gated `index.html`. Decode here so traversal
+    // sequences are visible to the classifier.
+    let decodedReqPath: string;
+    try {
+      decodedReqPath = decodeURIComponent(reqPath);
+    } catch {
+      return c.json({ error: 'Bad request' }, 400);
+    }
+    // Reject any decoded path with traversal markers from the asset
+    // bypass — belt-and-braces against alternate encodings.
+    const looksTraversal = decodedReqPath.includes('..') || decodedReqPath.includes('\\');
+    const isV2Asset =
+      !looksTraversal && (
+        decodedReqPath.startsWith('/assets/') ||
+        decodedReqPath.startsWith('/v2/assets/') ||
+        decodedReqPath === '/favicon.svg' ||
+        decodedReqPath === '/favicon.ico'
+      );
+    if (isV2Asset) {
+      await next();
+      return;
+    }
     const token = c.req.query('token');
     if (!DASHBOARD_TOKEN || !token || token !== DASHBOARD_TOKEN) {
       return c.json({ error: 'Unauthorized' }, 401);
@@ -158,11 +188,122 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     await next();
   });
 
-  // Serve dashboard HTML
-  app.get('/', (c) => {
+  // ── Mission Control v2 (React/Vite) router shim ─────────────────────
+  // The v2 frontend is built into `dist/web/` by the root postbuild step
+  // (`npm run build` → `cd web && npm run build` → copy to `dist/web/`).
+  // Routing rules:
+  //   MISSION_CONTROL_V2=0 (default): legacy at `/`, v2 reachable at `/v2`.
+  //   MISSION_CONTROL_V2=1:           v2 at `/`,    legacy reachable at `/legacy`.
+  // Both UIs stay reachable during cutover so we can A/B compare.
+  const V2_DIR = path.join(PROJECT_ROOT, 'dist', 'web');
+  const V2_MIME: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js':   'application/javascript; charset=utf-8',
+    '.mjs':  'application/javascript; charset=utf-8',
+    '.css':  'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.map':  'application/json; charset=utf-8',
+    '.svg':  'image/svg+xml',
+    '.png':  'image/png',
+    '.jpg':  'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.gif':  'image/gif',
+    '.ico':  'image/x-icon',
+    '.woff': 'font/woff',
+    '.woff2':'font/woff2',
+    '.ttf':  'font/ttf',
+    '.txt':  'text/plain; charset=utf-8',
+  };
+
+  // Resolve a request path inside V2_DIR, refusing traversal. Returns
+  // null when the resolved file does not exist or escapes the root.
+  function resolveV2Path(relativePath: string): string | null {
+    // Strip query/hash defensively (Hono already does, belt-and-braces).
+    const cleaned = relativePath.split('?')[0].split('#')[0];
+    const decoded = (() => { try { return decodeURIComponent(cleaned); } catch { return cleaned; } })();
+    // path.resolve() collapses `..` after joining, so traversal is rejected
+    // by the prefix check below.
+    const resolved = path.resolve(V2_DIR, '.' + (decoded.startsWith('/') ? decoded : '/' + decoded));
+    if (resolved !== V2_DIR && !resolved.startsWith(V2_DIR + path.sep)) return null;
+    if (!fs.existsSync(resolved)) return null;
+    if (fs.statSync(resolved).isDirectory()) return null;
+    // Codex MED (A.3 review): the lexical prefix check catches `..`
+    // sequences, but a symlink inside V2_DIR pointing OUTSIDE the dir
+    // would still pass and then statSync/readFileSync would follow it.
+    // realpathSync resolves all symlinks; re-check the prefix after.
+    let realPath: string;
+    let realRoot: string;
+    try {
+      realPath = fs.realpathSync(resolved);
+      // Compare against the realpath of V2_DIR so legitimate symlinked
+      // installs (some test fixtures, exotic deploys) still match.
+      realRoot = fs.realpathSync(V2_DIR);
+    } catch { return null; }
+    if (realPath !== realRoot && !realPath.startsWith(realRoot + path.sep)) return null;
+    return realPath;
+  }
+
+  function serveV2(c: any, relativePath: string): Response {
+    if (!fs.existsSync(V2_DIR)) {
+      return c.text(
+        'Mission Control v2 build not found. Run `npm run build` from the project root to produce dist/web/.',
+        503,
+      );
+    }
+    const file = resolveV2Path(relativePath) ?? path.join(V2_DIR, 'index.html');
+    if (!fs.existsSync(file)) {
+      return c.text('v2 index.html missing — rebuild required', 503);
+    }
+    const data = fs.readFileSync(file);
+    const ext = path.extname(file).toLowerCase();
+    const headers: Record<string, string> = {
+      'Content-Type': V2_MIME[ext] || 'application/octet-stream',
+    };
+    // Hashed assets are immutable; cache them. Index HTML must always
+    // re-fetch so a deploy is visible without a hard refresh.
+    if (ext === '.html') {
+      headers['Cache-Control'] = 'no-cache';
+    } else {
+      headers['Cache-Control'] = 'public, max-age=86400, immutable';
+    }
+    return new Response(data, { headers });
+  }
+
+  // Legacy renderer (extracted so both `/` and `/legacy` can call it).
+  function renderLegacy(c: any): Response {
     const chatId = c.req.query('chatId') || ALLOWED_CHAT_ID || '';
     return c.html(getDashboardHtml(DASHBOARD_TOKEN, chatId, WARROOM_ENABLED, process.env.MAIN_AGENT_DISPLAY_NAME || 'Main'));
+  }
+
+  if (MISSION_CONTROL_V2) {
+    // v2 owns root. Legacy reachable at /legacy for cutover comparison.
+    app.get('/', (c) => serveV2(c, '/index.html'));
+    app.get('/legacy', renderLegacy);
+  } else {
+    // Legacy owns root (default). v2 reachable at /v2 once built.
+    app.get('/', renderLegacy);
+    app.get('/v2', (c) => serveV2(c, '/index.html'));
+    // SPA deep-link inside /v2 (e.g. /v2/agents) — Vite-built assets are
+    // referenced with absolute /assets/ paths regardless of mount point,
+    // so we just need to return index.html for non-asset /v2/* lookups.
+    app.get('/v2/*', (c) => {
+      const sub = new URL(c.req.url).pathname.replace(/^\/v2/, '') || '/';
+      // Direct file under web/dist (e.g. /v2/favicon.svg)? Serve it.
+      const direct = resolveV2Path(sub);
+      if (direct) return serveV2(c, sub);
+      return serveV2(c, '/index.html');
+    });
+  }
+
+  // Static asset routes are always mounted (the v2 bundle uses absolute
+  // /assets/ URLs whether the SPA lives at `/` or `/v2`).
+  app.get('/assets/*', (c) => {
+    const reqPath = new URL(c.req.url).pathname;
+    return serveV2(c, reqPath);
   });
+  app.get('/favicon.svg', (c) => serveV2(c, '/favicon.svg'));
+  app.get('/favicon.ico', (c) => serveV2(c, '/favicon.ico'));
 
   // War Room page
   app.get('/warroom', (c) => {
@@ -1384,6 +1525,21 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const aborted = abortActiveQuery(chatId);
     return c.json({ ok: aborted });
   });
+
+  // SPA fallback for v2 deep-links when v2 owns root (`/tasks`,
+  // `/agents`, etc.). Registered last so all explicit routes win first.
+  // We only fire on GET — POSTs to unknown paths still 404 cleanly.
+  if (MISSION_CONTROL_V2) {
+    app.get('*', (c) => {
+      const reqPath = new URL(c.req.url).pathname;
+      // Don't shadow API or warroom 404s — those should stay as-is so
+      // the frontend sees real backend errors instead of an HTML body.
+      if (reqPath.startsWith('/api/') || reqPath.startsWith('/warroom')) {
+        return c.json({ error: 'Not found' }, 404);
+      }
+      return serveV2(c, '/index.html');
+    });
+  }
 
   return app;
 }
