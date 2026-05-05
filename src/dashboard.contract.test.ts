@@ -561,8 +561,8 @@ describe('GET /api/mission/history', () => {
 
 describe('GET /api/review/inbox', () => {
   it('returns completed mission deliverables for review', async () => {
-    createMissionTask('m-review-1', 'Write deliverable', 'produce output', 'mason', 'dashboard', 6);
-    completeMissionTask('m-review-1', 'Created /tmp/review-deliverable.txt', 'completed');
+    createMissionTask('m-review-1', 'Write Charter deliverable', 'produce output', 'charter', 'dashboard', 6);
+    completeMissionTask('m-review-1', 'Review pack prepared at /tmp/review-deliverable.txt for review.', 'completed');
 
     const res = await get('/api/review/inbox?limit=10');
     expect(res.status).toBe(200);
@@ -576,11 +576,21 @@ describe('GET /api/review/inbox', () => {
     });
     expect(body.items[0]).toMatchObject({
       id: 'm-review-1',
-      title: 'Write deliverable',
+      title: 'Write Charter deliverable',
       status: 'completed',
       review: expect.objectContaining({ status: 'needs_review' }),
       deliverables: expect.any(Array),
     });
+  });
+
+  it('does not show routine completed dev history in the review inbox', async () => {
+    createMissionTask('m-dev-history', 'Build internal dashboard route', 'code task', 'mason', 'dashboard', 4);
+    completeMissionTask('m-dev-history', 'Mission complete. Tests passed and commit landed.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=10');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.items.map((item: any) => item.id)).not.toContain('m-dev-history');
   });
 
   it('creates a child mission with review instructions and moves parent to waiting_followup', async () => {
