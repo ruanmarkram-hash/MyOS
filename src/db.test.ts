@@ -7,6 +7,7 @@ import {
   setSession,
   getSession,
   clearSession,
+  clearAllSessions,
   saveStructuredMemory,
   searchMemories,
   getRecentMemories,
@@ -61,7 +62,7 @@ describe('database', () => {
       expect(getSession('chat1', 'main', 'codex')).toBeUndefined();
     });
 
-    it('migrates legacy session rows into a non-resumed legacy provider bucket', () => {
+    it('migrates legacy session rows into the Claude provider bucket', () => {
       const database = new Database(':memory:');
       _createSchema(database);
       database.exec(`
@@ -88,12 +89,12 @@ describe('database', () => {
       expect(rows).toEqual([
         {
           chat_id: 'chat-claude-shaped',
-          provider: 'legacy',
+          provider: 'claude',
           session_id: '3fbb8b12-b4cc-41ae-bf46-db2ad900eb6a',
         },
         {
           chat_id: 'chat-codex-shaped',
-          provider: 'legacy',
+          provider: 'claude',
           session_id: '019de375-ca31-7d12-9b37-62ffd7b26ca3',
         },
       ]);
@@ -101,6 +102,45 @@ describe('database', () => {
         .prepare('PRAGMA table_info(sessions)')
         .all() as Array<{ pk: number }>;
       expect(pkCols.filter((c) => c.pk > 0)).toHaveLength(3);
+    });
+
+    it('repairs pre-marker guessed provider rows back to Claude once', () => {
+      const database = new Database(':memory:');
+      _createSchema(database);
+      database.exec(`
+        INSERT INTO sessions (chat_id, agent_id, provider, session_id, updated_at)
+          VALUES
+            ('chat-codex-guessed', 'main', 'codex', '019de375-ca31-7d12-9b37-62ffd7b26ca3', 'now'),
+            ('chat-legacy', 'main', 'legacy', 'legacy-session', 'now');
+      `);
+
+      _runMigrationsForTest(database);
+
+      const rows = database
+        .prepare('SELECT chat_id, provider, session_id FROM sessions ORDER BY chat_id')
+        .all() as Array<{ chat_id: string; provider: string; session_id: string }>;
+      expect(rows).toEqual([
+        {
+          chat_id: 'chat-codex-guessed',
+          provider: 'claude',
+          session_id: '019de375-ca31-7d12-9b37-62ffd7b26ca3',
+        },
+        {
+          chat_id: 'chat-legacy',
+          provider: 'claude',
+          session_id: 'legacy-session',
+        },
+      ]);
+
+      database
+        .prepare('INSERT INTO sessions (chat_id, agent_id, provider, session_id, updated_at) VALUES (?, ?, ?, ?, ?)')
+        .run('chat-new-codex', 'main', 'codex', 'new-codex-session', 'later');
+      _runMigrationsForTest(database);
+
+      const preserved = database
+        .prepare('SELECT provider, session_id FROM sessions WHERE chat_id = ?')
+        .get('chat-new-codex') as { provider: string; session_id: string };
+      expect(preserved).toEqual({ provider: 'codex', session_id: 'new-codex-session' });
     });
 
     it('clearSession removes the session', () => {
@@ -117,6 +157,16 @@ describe('database', () => {
 
       expect(getSession('chat1', 'main', 'claude')).toBeUndefined();
       expect(getSession('chat1', 'main', 'codex')).toBe('codex-sess');
+    });
+
+    it('clearAllSessions removes every provider session for the chat and agent', () => {
+      setSession('chat1', 'claude-sess', 'main', 'claude');
+      setSession('chat1', 'codex-sess', 'main', 'codex');
+
+      clearAllSessions('chat1', 'main');
+
+      expect(getSession('chat1', 'main', 'claude')).toBeUndefined();
+      expect(getSession('chat1', 'main', 'codex')).toBeUndefined();
     });
 
     it('clearSession on missing session does not throw', () => {

@@ -174,6 +174,7 @@ export class ClaudeProvider implements LlmProvider {
       onStreamText,
       mcpAllowlist,
       cwdOverride,
+      maxTurns,
     } = options;
 
     // Build a scrubbed env for the SDK subprocess. Drops session-scoped
@@ -238,7 +239,7 @@ export class ClaudeProvider implements LlmProvider {
           allowDangerouslySkipPermissions: true,
 
           // Cap agentic turns to prevent runaway tool-use loops.
-          ...(AGENT_MAX_TURNS > 0 ? { maxTurns: AGENT_MAX_TURNS } : {}),
+          ...((maxTurns ?? AGENT_MAX_TURNS) > 0 ? { maxTurns: maxTurns ?? AGENT_MAX_TURNS } : {}),
 
           // Pass secrets to the subprocess without polluting our own process.env.
           env: sdkEnv,

@@ -82,6 +82,11 @@ function createSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_tasks_next_run ON scheduled_tasks(status, next_run);
 
+    CREATE TABLE IF NOT EXISTS schema_state (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS sessions (
       chat_id    TEXT NOT NULL,
       agent_id   TEXT NOT NULL DEFAULT 'main',
@@ -519,6 +524,13 @@ export function _runMigrations(database: Database.Database): void {
 
 /** Add columns that may not exist in older databases. */
 function runMigrations(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS schema_state (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+
   // Add context_tokens column to token_usage (introduced for accurate context tracking)
   const cols = database.prepare(`PRAGMA table_info(token_usage)`).all() as Array<{ name: string }>;
   const hasContextTokens = cols.some((c) => c.name === 'context_tokens');
@@ -527,20 +539,26 @@ function runMigrations(database: Database.Database): void {
   }
 
   // Multi-agent and multi-provider: sessions are isolated by chat, agent,
-  // and provider. Legacy unscoped rows are moved to provider='legacy' rather
-  // than guessed from opaque session id shapes, so no provider accidentally
-  // resumes another provider's thread after an upgrade.
-  const sessionCols = database.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string; pk: number }>;
-  const hasSessionAgentId = sessionCols.some((c) => c.name === 'agent_id');
-  const hasSessionProvider = sessionCols.some((c) => c.name === 'provider');
-  const pkCount = sessionCols.filter((c) => c.pk > 0).length;
-  if (!hasSessionAgentId || !hasSessionProvider || pkCount < 3) {
-    const tempTable = `sessions_new_${process.pid}_${Date.now()}`;
-    const agentExpr = hasSessionAgentId ? `COALESCE(agent_id, 'main')` : `'main'`;
-    const providerExpr = hasSessionProvider
-      ? `COALESCE(provider, 'legacy')`
-      : `'legacy'`;
-    const migrateSessions = database.transaction(() => {
+  // and provider. Existing unscoped sessions were created before provider
+  // switching existed, so preserve continuity by treating them as Claude
+  // sessions. A one-shot repair also normalises any rows produced by the
+  // short-lived guessed-provider migration before this marker existed.
+  const migrateSessions = (): void => {
+    const marker = database
+      .prepare(`SELECT value FROM schema_state WHERE key = ?`)
+      .get('sessions_provider_scope_v2') as { value: string } | undefined;
+    if (marker?.value === 'complete') return;
+
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      const sessionCols = database.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string; pk: number }>;
+      const hasSessionAgentId = sessionCols.some((c) => c.name === 'agent_id');
+      const hasSessionProvider = sessionCols.some((c) => c.name === 'provider');
+      const pkCount = sessionCols.filter((c) => c.pk > 0).length;
+      const tempTable = `sessions_new_${process.pid}_${Date.now()}`;
+      const agentExpr = hasSessionAgentId ? `COALESCE(agent_id, 'main')` : `'main'`;
+      const providerExpr = hasSessionProvider ? `COALESCE(provider, 'claude')` : `'claude'`;
+
       database.exec(`
         CREATE TABLE ${tempTable} (
           chat_id    TEXT NOT NULL,
@@ -550,14 +568,38 @@ function runMigrations(database: Database.Database): void {
           updated_at TEXT NOT NULL,
           PRIMARY KEY (chat_id, agent_id, provider)
         );
-        INSERT OR IGNORE INTO ${tempTable} (chat_id, agent_id, provider, session_id, updated_at)
-          SELECT chat_id, ${agentExpr}, ${providerExpr}, session_id, updated_at FROM sessions;
-        DROP TABLE sessions;
-        ALTER TABLE ${tempTable} RENAME TO sessions;
       `);
-    });
-    migrateSessions();
-  }
+
+      if (!hasSessionAgentId || !hasSessionProvider || pkCount < 3) {
+        database.exec(`
+          INSERT OR IGNORE INTO ${tempTable} (chat_id, agent_id, provider, session_id, updated_at)
+            SELECT chat_id, ${agentExpr}, ${providerExpr}, session_id, updated_at FROM sessions;
+          DROP TABLE sessions;
+          ALTER TABLE ${tempTable} RENAME TO sessions;
+        `);
+      } else {
+        database.exec(`
+          INSERT OR IGNORE INTO ${tempTable} (chat_id, agent_id, provider, session_id, updated_at)
+            SELECT chat_id, agent_id,
+              CASE WHEN provider IN ('legacy', 'codex') THEN 'claude' ELSE COALESCE(provider, 'claude') END,
+              session_id, updated_at
+            FROM sessions
+            ORDER BY CASE provider WHEN 'claude' THEN 0 ELSE 1 END;
+          DROP TABLE sessions;
+          ALTER TABLE ${tempTable} RENAME TO sessions;
+        `);
+      }
+
+      database
+        .prepare(`INSERT OR REPLACE INTO schema_state (key, value) VALUES (?, ?)`)
+        .run('sessions_provider_scope_v2', 'complete');
+      database.exec('COMMIT');
+    } catch (err) {
+      try { database.exec('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    }
+  };
+  migrateSessions();
 
   const taskCols = database.prepare(`PRAGMA table_info(scheduled_tasks)`).all() as Array<{ name: string }>;
   if (!taskCols.some((c) => c.name === 'agent_id')) {
@@ -896,6 +938,10 @@ export function setSession(chatId: string, sessionId: string, agentId = 'main', 
 
 export function clearSession(chatId: string, agentId = 'main', provider = 'claude'): void {
   db.prepare('DELETE FROM sessions WHERE chat_id = ? AND agent_id = ? AND provider = ?').run(chatId, agentId, provider);
+}
+
+export function clearAllSessions(chatId: string, agentId = 'main'): void {
+  db.prepare('DELETE FROM sessions WHERE chat_id = ? AND agent_id = ?').run(chatId, agentId);
 }
 
 // ── Memory (V2: structured with LLM extraction) ────────────────────

@@ -51,6 +51,7 @@ export async function runAgent(
   mcpAllowlist?: string[],
   cwdOverride?: string,
   systemPrompt?: string,
+  maxTurns?: number,
 ): Promise<AgentResult> {
   const provider = getLlmProvider(LLM_PROVIDER);
   const providerModel = resolveModelForProvider(provider.name, model);
@@ -65,6 +66,7 @@ export async function runAgent(
     onStreamText,
     mcpAllowlist,
     cwdOverride,
+    maxTurns,
   });
 }
 
@@ -96,6 +98,7 @@ export async function runAgentWithRetry(
   mcpAllowlist?: string[],
   cwdOverride?: string,
   systemPrompt?: string,
+  maxTurns?: number,
 ): Promise<AgentResult> {
   let lastError: AgentError | undefined;
   const provider = getLlmProvider(LLM_PROVIDER);
@@ -112,7 +115,7 @@ export async function runAgentWithRetry(
       return await runAgent(
         message, sessionId, onTyping, onProgress,
         currentModel, abortController, onStreamText,
-        mcpAllowlist, cwdOverride, systemPrompt,
+        mcpAllowlist, cwdOverride, systemPrompt, maxTurns,
       );
     } catch (err) {
       if (!(err instanceof AgentError)) throw err;

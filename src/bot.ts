@@ -31,7 +31,7 @@ import {
   PROJECT_ROOT,
   LLM_PROVIDER,
 } from './config.js';
-import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage, saveCompactionEvent, getCompactionCount, getOutboxStats } from './db.js';
+import { clearAllSessions, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage, saveCompactionEvent, getCompactionCount, getOutboxStats } from './db.js';
 import { logger } from './logger.js';
 import { downloadMedia, buildPhotoMessage, buildDocumentMessage, buildVideoMessage } from './media.js';
 import { buildMemoryContext, evaluateMemoryRelevance, saveConversationTurn, shouldNudgeMemory, MEMORY_NUDGE_TEXT } from './memory.js';
@@ -1003,6 +1003,10 @@ export function createBot(): Bot {
             undefined,
             undefined,
             summaryAbort,
+            undefined,
+            undefined,
+            undefined,
+            agentSystemPrompt,
           );
           clearTimeout(summaryTimer);
 
@@ -1025,7 +1029,7 @@ export function createBot(): Bot {
       })();
     }
 
-    clearSession(chatIdStr, AGENT_ID, activeProvider);
+    clearAllSessions(chatIdStr, AGENT_ID);
     sessionBaseline.delete(chatIdStr);
     await ctx.reply('Session cleared. Starting fresh.');
     logger.info({ chatId: ctx.chat!.id }, 'Session cleared by user');
@@ -1157,7 +1161,7 @@ export function createBot(): Bot {
   // /forget — clear session (memory decay handles the rest)
   bot.command('forget', async (ctx) => {
     if (await replyIfLocked(ctx)) return;
-    clearSession(ctx.chat!.id.toString(), AGENT_ID, getActiveProviderName());
+    clearAllSessions(ctx.chat!.id.toString(), AGENT_ID);
     await ctx.reply('Session cleared. Memories will fade naturally over time.');
   });
 

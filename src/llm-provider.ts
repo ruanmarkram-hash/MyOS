@@ -91,6 +91,13 @@ export interface RunAgentOptions {
    * scheduled tasks).
    */
   cwdOverride?: string;
+
+  /**
+   * Optional per-call cap for agentic turns. Providers that support a native
+   * turn limit MUST honor it. Providers without a native equivalent should
+   * still honor abortController.
+   */
+  maxTurns?: number;
 }
 
 export interface LlmProvider {

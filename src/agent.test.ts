@@ -263,6 +263,9 @@ describe('runAgentWithRetry', () => {
       abortCtrl,
       stream,
       ['allowed'],
+      undefined,
+      undefined,
+      7,
     );
 
     expect(result.text).toBe('Forwarded');
@@ -274,6 +277,7 @@ describe('runAgentWithRetry', () => {
     expect(options.cwd).toBe(testPaths.projectRoot);
     expect(options.resume).toBe('resume-session');
     expect(options.model).toBe('claude-sonnet-4-5');
+    expect(options.maxTurns).toBe(7);
     expect(options.abortController).toBe(abortCtrl);
     expect(options.includePartialMessages).toBe(true);
     expect(options.pathToClaudeCodeExecutable).toBe('/tmp/claude');

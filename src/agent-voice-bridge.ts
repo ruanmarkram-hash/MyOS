@@ -13,10 +13,12 @@
  */
 
 import fs from 'fs';
+import path from 'path';
+import yaml from 'js-yaml';
 import { initDatabase, getSession, setSession } from './db.js';
 import { buildMemoryContext } from './memory.js';
 import { getActiveProviderName, runAgent } from './agent.js';
-import { loadAgentConfig, resolveAgentClaudeMd, resolveAgentDir } from './agent-config.js';
+import { resolveAgentClaudeMd, resolveAgentDir } from './agent-config.js';
 import { activeBotToken, PROJECT_ROOT, resolveMainClaudeMdPath, setAgentOverrides } from './config.js';
 
 // The voice bridge is a standalone subprocess — initialize the DB
@@ -63,6 +65,11 @@ async function main() {
     let systemPrompt: string | undefined;
     let model: string | undefined;
     let mcpAllowlist: string[] | undefined;
+    let obsidian: {
+      vault: string;
+      folders: string[];
+      readOnly?: string[];
+    } | undefined;
 
     if (agentId === 'main') {
       const mainClaudeMd = resolveMainClaudeMdPath();
@@ -76,20 +83,36 @@ async function main() {
         systemPrompt,
       });
     } else {
-      const agentConfig = loadAgentConfig(agentId);
       agentDir = resolveAgentDir(agentId);
-      model = agentConfig.model;
-      mcpAllowlist = agentConfig.mcpServers;
+      const yamlPath = path.join(agentDir, 'agent.yaml');
+      if (fs.existsSync(yamlPath)) {
+        const raw = yaml.load(fs.readFileSync(yamlPath, 'utf-8')) as Record<string, unknown> | undefined;
+        model = typeof raw?.['model'] === 'string' ? raw['model'] as string : undefined;
+        const list = raw?.['mcp_servers'];
+        if (Array.isArray(list)) mcpAllowlist = list.filter((x): x is string => typeof x === 'string');
+        const obsRaw = raw?.['obsidian'] as Record<string, unknown> | undefined;
+        if (obsRaw && typeof obsRaw['vault'] === 'string') {
+          obsidian = {
+            vault: obsRaw['vault'] as string,
+            folders: Array.isArray(obsRaw['folders'])
+              ? obsRaw['folders'].filter((x): x is string => typeof x === 'string')
+              : [],
+            readOnly: Array.isArray(obsRaw['read_only'])
+              ? obsRaw['read_only'].filter((x): x is string => typeof x === 'string')
+              : [],
+          };
+        }
+      }
       const claudeMdPath = resolveAgentClaudeMd(agentId);
       if (claudeMdPath) {
         systemPrompt = fs.readFileSync(claudeMdPath, 'utf-8');
       }
       setAgentOverrides({
         agentId,
-        botToken: agentConfig.botToken,
+        botToken: '',
         cwd: agentDir,
         model,
-        obsidian: agentConfig.obsidian,
+        obsidian,
         systemPrompt,
         mcpServers: mcpAllowlist,
       });
@@ -130,6 +153,7 @@ async function main() {
       mcpAllowlist,
       undefined,
       systemPrompt,
+      quickMode ? 3 : 15,
     );
     clearTimeout(timeout);
 
