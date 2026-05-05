@@ -104,13 +104,14 @@ describe('database', () => {
       expect(pkCols.filter((c) => c.pk > 0)).toHaveLength(3);
     });
 
-    it('repairs pre-marker guessed provider rows back to Claude once', () => {
+    it('repairs legacy and non-Codex-looking provider rows back to Claude once', () => {
       const database = new Database(':memory:');
       _createSchema(database);
       database.exec(`
         INSERT INTO sessions (chat_id, agent_id, provider, session_id, updated_at)
           VALUES
-            ('chat-codex-guessed', 'main', 'codex', '019de375-ca31-7d12-9b37-62ffd7b26ca3', 'now'),
+            ('chat-codex-real', 'main', 'codex', '019de375-ca31-7d12-9b37-62ffd7b26ca3', 'now'),
+            ('chat-codex-guessed', 'main', 'codex', 'claude-session', 'now'),
             ('chat-legacy', 'main', 'legacy', 'legacy-session', 'now');
       `);
 
@@ -123,6 +124,11 @@ describe('database', () => {
         {
           chat_id: 'chat-codex-guessed',
           provider: 'claude',
+          session_id: 'claude-session',
+        },
+        {
+          chat_id: 'chat-codex-real',
+          provider: 'codex',
           session_id: '019de375-ca31-7d12-9b37-62ffd7b26ca3',
         },
         {

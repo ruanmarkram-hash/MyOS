@@ -544,13 +544,16 @@ function runMigrations(database: Database.Database): void {
   // sessions. A one-shot repair also normalises any rows produced by the
   // short-lived guessed-provider migration before this marker existed.
   const migrateSessions = (): void => {
-    const marker = database
-      .prepare(`SELECT value FROM schema_state WHERE key = ?`)
-      .get('sessions_provider_scope_v2') as { value: string } | undefined;
-    if (marker?.value === 'complete') return;
-
     database.exec('BEGIN IMMEDIATE');
     try {
+      const marker = database
+        .prepare(`SELECT value FROM schema_state WHERE key = ?`)
+        .get('sessions_provider_scope_v2') as { value: string } | undefined;
+      if (marker?.value === 'complete') {
+        database.exec('COMMIT');
+        return;
+      }
+
       const sessionCols = database.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string; pk: number }>;
       const hasSessionAgentId = sessionCols.some((c) => c.name === 'agent_id');
       const hasSessionProvider = sessionCols.some((c) => c.name === 'provider');
@@ -581,7 +584,13 @@ function runMigrations(database: Database.Database): void {
         database.exec(`
           INSERT OR IGNORE INTO ${tempTable} (chat_id, agent_id, provider, session_id, updated_at)
             SELECT chat_id, agent_id,
-              CASE WHEN provider IN ('legacy', 'codex') THEN 'claude' ELSE COALESCE(provider, 'claude') END,
+              CASE
+                WHEN provider = 'legacy' THEN 'claude'
+                WHEN provider = 'codex'
+                  AND session_id NOT LIKE '019_____-____-____-____-____________'
+                  THEN 'claude'
+                ELSE COALESCE(provider, 'claude')
+              END,
               session_id, updated_at
             FROM sessions
             ORDER BY CASE provider WHEN 'claude' THEN 0 ELSE 1 END;
