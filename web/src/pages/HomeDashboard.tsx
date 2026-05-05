@@ -122,7 +122,7 @@ export function HomeDashboard() {
               <Panel title="Morning Brief" icon={<Sunrise size={15} />}>
                 {briefTask ? (
                   <div class="space-y-3">
-                    <div class="text-[13px] text-[var(--color-text)] leading-snug">{briefTask.prompt}</div>
+                    <div class="text-[13px] text-[var(--color-text)] leading-snug">{scheduleTitle(briefTask.prompt)}</div>
                     <div class="flex flex-wrap gap-1.5">
                       <Pill tone={briefTask.status === 'paused' ? 'cancelled' : 'done'}>{briefTask.status}</Pill>
                       <Pill>{describeCron(briefTask.schedule)}</Pill>
@@ -255,7 +255,7 @@ function ScheduledLine({ task }: { task: ScheduledTask }) {
   return (
     <div class="flex items-start justify-between gap-3 border-b border-[var(--color-border)] last:border-b-0 pb-2 last:pb-0">
       <div class="min-w-0">
-        <div class="text-[12.5px] text-[var(--color-text)] line-clamp-1">{task.prompt}</div>
+        <div class="text-[12.5px] text-[var(--color-text)] line-clamp-1">{scheduleTitle(task.prompt)}</div>
         <div class="text-[10.5px] text-[var(--color-text-faint)] mt-0.5">@{task.agent_id} · {describeCron(task.schedule)}</div>
       </div>
       <Pill tone={task.status === 'running' ? 'running' : 'neutral'}>{formatCountdown(task.next_run)}</Pill>
@@ -288,6 +288,23 @@ function describeCron(cron: string): string {
   const hourly = cron.match(/^0 \*\/(\d+) \* \* \*$/);
   if (hourly) return 'Every ' + hourly[1] + 'h';
   return cron;
+}
+
+function scheduleTitle(prompt: string): string {
+  const firstLine = prompt.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || prompt.trim();
+  const beforeMode = firstLine.split('--- SILENT MODE:')[0].trim();
+  const execute = beforeMode.match(/Execute exactly:\s*([^—.-]+)/i);
+  if (execute?.[1]) return compactCommandTitle(execute[1]);
+  const run = beforeMode.match(/Run:\s*([^—.-]+)/i);
+  if (run?.[1]) return compactCommandTitle(run[1]);
+  return beforeMode.length > 180 ? beforeMode.slice(0, 177) + '...' : beforeMode;
+}
+
+function compactCommandTitle(command: string): string {
+  const cleaned = command.replace(/^python3\s+/, '').replace(/^bash\s+/, '').trim();
+  const parts = cleaned.split('/');
+  const file = parts[parts.length - 1] || cleaned;
+  return file.replace(/\.(py|sh)$/i, '').replace(/[-_]/g, ' ');
 }
 
 function formatCountdown(unixSeconds: number): string {
