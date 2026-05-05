@@ -35,6 +35,7 @@ import {
   CodexProvider,
   codexModelForCli,
   extractCodexAssistantText,
+  extractCodexProgressEvent,
   extractCodexSandboxMode,
   extractCodexSessionId,
   extractCodexUsage,
@@ -115,6 +116,58 @@ describe('CodexProvider helpers', () => {
     expect(extractCodexAssistantText(event!)).toBe('PONG');
   });
 
+  it('maps Codex JSON events to progress events', () => {
+    expect(extractCodexProgressEvent(parseCodexJsonLine('{"type":"turn.started"}')!)).toEqual({
+      type: 'task_started',
+      description: 'Codex turn started',
+    });
+    expect(extractCodexProgressEvent(parseCodexJsonLine(JSON.stringify({
+      type: 'item.completed',
+      item: { id: 'item_0', type: 'agent_message', text: 'PONG' },
+    }))!)).toEqual({
+      type: 'task_completed',
+      description: 'Codex agent_message completed',
+    });
+    expect(extractCodexProgressEvent(parseCodexJsonLine('{"type":"turn.completed"}')!)).toEqual({
+      type: 'task_completed',
+      description: 'Codex turn completed',
+    });
+    expect(extractCodexProgressEvent(parseCodexJsonLine(JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'task_started' },
+    }))!)).toEqual({
+      type: 'task_started',
+      description: 'Codex turn started',
+    });
+    expect(extractCodexProgressEvent(parseCodexJsonLine(JSON.stringify({
+      type: 'event_msg',
+      payload: {
+        type: 'item_started',
+        item: { id: 'item_0', type: 'tool_call' },
+      },
+    }))!)).toEqual({
+      type: 'tool_active',
+      description: 'Codex tool_call started',
+    });
+    expect(extractCodexProgressEvent(parseCodexJsonLine(JSON.stringify({
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        item: { id: 'item_0', type: 'tool_call' },
+      },
+    }))!)).toEqual({
+      type: 'task_completed',
+      description: 'Codex tool_call completed',
+    });
+    expect(extractCodexProgressEvent(parseCodexJsonLine(JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'task_complete' },
+    }))!)).toEqual({
+      type: 'task_completed',
+      description: 'Codex turn completed',
+    });
+  });
+
   it('uses task_complete last_agent_message as authoritative final text', () => {
     const event = parseCodexJsonLine(JSON.stringify({
       type: 'event_msg',
@@ -181,16 +234,19 @@ describe('CodexProvider', () => {
   it('runs codex exec, writes the message to stdin, and returns text/session/usage', async () => {
     const fake = new FakeCodexProcess();
     spawnMock.mockReturnValue(fake);
+    const onProgress = vi.fn();
 
     const provider = new CodexProvider();
     const resultPromise = provider.runAgent({
       message: 'Reply with exactly PONG',
       sessionId: undefined,
       onTyping: () => {},
+      onProgress,
       model: 'claude-opus-4-7',
     });
 
     fake.stdout.write('{"type":"thread.started","thread_id":"019de35d-7e16-7d43-94ba-e2f40388be5c"}\n');
+    fake.stdout.write('{"type":"turn.started"}\n');
     fake.stdout.write('{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"PONG"}}\n');
     fake.stdout.write('{"type":"turn.completed","usage":{"input_tokens":21604,"cached_input_tokens":4480,"output_tokens":6}}\n');
     fake.emit('close', 0, null);
@@ -225,6 +281,8 @@ describe('CodexProvider', () => {
       lastCallInputTokens: 21604,
       lastCallCacheRead: 4480,
     });
+    expect(onProgress).toHaveBeenCalledWith({ type: 'task_started', description: 'Codex turn started' });
+    expect(onProgress).toHaveBeenCalledWith({ type: 'task_completed', description: 'Codex agent_message completed' });
   });
 
   // HIGH-3 regression: codex exec used to be spawned with raw process.env,

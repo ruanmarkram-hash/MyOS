@@ -11,7 +11,7 @@ import { readEnvFile } from '../env.js';
 import { classifyError } from '../errors.js';
 import { logger } from '../logger.js';
 import { getScrubbedSdkEnv } from '../security.js';
-import type { AgentResult, LlmProvider, RunAgentOptions, UsageInfo } from '../llm-provider.js';
+import type { AgentProgressEvent, AgentResult, LlmProvider, RunAgentOptions, UsageInfo } from '../llm-provider.js';
 import { prepareCodexHome } from './codex-mcp-filter.js';
 
 interface CodexUsage {
@@ -180,6 +180,35 @@ export function extractCodexSandboxMode(event: Record<string, unknown>): string 
   return undefined;
 }
 
+export function extractCodexProgressEvent(event: Record<string, unknown>): AgentProgressEvent | null {
+  const payload = payloadOrSelf(event);
+  const payloadType = typeof payload['type'] === 'string' ? payload['type'] : undefined;
+  const outerType = typeof event['type'] === 'string' ? event['type'] : undefined;
+  const type = payloadType ?? outerType ?? '';
+
+  if (type === 'turn.started' || type === 'turn_started' || type === 'task_started') {
+    return { type: 'task_started', description: 'Codex turn started' };
+  }
+
+  if (type === 'item.started' || type === 'item_started') {
+    const item = isObject(payload['item']) ? payload['item'] : event['item'];
+    const itemType = isObject(item) && typeof item['type'] === 'string' ? item['type'] : 'item';
+    return { type: 'tool_active', description: `Codex ${itemType} started` };
+  }
+
+  if (type === 'item.completed' || type === 'item_completed') {
+    const item = isObject(payload['item']) ? payload['item'] : event['item'];
+    const itemType = isObject(item) && typeof item['type'] === 'string' ? item['type'] : 'item';
+    return { type: 'task_completed', description: `Codex ${itemType} completed` };
+  }
+
+  if (type === 'turn.completed' || type === 'turn_completed' || type === 'task_complete') {
+    return { type: 'task_completed', description: 'Codex turn completed' };
+  }
+
+  return null;
+}
+
 export function codexModelForCli(model: string | undefined): string | undefined {
   const trimmed = model?.trim();
   if (!trimmed) return undefined;
@@ -298,11 +327,13 @@ export class CodexProvider implements LlmProvider {
       message,
       sessionId,
       onTyping,
+      onProgress,
       model,
       abortController,
       onStreamText,
       mcpAllowlist,
       cwdOverride,
+      maxTurns,
     } = options;
 
     // Per-call cwd override (mission worktree isolation) takes precedence
@@ -332,6 +363,14 @@ export class CodexProvider implements LlmProvider {
       : scrubbedEnv;
     if (homePrep) {
       logger.info({ tempHome: homePrep.home, mcpAllowlist }, 'Codex: applied per-call MCP allowlist');
+    }
+    if (maxTurns !== undefined) {
+      logger.warn(
+        { maxTurns, hasAbortController: !!abortController },
+        abortController
+          ? 'Codex provider has no native maxTurns flag; relying on abortController timeout'
+          : 'Codex provider has no native maxTurns flag and no abortController timeout was supplied',
+      );
     }
 
     let newSessionId: string | undefined;
@@ -381,6 +420,9 @@ export class CodexProvider implements LlmProvider {
         newSessionId = eventSessionId;
         logger.info({ newSessionId }, 'Codex session initialized');
       }
+
+      const progress = extractCodexProgressEvent(event);
+      if (progress) onProgress?.(progress);
 
       const text = extractCodexAssistantText(event);
       if (text) {

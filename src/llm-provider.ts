@@ -94,8 +94,9 @@ export interface RunAgentOptions {
 
   /**
    * Optional per-call cap for agentic turns. Providers that support a native
-   * turn limit MUST honor it. Providers without a native equivalent should
-   * still honor abortController.
+   * turn limit MUST honor it. Providers without a native equivalent MUST
+   * still honor abortController and should log that they are falling back to
+   * the caller's timeout.
    */
   maxTurns?: number;
 }
