@@ -1,9 +1,10 @@
+import { useState } from 'preact/hooks';
 import { PageHeader } from '@/components/PageHeader';
 import { Pill, StatusDot } from '@/components/Pill';
 import { PageState } from '@/components/PageState';
 import { useFetch } from '@/lib/useFetch';
 import { formatCost, formatNumber } from '@/lib/format';
-import { chatId } from '@/lib/api';
+import { apiPost, chatId } from '@/lib/api';
 
 interface TokenStats {
   todayInput: number;
@@ -22,6 +23,14 @@ interface Health {
   compactions: number;
   sessionAge: string;
   model: string;
+  provider: 'claude' | 'codex';
+  configuredProvider: string;
+  providerError: string | null;
+  supportedProviders: Array<'claude' | 'codex'>;
+  configuredModel: string;
+  resolvedModel: string;
+  hasSession: boolean;
+  sessionShort: string | null;
   telegramConnected: boolean;
   waConnected: boolean;
   slackConnected: boolean;
@@ -29,15 +38,50 @@ interface Health {
   killSwitchRefusals: Record<string, number>;
 }
 
+interface ProviderSmokeResult {
+  ok: boolean;
+  provider: string;
+  resolvedModel: string;
+  hasSession?: boolean;
+  sessionShort: string | null;
+  error?: string;
+}
+
 export function Usage() {
   const tokens = useFetch<{ stats: TokenStats; costTimeline: CostTimelineEntry[] }>(
     `/api/tokens?chatId=${encodeURIComponent(chatId)}`, 60_000,
   );
   const health = useFetch<Health>(`/api/health?chatId=${encodeURIComponent(chatId)}`, 30_000);
+  const [smoke, setSmoke] = useState<ProviderSmokeResult | null>(null);
+  const [smoking, setSmoking] = useState(false);
 
   const stats = tokens.data?.stats;
   const timeline = tokens.data?.costTimeline ?? [];
   const error = tokens.error || health.error;
+
+  async function runProviderSmoke() {
+    if (!health.data || smoking) return;
+    setSmoking(true);
+    setSmoke(null);
+    try {
+      const result = await apiPost<ProviderSmokeResult>('/api/provider/smoke', {
+        provider: health.data.provider,
+        model: health.data.configuredModel,
+      });
+      setSmoke(result);
+    } catch (err: any) {
+      setSmoke({
+        ...(err?.body || {}),
+        ok: false,
+        provider: err?.body?.provider || health.data.provider,
+        resolvedModel: err?.body?.resolvedModel || health.data.resolvedModel,
+        sessionShort: err?.body?.sessionShort || null,
+        error: err?.body?.error || err?.message || String(err),
+      });
+    } finally {
+      setSmoking(false);
+    }
+  }
 
   return (
     <div class="flex flex-col h-full">
@@ -76,8 +120,46 @@ export function Usage() {
                   <Stat label="Turns" value={String(health.data.turns)} />
                   <Stat label="Session age" value={health.data.sessionAge} />
                   <Stat label="Compactions" value={String(health.data.compactions)} />
-                  <Stat label="Model" value={health.data.model.replace('claude-', '')} colSpan={2} />
                 </div>
+              </div>
+              <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+                <div class="flex items-center justify-between mb-3 gap-2">
+                  <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Provider runtime</div>
+                  <button
+                    type="button"
+                    onClick={runProviderSmoke}
+                    disabled={smoking}
+                    class="px-2 py-1 rounded text-[11px] bg-[var(--color-elevated)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-50"
+                  >
+                    {smoking ? 'Testing...' : 'Smoke'}
+                  </button>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <Stat label="Provider" value={health.data.provider} />
+                  <Stat label="Session" value={health.data.sessionShort || 'fresh'} />
+                  <Stat label="Configured" value={compactModel(health.data.configuredModel)} />
+                  <Stat label="Runtime" value={compactModel(health.data.resolvedModel)} />
+                </div>
+                {health.data.providerError && (
+                  <div class="mt-2 text-[11px] text-[var(--color-status-failed)] truncate" title={health.data.providerError}>
+                    {health.data.providerError}
+                  </div>
+                )}
+                <div class="mt-3 flex items-center gap-1.5 flex-wrap">
+                  {health.data.supportedProviders.map((provider) => (
+                    <Pill key={provider} tone={provider === health.data?.provider ? 'accent' : 'neutral'}>{provider}</Pill>
+                  ))}
+                  {smoke && (
+                    <Pill tone={smoke.ok ? 'done' : 'failed'}>
+                      {smoke.ok ? 'smoke ok' : 'smoke failed'}
+                    </Pill>
+                  )}
+                </div>
+                {smoke?.error && (
+                  <div class="mt-2 text-[11px] text-[var(--color-status-failed)] truncate" title={smoke.error}>
+                    {smoke.error}
+                  </div>
+                )}
               </div>
               <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
                 <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-3">Connections</div>
@@ -121,6 +203,10 @@ function Stat({ label, value, colSpan = 1 }: { label: string; value: string; col
       <div class="text-[12.5px] tabular-nums text-[var(--color-text)]">{value}</div>
     </div>
   );
+}
+
+function compactModel(model: string) {
+  return model.replace(/^claude-/, '').replace(/^gpt-/, 'gpt ');
 }
 
 function Connection({ label, connected }: { label: string; connected: boolean }) {

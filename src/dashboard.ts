@@ -81,7 +81,54 @@ import { getWarRoomHtml } from './warroom-html.js';
 import { WARROOM_ENABLED, WARROOM_PORT } from './config.js';
 import { logger } from './logger.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
-import { normalizeLlmProvider } from './llm-provider.js';
+import {
+  getLlmProvider,
+  getSupportedLlmProviders,
+  normalizeLlmProvider,
+  type LlmProviderName,
+} from './llm-provider.js';
+import { resolveModelForProvider } from './model-router.js';
+import { buildAgentRuntimePrompt } from './agent-runtime.js';
+
+const MAIN_AGENT_MODEL = 'claude-opus-4-7';
+
+function currentProvider(): LlmProviderName {
+  return normalizeLlmProvider(LLM_PROVIDER);
+}
+
+function currentProviderStatus(): { provider: LlmProviderName; providerError: string | null } {
+  try {
+    return { provider: currentProvider(), providerError: null };
+  } catch (err: any) {
+    return {
+      provider: 'claude',
+      providerError: err?.recovery?.userMessage || err?.message || 'Unsupported LLM provider',
+    };
+  }
+}
+
+function shortenSessionId(sessionId: string | undefined): string | null {
+  if (!sessionId) return null;
+  if (sessionId.length <= 16) return sessionId;
+  return `${sessionId.slice(0, 8)}...${sessionId.slice(-4)}`;
+}
+
+function killSwitchFlag(name: string, dflt: boolean): boolean {
+  const v = process.env[name];
+  if (v === undefined) return dflt;
+  return v !== 'false' && v !== '0';
+}
+
+function providerRuntime(provider: LlmProviderName, model: string | undefined, sessionId: string | undefined) {
+  const configuredModel = model || MAIN_AGENT_MODEL;
+  return {
+    provider,
+    configuredModel,
+    resolvedModel: resolveModelForProvider(provider, configuredModel) || configuredModel,
+    hasSession: !!sessionId,
+    sessionShort: shortenSessionId(sessionId),
+  };
+}
 
 async function classifyTaskAgent(prompt: string): Promise<string | null> {
   try {
@@ -1130,7 +1177,9 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   // System health
   app.get('/api/health', (c) => {
     const chatId = c.req.query('chatId') || '';
-    const sessionId = getSession(chatId, AGENT_ID, normalizeLlmProvider(LLM_PROVIDER));
+    const { provider, providerError } = currentProviderStatus();
+    const sessionId = getSession(chatId, AGENT_ID, provider);
+    const runtime = providerRuntime(provider, agentDefaultModel || MAIN_AGENT_MODEL, sessionId);
     let contextPct = 0;
     let turns = 0;
     let compactions = 0;
@@ -1153,18 +1202,13 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     // Kill-switch surface — fork doesn't yet wire central kill-switches
     // module, so we publish the contract shape with env-derived defaults.
     // The frontend reads these flags to render gate state.
-    const ksFlag = (name: string, dflt: boolean): boolean => {
-      const v = process.env[name];
-      if (v === undefined) return dflt;
-      return v !== 'false' && v !== '0';
-    };
     const killSwitchesShape = {
-      WARROOM_TEXT_ENABLED: ksFlag('WARROOM_TEXT_ENABLED', true),
-      WARROOM_VOICE_ENABLED: ksFlag('WARROOM_VOICE_ENABLED', true),
-      LLM_SPAWN_ENABLED: ksFlag('LLM_SPAWN_ENABLED', true),
-      DASHBOARD_MUTATIONS_ENABLED: ksFlag('DASHBOARD_MUTATIONS_ENABLED', true),
-      MISSION_AUTO_ASSIGN_ENABLED: ksFlag('MISSION_AUTO_ASSIGN_ENABLED', true),
-      SCHEDULER_ENABLED: ksFlag('SCHEDULER_ENABLED', true),
+      WARROOM_TEXT_ENABLED: killSwitchFlag('WARROOM_TEXT_ENABLED', true),
+      WARROOM_VOICE_ENABLED: killSwitchFlag('WARROOM_VOICE_ENABLED', true),
+      LLM_SPAWN_ENABLED: killSwitchFlag('LLM_SPAWN_ENABLED', true),
+      DASHBOARD_MUTATIONS_ENABLED: killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true),
+      MISSION_AUTO_ASSIGN_ENABLED: killSwitchFlag('MISSION_AUTO_ASSIGN_ENABLED', true),
+      SCHEDULER_ENABLED: killSwitchFlag('SCHEDULER_ENABLED', true),
     };
 
     return c.json({
@@ -1172,7 +1216,15 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       turns,
       compactions,
       sessionAge,
-      model: agentDefaultModel || 'sonnet-4-6',
+      model: runtime.configuredModel,
+      provider: runtime.provider,
+      configuredProvider: LLM_PROVIDER,
+      providerError,
+      supportedProviders: getSupportedLlmProviders(),
+      configuredModel: runtime.configuredModel,
+      resolvedModel: runtime.resolvedModel,
+      hasSession: runtime.hasSession,
+      sessionShort: runtime.sessionShort,
       telegramConnected: getTelegramConnected(),
       waConnected: WHATSAPP_ENABLED,
       slackConnected: !!SLACK_USER_TOKEN,
@@ -1180,6 +1232,82 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       killSwitchRefusals: {},
       warroom: { textOpenMeetings: 0 },
     });
+  });
+
+  // Manual provider smoke test. This intentionally runs without a saved
+  // Telegram session id and with zero MCP servers, so it checks provider
+  // reachability without mutating the live conversation.
+  app.post('/api/provider/smoke', async (c) => {
+    if (!killSwitchFlag('LLM_SPAWN_ENABLED', true)) {
+      return c.json({
+        ok: false,
+        error: 'LLM spawn is disabled by LLM_SPAWN_ENABLED.',
+      }, 423);
+    }
+
+    let body: { provider?: string; model?: string } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+
+    let provider: LlmProviderName;
+    try {
+      provider = normalizeLlmProvider(body.provider || LLM_PROVIDER);
+    } catch (err: any) {
+      return c.json({ ok: false, error: err?.message || 'Unsupported provider' }, 400);
+    }
+
+    const configuredModel = body.model || agentDefaultModel || MAIN_AGENT_MODEL;
+    const resolvedModel = resolveModelForProvider(provider, configuredModel) || configuredModel;
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), 45_000);
+
+    try {
+      const result = await getLlmProvider(provider).runAgent({
+        message: buildAgentRuntimePrompt(
+          'Provider smoke test. Reply exactly: PROVIDER_SMOKE_OK',
+          'You are a provider health smoke test. Do not use tools.',
+        ),
+        sessionId: undefined,
+        onTyping: () => {},
+        model: resolvedModel,
+        abortController,
+        mcpAllowlist: [],
+        cwdOverride: PROJECT_ROOT,
+        maxTurns: 1,
+      });
+
+      const text = result.text || '';
+      const ok = text.includes('PROVIDER_SMOKE_OK');
+      return c.json({
+        ok,
+        provider,
+        configuredModel,
+        resolvedModel,
+        hasSession: !!result.newSessionId,
+        sessionShort: shortenSessionId(result.newSessionId),
+        usage: result.usage ? {
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          cacheReadInputTokens: result.usage.cacheReadInputTokens,
+          totalCostUsd: result.usage.totalCostUsd,
+        } : null,
+        textPreview: text.slice(0, 120),
+      }, 200);
+    } catch (err: any) {
+      logger.error({ err, provider, resolvedModel }, 'Provider smoke test failed');
+      return c.json({
+        ok: false,
+        provider,
+        configuredModel,
+        resolvedModel,
+        error: err?.message || 'Provider smoke test failed',
+      }, 500);
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   // Token / cost stats
@@ -1207,6 +1335,8 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
   // List all configured agents with status
   app.get('/api/agents', (c) => {
+    const chatId = c.req.query('chatId') || '';
+    const { provider, providerError } = currentProviderStatus();
     const agentIds = listAgentIds();
     const agents = agentIds.map((id) => {
       try {
@@ -1222,17 +1352,43 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           } catch { /* process not running */ }
         }
         const stats = getAgentTokenStats(id);
+        const sessionId = getSession(chatId, id, provider);
+        const runtime = providerRuntime(provider, config.model ?? MAIN_AGENT_MODEL, sessionId);
         return {
           id,
           name: config.name,
           description: config.description,
-          model: config.model ?? 'claude-opus-4-7',
+          model: runtime.configuredModel,
+          provider: runtime.provider,
+          configuredProvider: LLM_PROVIDER,
+          providerError,
+          configuredModel: runtime.configuredModel,
+          resolvedModel: runtime.resolvedModel,
+          hasSession: runtime.hasSession,
+          sessionShort: runtime.sessionShort,
+          lastProviderError: null,
           running,
           todayTurns: stats.todayTurns,
           todayCost: stats.todayCost,
         };
       } catch {
-        return { id, name: id, description: '', model: 'unknown', running: false, todayTurns: 0, todayCost: 0 };
+        return {
+          id,
+          name: id,
+          description: '',
+          model: 'unknown',
+          provider,
+          configuredProvider: LLM_PROVIDER,
+          providerError,
+          configuredModel: 'unknown',
+          resolvedModel: 'unknown',
+          hasSession: false,
+          sessionShort: null,
+          lastProviderError: null,
+          running: false,
+          todayTurns: 0,
+          todayCost: 0,
+        };
       }
     });
 
@@ -1247,8 +1403,26 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       } catch { /* not running */ }
     }
     const mainStats = getAgentTokenStats('main');
+    const mainSessionId = getSession(chatId, 'main', provider);
+    const mainRuntime = providerRuntime(provider, agentDefaultModel || MAIN_AGENT_MODEL, mainSessionId);
     const allAgents = [
-      { id: 'main', name: 'Main', description: 'Primary ClaudeClaw bot', model: 'claude-opus-4-7', running: mainRunning, todayTurns: mainStats.todayTurns, todayCost: mainStats.todayCost },
+      {
+        id: 'main',
+        name: 'Main',
+        description: 'Primary ClaudeClaw bot',
+        model: mainRuntime.configuredModel,
+        provider: mainRuntime.provider,
+        configuredProvider: LLM_PROVIDER,
+        providerError,
+        configuredModel: mainRuntime.configuredModel,
+        resolvedModel: mainRuntime.resolvedModel,
+        hasSession: mainRuntime.hasSession,
+        sessionShort: mainRuntime.sessionShort,
+        lastProviderError: null,
+        running: mainRunning,
+        todayTurns: mainStats.todayTurns,
+        todayCost: mainStats.todayCost,
+      },
       ...agents,
     ];
 

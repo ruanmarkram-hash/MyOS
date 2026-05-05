@@ -8,7 +8,7 @@ import { ModelPicker } from '@/components/ModelPicker';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { useFetch } from '@/lib/useFetch';
 import { useDebouncedValue } from '@/lib/useDebounce';
-import { apiPost, apiPatch, apiDelete } from '@/lib/api';
+import { apiPost, apiPatch, apiDelete, chatId } from '@/lib/api';
 import { formatCost } from '@/lib/format';
 
 interface Agent {
@@ -16,6 +16,14 @@ interface Agent {
   name: string;
   description: string;
   model: string;
+  provider: 'claude' | 'codex';
+  configuredProvider: string;
+  providerError: string | null;
+  configuredModel: string;
+  resolvedModel: string;
+  hasSession: boolean;
+  sessionShort: string | null;
+  lastProviderError: string | null;
   running: boolean;
   todayTurns: number;
   todayCost: number;
@@ -24,7 +32,10 @@ interface Agent {
 interface Template { id: string; name: string; description: string; }
 
 export function Agents() {
-  const { data, loading, error, refresh } = useFetch<{ agents: Agent[] }>('/api/agents', 30_000);
+  const { data, loading, error, refresh } = useFetch<{ agents: Agent[] }>(
+    `/api/agents?chatId=${encodeURIComponent(chatId)}`,
+    30_000,
+  );
   const [wizardOpen, setWizardOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [bulkModel, setBulkModel] = useState<string>('');
@@ -153,7 +164,25 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
 
       <div class="flex items-center gap-2 mb-3 flex-wrap">
         <ModelPicker value={agent.model} onSelect={setModel} disabled={busy === 'model'} />
+        <Pill tone="accent">{agent.provider}</Pill>
         {agent.running ? <Pill tone="done">running</Pill> : <Pill tone="cancelled">offline</Pill>}
+      </div>
+
+      <div class="mb-3 rounded-md bg-[var(--color-elevated)] px-2.5 py-2">
+        <div class="grid grid-cols-2 gap-2">
+          <MiniStat label="Runtime" value={compactModel(agent.resolvedModel)} />
+          <MiniStat label="Session" value={agent.sessionShort || 'fresh'} align="right" />
+        </div>
+        {agent.lastProviderError && (
+          <div class="mt-1.5 text-[10.5px] text-[var(--color-status-failed)] truncate" title={agent.lastProviderError}>
+            {agent.lastProviderError}
+          </div>
+        )}
+        {agent.providerError && (
+          <div class="mt-1.5 text-[10.5px] text-[var(--color-status-failed)] truncate" title={agent.providerError}>
+            {agent.providerError}
+          </div>
+        )}
       </div>
 
       <div class="grid grid-cols-2 gap-3 border-t border-[var(--color-border)] pt-2.5 mb-3">
@@ -209,6 +238,19 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
       </div>
     </div>
   );
+}
+
+function MiniStat({ label, value, align = 'left' }: { label: string; value: string; align?: 'left' | 'right' }) {
+  return (
+    <div class={align === 'right' ? 'text-right min-w-0' : 'min-w-0'}>
+      <div class="text-[9.5px] uppercase tracking-wider text-[var(--color-text-faint)] mb-0.5">{label}</div>
+      <div class="text-[11px] text-[var(--color-text-muted)] tabular-nums truncate" title={value}>{value}</div>
+    </div>
+  );
+}
+
+function compactModel(model: string) {
+  return model.replace(/^claude-/, '').replace(/^gpt-/, 'gpt ');
 }
 
 // ── Wizard ───────────────────────────────────────────────────────────
@@ -517,4 +559,3 @@ function CopyButton({ text }: { text: string }) {
     </button>
   );
 }
-

@@ -78,6 +78,12 @@ describe('GET /api/health', () => {
       compactions: expect.any(Number),
       sessionAge: expect.any(String),
       model: expect.any(String),
+      provider: expect.stringMatching(/^(claude|codex)$/),
+      configuredProvider: expect.any(String),
+      supportedProviders: expect.arrayContaining(['claude', 'codex']),
+      configuredModel: expect.any(String),
+      resolvedModel: expect.any(String),
+      hasSession: expect.any(Boolean),
       telegramConnected: expect.any(Boolean),
       waConnected: expect.any(Boolean),
       slackConnected: expect.any(Boolean),
@@ -87,6 +93,9 @@ describe('GET /api/health', () => {
         textOpenMeetings: expect.any(Number),
       }),
     });
+    expect('providerError' in body).toBe(true);
+    expect('sessionId' in body).toBe(false);
+    expect('sessionShort' in body).toBe(true);
   });
 
   it('killSwitches contains all 6 documented flags', async () => {
@@ -131,9 +140,49 @@ describe('GET /api/agents', () => {
       expect(body.agents[0]).toMatchObject({
         id: expect.any(String),
         name: expect.any(String),
+        provider: expect.stringMatching(/^(claude|codex)$/),
+        configuredProvider: expect.any(String),
+        configuredModel: expect.any(String),
+        resolvedModel: expect.any(String),
+        hasSession: expect.any(Boolean),
         running: expect.any(Boolean),
       });
+      expect('sessionId' in body.agents[0]).toBe(false);
+      expect('sessionShort' in body.agents[0]).toBe(true);
+      expect('providerError' in body.agents[0]).toBe(true);
+      expect('lastProviderError' in body.agents[0]).toBe(true);
     }
+  });
+});
+
+describe('POST /api/provider/smoke', () => {
+  it('respects LLM_SPAWN_ENABLED=false before running a model', async () => {
+    const prev = process.env.LLM_SPAWN_ENABLED;
+    process.env.LLM_SPAWN_ENABLED = 'false';
+    try {
+      const res = await app.request('/api/provider/smoke' + Q, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'claude' }),
+      });
+      expect(res.status).toBe(423);
+      const body = await jsonOf(res);
+      expect(body).toMatchObject({ ok: false, error: expect.stringContaining('LLM spawn') });
+    } finally {
+      if (prev === undefined) delete process.env.LLM_SPAWN_ENABLED;
+      else process.env.LLM_SPAWN_ENABLED = prev;
+    }
+  });
+
+  it('rejects unsupported provider before running a model', async () => {
+    const res = await app.request('/api/provider/smoke' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'bad-provider' }),
+    });
+    expect(res.status).toBe(400);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({ ok: false, error: expect.any(String) });
   });
 });
 
