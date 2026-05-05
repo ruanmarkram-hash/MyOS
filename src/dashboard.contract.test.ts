@@ -707,6 +707,11 @@ describe('POST /api/review/tasks/:id/email', () => {
       { REVIEW_EXPORT_FROM_EMAIL: 'sage@example.com' },
       { REVIEW_EXPORT_FROM_EMAIL: 'file@example.com' },
     )).toBe('sage@example.com');
+
+    expect(configuredReviewExportFromEmail(
+      { REVIEW_EXPORT_SHARED_MAILBOX: undefined, REVIEW_EXPORT_FROM_EMAIL: undefined },
+      { REVIEW_EXPORT_SHARED_MAILBOX: 'shared@example.com', REVIEW_EXPORT_FROM_EMAIL: 'file@example.com' },
+    )).toBe('shared@example.com');
   });
 
   it('refuses to send review exports from the recipient mailbox', async () => {

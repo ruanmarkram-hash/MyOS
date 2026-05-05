@@ -27,8 +27,48 @@ sys.path.insert(0, str(Path(__file__).parent))
 from msgraph_auth import MSGraphAuth
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def read_env_file(keys):
+    wanted = set(keys)
+    values = {}
+    env_path = PROJECT_ROOT / ".env"
+    try:
+        content = env_path.read_text()
+    except Exception:
+        return values
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if key not in wanted:
+            continue
+        value = value.strip().strip('"').strip("'")
+        if value:
+            values[key] = value
+    return values
+
+
+def config_value(key):
+    if os.environ.get(key):
+        return os.environ[key].strip()
+    return read_env_file([key]).get(key, "").strip()
+
+
+def default_shared_mailbox():
+    return (
+        config_value("REVIEW_EXPORT_SHARED_MAILBOX")
+        or config_value("REVIEW_EXPORT_FROM_EMAIL")
+        or "sage@sonke.com.au"
+    )
+
+
 def forbidden_from_emails():
-    raw = os.environ.get("MSGRAPH_FORBIDDEN_FROM_EMAILS", "")
+    raw = config_value("MSGRAPH_FORBIDDEN_FROM_EMAILS")
     return {addr.strip().lower() for addr in raw.split(",") if addr.strip()}
 
 
@@ -40,8 +80,13 @@ class GraphEmailSender:
     def __init__(self):
         self.auth = MSGraphAuth()
 
-    def send(self, to, subject, body, from_email="sage@sonke.com.au", attachments=None, html=False):
+    def send(self, to, subject, body, from_email=None, attachments=None, html=False):
         """Send email via Graph API."""
+        from_email = (from_email or default_shared_mailbox()).strip()
+        if not from_email:
+            print("Refusing to send without a shared mailbox sender", file=sys.stderr)
+            return False
+
         if from_email and from_email.strip().lower() in forbidden_from_emails():
             print(f"Refusing to send from forbidden sender: {from_email}", file=sys.stderr)
             return False
@@ -93,10 +138,7 @@ class GraphEmailSender:
         }
 
         try:
-            endpoint = (
-                f"{self.GRAPH_BASE}/users/{quote(from_email)}/sendMail"
-                if from_email else f"{self.GRAPH_BASE}/me/sendMail"
-            )
+            endpoint = f"{self.GRAPH_BASE}/users/{quote(from_email)}/sendMail"
             resp = requests.post(endpoint, headers=headers, json=payload, timeout=10)
             if resp.status_code == 202:
                 from_note = f" from {from_email}" if from_email else ""

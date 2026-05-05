@@ -1,6 +1,10 @@
 # MS Graph Skill
 
-Microsoft Graph API access for email and calendar management on `ruan@sonke.com.au`.
+Microsoft Graph API access for email and calendar management.
+
+Automated sends must use a shared/service mailbox. Do not send automated
+messages from a person's mailbox unless that person has given express written
+confirmation for that specific send.
 
 ## Architecture
 
@@ -21,8 +25,13 @@ bash ~/HQ/skills/msgraph/refresh.sh
 ### 2. Send email
 ```bash
 python3 ~/HQ/skills/msgraph/send_graph_email.py \
-  --to "x@y.com" --subject "Hello" --body "..." [--attach /tmp/file.pdf]
+  --from "sage@sonke.com.au" --to "x@y.com" --subject "Hello" --body "..." [--attach /tmp/file.pdf]
 ```
+
+If `--from` is omitted, the helper uses `REVIEW_EXPORT_SHARED_MAILBOX` or
+`REVIEW_EXPORT_FROM_EMAIL` from `.env`, and posts to
+`/users/{shared-mailbox}/sendMail`. It must not fall back to `/me/sendMail` for
+automated sends.
 
 ### 3. Read inbox
 ```bash

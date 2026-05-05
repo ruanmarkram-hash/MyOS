@@ -259,9 +259,13 @@ export function configuredReviewExportEmail(
 
 export function configuredReviewExportFromEmail(
   runtimeEnv: Record<string, string | undefined> = process.env,
-  fileEnv: Record<string, string> = readEnvFile(['REVIEW_EXPORT_FROM_EMAIL']),
+  fileEnv: Record<string, string> = readEnvFile(['REVIEW_EXPORT_SHARED_MAILBOX', 'REVIEW_EXPORT_FROM_EMAIL']),
 ): string | null {
-  return runtimeEnv.REVIEW_EXPORT_FROM_EMAIL || fileEnv.REVIEW_EXPORT_FROM_EMAIL || null;
+  return runtimeEnv.REVIEW_EXPORT_SHARED_MAILBOX
+    || runtimeEnv.REVIEW_EXPORT_FROM_EMAIL
+    || fileEnv.REVIEW_EXPORT_SHARED_MAILBOX
+    || fileEnv.REVIEW_EXPORT_FROM_EMAIL
+    || null;
 }
 
 function emailEquals(a: string | null | undefined, b: string | null | undefined): boolean {
@@ -1963,9 +1967,9 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const ownerEmail = configuredReviewExportEmail();
     if (!ownerEmail) return c.json({ ok: false, error: 'No review export email configured. Set REVIEW_EXPORT_EMAIL.' }, 400);
     const fromEmail = configuredReviewExportFromEmail();
-    if (!fromEmail) return c.json({ ok: false, error: 'No review export sender configured. Set REVIEW_EXPORT_FROM_EMAIL to a service/shared mailbox.' }, 400);
+    if (!fromEmail) return c.json({ ok: false, error: 'No review export sender configured. Set REVIEW_EXPORT_SHARED_MAILBOX to a shared mailbox.' }, 400);
     if (emailEquals(fromEmail, ownerEmail)) {
-      return c.json({ ok: false, error: 'Review exports cannot send from the same mailbox they are sent to. Configure REVIEW_EXPORT_FROM_EMAIL to a service/shared mailbox.' }, 400);
+      return c.json({ ok: false, error: 'Review exports cannot send from the same mailbox they are sent to. Configure REVIEW_EXPORT_SHARED_MAILBOX to a shared mailbox.' }, 400);
     }
 
     let body: { format?: 'docx' | 'html' } = {};
