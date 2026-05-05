@@ -388,6 +388,25 @@ describe('GET /api/home dashboard endpoints', () => {
     });
   });
 
+  it('does not promote markdown section headings as attention items', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-headings', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-headings',
+      now + 86400,
+      ['**Action needed:**', '- Actual action needed: review CA-10 today', '**Blocked on you:**'].join('\n'),
+      'success',
+    );
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    const details = body.items.map((item: any) => item.detail);
+    expect(details).toContain('Actual action needed: review CA-10 today');
+    expect(details).not.toContain('Action needed:');
+    expect(details).not.toContain('Blocked on you:');
+  });
+
   it('returns OS scheduled work for the home agenda while calendar is unwired', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('agenda-1', 'Run: scripts/daily-brief.sh', '0 9 * * *', now + 1800, 'main');

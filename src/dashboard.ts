@@ -235,9 +235,11 @@ function extractAttentionItems(text: string, limit = 4): string[] {
   for (const line of text.split(/\r?\n/)) {
     const cleaned = line
       .replace(/^[-*•☐\d.)\s]+/, '')
+      .replace(/\*\*/g, '')
       .replace(/\s+/g, ' ')
       .trim();
     if (!cleaned || /^OK$/i.test(cleaned)) continue;
+    if (/^(action needed|blocked on you|open threads|stale|breakdown|notes|projects|compliance|calendar|inbox|today):?$/i.test(cleaned)) continue;
     if (!/urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|risk|review|approve|follow.?up|due|tomorrow top|open threads/i.test(cleaned)) continue;
     const key = cleaned.toLowerCase();
     if (seen.has(key)) continue;
