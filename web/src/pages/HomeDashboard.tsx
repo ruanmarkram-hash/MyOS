@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { PageState } from '@/components/PageState';
 import { Pill, StatusDot } from '@/components/Pill';
 import { useFetch } from '@/lib/useFetch';
-import { apiPost, chatId } from '@/lib/api';
+import { apiPatch, apiPost, chatId } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/format';
 
 interface Health {
@@ -126,6 +126,8 @@ export function HomeDashboard() {
   const attentionItems = attention.data?.items ?? [];
   const briefItems = briefs.data?.briefs ?? [];
   const agendaItems = agenda.data?.items ?? [];
+  const calendarConnected = !!agenda.data?.externalCalendar.connected;
+  const personalCalendarItems = calendarConnected ? agendaItems : [];
 
   async function switchMainProvider() {
     if (!health.data || switchingProvider) return;
@@ -164,7 +166,7 @@ export function HomeDashboard() {
         <div class="flex-1 overflow-y-auto p-6 space-y-4">
           <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
             <Metric icon={<Sunrise size={16} />} label="Today" value={attentionItems.length + ' attention items'} detail={`${activeMissions.length} mission loops · ${runningMissions.length} running · ${unassigned.length} unassigned`} tone={attentionItems.some((item) => item.severity === 'high') ? 'medium' : 'neutral'} onClick={() => navigate('/review')} />
-            <Metric icon={<CalendarDays size={16} />} label="Calendar" value={agenda.data?.externalCalendar.connected ? 'connected' : 'OS schedule'} detail={agenda.data?.externalCalendar.connected ? agenda.data.externalCalendar.provider || 'calendar' : 'external connector pending'} tone="medium" onClick={() => navigate('/scheduled')} />
+            <Metric icon={<CalendarDays size={16} />} label="Calendar" value={calendarConnected ? 'connected' : 'pending'} detail={calendarConnected ? agenda.data?.externalCalendar.provider || 'personal calendar' : 'personal calendar connector pending'} tone="medium" onClick={() => navigate('/scheduled')} />
             <Metric icon={<Users size={16} />} label="Agents" value={`${liveAgents.length}/${agents.data?.agents.length ?? 0} live`} detail={liveAgents.map((a) => a.name || a.id).slice(0, 3).join(', ') || 'none live'} onClick={() => navigate('/agents')} />
             <Metric
               icon={<Cpu size={16} />}
@@ -207,7 +209,15 @@ export function HomeDashboard() {
               </Panel>
 
               <Panel title="Needs Attention" icon={<ShieldCheck size={15} />}>
-                <AttentionPanel items={attentionItems} />
+                <AttentionPanel
+                  items={attentionItems}
+                  agents={agents.data?.agents ?? []}
+                  missions={missions.data?.tasks ?? []}
+                  onChange={() => {
+                    attention.refresh();
+                    missions.refresh();
+                  }}
+                />
               </Panel>
 
               <Panel title="Mission Queue" icon={<ListChecks size={15} />} action="/mission" navigate={navigate}>
@@ -227,9 +237,9 @@ export function HomeDashboard() {
                     <div class="text-[11px] text-[var(--color-text-muted)] mt-1">{agenda.data?.externalCalendar.note}</div>
                   </div>
                 )}
-                {agendaItems.length === 0 ? <EmptyLine text="No scheduled OS jobs in the next 24 hours." /> : (
+                {personalCalendarItems.length === 0 ? <EmptyLine text={calendarConnected ? 'No personal calendar items in the next 24 hours.' : 'Personal calendar connector pending. Agent schedules live under Scheduled.'} /> : (
                   <div class="space-y-2">
-                    {agendaItems.map((item) => <ScheduledLine key={item.id} item={item} />)}
+                    {personalCalendarItems.map((item) => <ScheduledLine key={item.id} item={item} />)}
                   </div>
                 )}
               </Panel>
@@ -426,7 +436,53 @@ function BriefAttention({ items }: { items: HomeAttentionItem[] }) {
   );
 }
 
-function AttentionPanel({ items }: { items: HomeAttentionItem[] }) {
+function AttentionPanel({
+  items,
+  agents,
+  missions,
+  onChange,
+}: {
+  items: HomeAttentionItem[];
+  agents: Agent[];
+  missions: MissionTask[];
+  onChange: () => void;
+}) {
+  const [assigning, setAssigning] = useState<Record<string, string>>({});
+
+  async function assign(item: HomeAttentionItem, agentId: string) {
+    if (!agentId) return;
+    setAssigning((prev) => ({ ...prev, [item.id]: agentId }));
+    try {
+      const sourceMission = item.taskId ? missions.find((task) => task.id === item.taskId) : null;
+      if (sourceMission && !TERMINAL.has(sourceMission.status)) {
+        const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${sourceMission.id}`, { assigned_agent: agentId });
+        if (!result.ok) throw new Error('Mission could not be reassigned');
+      } else {
+        await apiPost('/api/mission/tasks', {
+          title: `Follow up: ${item.title}`.slice(0, 200),
+          prompt: [
+            `Needs Attention item from Home dashboard.`,
+            `Title: ${item.title}`,
+            `Detail: ${item.detail}`,
+            item.taskId ? `Source mission: ${item.taskId}` : '',
+            item.href ? `Source link: ${item.href}` : '',
+          ].filter(Boolean).join('\n'),
+          assigned_agent: agentId,
+          priority: item.severity === 'high' ? 9 : item.severity === 'medium' ? 6 : 3,
+        });
+      }
+      onChange();
+    } catch (err: any) {
+      alert('Assign failed: ' + (err?.message || err));
+    } finally {
+      setAssigning((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+    }
+  }
+
   if (items.length === 0) return <EmptyLine text="Nothing currently needs attention." />;
   return (
     <div class="space-y-2">
@@ -439,7 +495,25 @@ function AttentionPanel({ items }: { items: HomeAttentionItem[] }) {
             </div>
             <div class="text-[11px] text-[var(--color-text-muted)] mt-1 line-clamp-2">{item.detail}</div>
           </div>
-          <div class="text-[10.5px] text-[var(--color-text-faint)] shrink-0">{formatRelativeTime(item.createdAt)}</div>
+          <div class="shrink-0 flex flex-col items-end gap-1.5">
+            <div class="text-[10.5px] text-[var(--color-text-faint)]">{formatRelativeTime(item.createdAt)}</div>
+            <select
+              value=""
+              onChange={(e) => {
+                const value = (e.target as HTMLSelectElement).value;
+                void assign(item, value);
+                (e.target as HTMLSelectElement).value = '';
+              }}
+              disabled={!!assigning[item.id] || agents.length === 0}
+              class="w-[132px] bg-[var(--color-card)] border border-[var(--color-border)] rounded text-[10.5px] text-[var(--color-text-muted)] px-1.5 py-1 outline-none hover:border-[var(--color-border-strong)] disabled:opacity-40"
+              title="Assign this attention item"
+            >
+              <option value="">{assigning[item.id] ? 'Assigning...' : 'Assign to...'}</option>
+              {agents.map((agent) => (
+                <option key={agent.id} value={agent.id}>{agent.name || agent.id}</option>
+              ))}
+            </select>
+          </div>
         </div>
       ))}
     </div>
