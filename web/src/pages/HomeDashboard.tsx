@@ -458,8 +458,22 @@ function AttentionPanel({
         const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${sourceMission.id}`, { assigned_agent: agentId });
         if (!result.ok) throw new Error('Mission could not be reassigned');
       } else {
+        const followUpTitle = `Follow up: ${item.title}`.slice(0, 200);
+        const existingFollowUp = missions.find((task) => !TERMINAL.has(task.status) && task.title.toLowerCase() === followUpTitle.toLowerCase());
+        if (existingFollowUp) {
+          if (existingFollowUp.status === 'running') {
+            if (existingFollowUp.assigned_agent !== agentId) {
+              throw new Error(`Follow-up is already running with @${existingFollowUp.assigned_agent || 'unassigned'}`);
+            }
+          } else if (existingFollowUp.assigned_agent !== agentId) {
+            const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${existingFollowUp.id}`, { assigned_agent: agentId });
+            if (!result.ok) throw new Error('Existing follow-up could not be reassigned');
+          }
+          onChange();
+          return;
+        }
         await apiPost('/api/mission/tasks', {
-          title: `Follow up: ${item.title}`.slice(0, 200),
+          title: followUpTitle,
           prompt: [
             `Needs Attention item from Home dashboard.`,
             `Title: ${item.title}`,

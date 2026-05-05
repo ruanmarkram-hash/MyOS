@@ -593,7 +593,47 @@ function completedMissionDetail(mission: MissionTask): string {
   return useful.length > 220 ? `${useful.slice(0, 217)}...` : useful;
 }
 
+function normalizedAttentionTitle(title: string): string {
+  return title.replace(/^follow up:\s*/i, '').trim().toLowerCase();
+}
+
+function missionFollowUpSourceKey(mission: MissionTask): string | null {
+  if (!/^follow up:/i.test(mission.title)) return null;
+  const promptSource = mission.prompt.match(/Source mission:\s*([A-Za-z0-9_-]+)/i)?.[1];
+  return promptSource || `title:${normalizedAttentionTitle(mission.title)}`;
+}
+
+function canonicalFollowUpIds(missions: MissionTask[]): Set<string> {
+  const bySource = new Map<string, MissionTask>();
+  for (const mission of missions) {
+    if (TERMINAL_MISSION_STATUSES.has(mission.status)) continue;
+    const source = missionFollowUpSourceKey(mission);
+    if (!source) continue;
+    const current = bySource.get(source);
+    if (!current) {
+      bySource.set(source, mission);
+      continue;
+    }
+    const currentRank = current.status === 'running' ? 2 : 1;
+    const nextRank = mission.status === 'running' ? 2 : 1;
+    if (nextRank > currentRank || (nextRank === currentRank && mission.created_at > current.created_at)) {
+      bySource.set(source, mission);
+    }
+  }
+  return new Set([...bySource.values()].map((mission) => mission.id));
+}
+
+function completedMissionHasFollowUp(mission: MissionTask, missions: MissionTask[]): boolean {
+  const titleKey = `title:${normalizedAttentionTitle(mission.title)}`;
+  return missions.some((candidate) => {
+    if (candidate.status === 'cancelled') return false;
+    const source = missionFollowUpSourceKey(candidate);
+    return source === mission.id || source === titleKey;
+  });
+}
+
 function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
+  const canonicalFollowUps = canonicalFollowUpIds(missions);
   const items: Array<{
     id: string;
     source: 'brief' | 'mission' | 'schedule';
@@ -626,6 +666,8 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
 
   for (const mission of missions) {
     if (!TERMINAL_MISSION_STATUSES.has(mission.status)) {
+      const followUpSource = missionFollowUpSourceKey(mission);
+      if (followUpSource && !canonicalFollowUps.has(mission.id)) continue;
       const ageHours = (Date.now() / 1000 - mission.created_at) / 3600;
       items.push({
         id: `mission:${mission.id}`,
@@ -650,7 +692,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
         taskId: mission.id,
         href: '/mission',
       });
-    } else if (completedMissionNeedsAttention(mission, Math.floor(Date.now() / 1000))) {
+    } else if (completedMissionNeedsAttention(mission, Math.floor(Date.now() / 1000)) && !completedMissionHasFollowUp(mission, missions)) {
       items.push({
         id: `mission:${mission.id}:follow-up`,
         source: 'mission',

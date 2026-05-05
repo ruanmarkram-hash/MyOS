@@ -457,6 +457,35 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(body.items.find((item: any) => item.title === 'Fix Reminders CalDAV auth').createdAt).toBeGreaterThanOrEqual(now);
   });
 
+  it('suppresses completed diagnosis items and duplicate follow-ups once an active follow-up exists', async () => {
+    createMissionTask('m-imessage-diagnosis', 'Fix iMessage digest access', 'diagnose imessage', 'warden', 'dashboard', 8);
+    completeMissionTask('m-imessage-diagnosis', 'Root cause: Full Disk Access permission required.', 'completed');
+    createMissionTask(
+      'm-imessage-follow-1',
+      'Follow up: Fix iMessage digest access',
+      'Needs Attention item from Home dashboard.\nSource mission: m-imessage-diagnosis',
+      'mason',
+      'dashboard',
+      6,
+    );
+    createMissionTask(
+      'm-imessage-follow-2',
+      'Follow up: Fix iMessage digest access',
+      'Needs Attention item from Home dashboard.\nSource mission: m-imessage-diagnosis',
+      'mason',
+      'dashboard',
+      6,
+    );
+    completeMissionTask('m-imessage-follow-2', 'Follow-up deliverable landed for review.', 'completed');
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    const titles = body.items.map((item: any) => item.title);
+    expect(titles.filter((title: string) => title === 'Fix iMessage digest access')).toHaveLength(0);
+    expect(titles.filter((title: string) => title === 'Follow up: Fix iMessage digest access')).toHaveLength(1);
+  });
+
   it('does not surface old dev completed missions just because their result contains critical review text', async () => {
     createMissionTask('m-dev-critical', 'Stream2-M2: full-chain integration tests', 'dev work', 'mason', 'dashboard', 5);
     const { completeMissionTask } = await import('./db.js');
