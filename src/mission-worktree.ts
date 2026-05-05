@@ -27,7 +27,7 @@
  * re-emerge from a different code path.
  */
 
-import { existsSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, readdirSync, copyFileSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 
 import { PROJECT_ROOT } from './config.js';
@@ -204,9 +204,50 @@ export function createMissionWorktree(missionId: string): MissionWorktree {
 
   git(['worktree', 'add', '-B', branch, cwd, baseRef]);
 
+  // Propagate runtime config that lives outside git into the worktree.
+  // Without this, every Mason mission gets a fresh checkout with no
+  // .env, and any test/code path that reads DB_ENCRYPTION_KEY,
+  // ANTHROPIC_API_KEY, OB1_SUPABASE_DB_URL, GOOGLE_API_KEY etc. fails.
+  // This is what caused the "3 pre-existing schedule-cli failures" in
+  // every recent mission report — those tests spawn subprocesses that
+  // can't decrypt fields without DB_ENCRYPTION_KEY.
+  //
+  // Best-effort: log on copy failure but don't abort the worktree
+  // creation — a partially-broken worktree is still better than no
+  // worktree (the mission will at least surface the missing env clearly).
+  copyEnvFiles(cwd);
+
   markActive(missionId);
   logger.info({ missionId, cwd, branch, baseRef }, 'mission-worktree: created');
   return { cwd, branch, missionId };
+}
+
+/**
+ * Copy runtime config files (`.env`, `.env.local` if present) from the
+ * project root into the new worktree so missions inherit the operator's
+ * encryption key + API credentials. These files are gitignored, so a
+ * fresh worktree from origin/main otherwise has none of them.
+ *
+ * Skipped silently if the source file doesn't exist — keeps tests that
+ * run on a stripped fixture happy.
+ */
+function copyEnvFiles(targetDir: string): void {
+  const candidates = ['.env', '.env.local'];
+  for (const name of candidates) {
+    const src = path.join(PROJECT_ROOT, name);
+    if (!existsSync(src)) continue;
+    const dst = path.join(targetDir, name);
+    try {
+      copyFileSync(src, dst);
+      // Enforce 0600 on the copy regardless of source mode. The .env
+      // contains DB_ENCRYPTION_KEY, ANTHROPIC_API_KEY, OAuth refresh
+      // tokens — must not be world-readable inside the worktree.
+      // (Codex review of worktree-followup MED.)
+      chmodSync(dst, 0o600);
+    } catch (err) {
+      logger.warn({ err, name, targetDir }, 'mission-worktree: env file copy failed (non-fatal)');
+    }
+  }
 }
 
 /**

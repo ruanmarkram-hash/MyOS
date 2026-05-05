@@ -77,6 +77,28 @@ describe('mission-worktree', () => {
     TEST_PROJECT_ROOT = '';
   });
 
+  it('copies .env from project root into the new worktree (mission inherits credentials)', () => {
+    // Mason's missions previously ran with a fresh checkout that had no
+    // .env, so any test/code reading DB_ENCRYPTION_KEY etc. failed.
+    // Verify the propagation now happens during createMissionWorktree.
+    writeFileSync(path.join(local, '.env'), 'DB_ENCRYPTION_KEY=test-key\nFOO=bar\n');
+    const wt = createMissionWorktree('with-env');
+    const copied = path.join(wt.cwd, '.env');
+    expect(existsSync(copied)).toBe(true);
+    const { readFileSync, statSync } = require('fs');
+    expect(readFileSync(copied, 'utf-8')).toContain('DB_ENCRYPTION_KEY=test-key');
+    // Codex MED: enforce 0600 on copied env files so they're never
+    // world-readable inside the worktree.
+    const mode = statSync(copied).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it('skips .env copy gracefully when source does not exist', () => {
+    // No .env in the temp project — copy must be a no-op, not a throw.
+    const wt = createMissionWorktree('no-env');
+    expect(existsSync(path.join(wt.cwd, '.env'))).toBe(false);
+  });
+
   it('creates an isolated worktree on a mission-<id> branch off origin/main', () => {
     const wt = createMissionWorktree('abc123');
     expect(wt.cwd).toBe(path.join(local, '.worktrees', 'mission-abc123'));

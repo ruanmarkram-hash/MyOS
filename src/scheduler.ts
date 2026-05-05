@@ -572,6 +572,24 @@ async function runDueMissionTasks(): Promise<void> {
         { commitCount: verdict.commitCount },
       );
     } finally {
+      // Forensics: before tearing down the worktree, capture any
+      // uncommitted Mason work as a snapshot commit and push the branch.
+      // Without this, a max-turns failure with 0 commits leaves NOTHING
+      // for the operator to inspect — the worktree gets nuked and the
+      // branch (with no commits past origin/main) carries no signal.
+      // With it, even a max-turns death preserves the partial state.
+      // Best-effort: any failure here just logs and continues to cleanup.
+      if (worktree) {
+        try {
+          const snapshotted = snapshotAndPushMissionBranch(worktree);
+          if (snapshotted) {
+            logger.info({ missionId: mission.id, branch: worktree.branch }, 'mission-worktree: snapshotted uncommitted work to origin for forensics');
+          }
+        } catch (snapErr) {
+          logger.warn({ err: snapErr, missionId: mission.id }, 'mission-worktree: forensic snapshot failed (non-fatal)');
+        }
+      }
+
       // Tear down the worktree on every terminal path (success, partial,
       // failed, error). The branch is preserved on origin already; the
       // local worktree dir is disposable. If cleanup throws, log but
@@ -587,6 +605,55 @@ async function runDueMissionTasks(): Promise<void> {
       runningTaskIds.delete(missionKey);
     }
   });
+}
+
+/**
+ * Best-effort: if the mission worktree has uncommitted work (Mason
+ * hit max-turns mid-edit, threw mid-mission, etc.), commit it as a
+ * snapshot and push the branch to origin so an operator can inspect
+ * what Mason was doing. Returns true if a snapshot was committed.
+ *
+ * Skips silently when the working tree is clean (no uncommitted state)
+ * or when the git commands fail (network/auth). Never throws.
+ */
+function snapshotAndPushMissionBranch(wt: MissionWorktree): boolean {
+  try {
+    const status = safeSpawnSync(
+      'git',
+      ['status', '--porcelain'],
+      { envClass: 'system-tool', cwd: wt.cwd, encoding: 'utf-8', timeout: 5_000 },
+    );
+    const out = (typeof status.stdout === 'string' ? status.stdout : status.stdout?.toString('utf8') ?? '').trim();
+    if (!out) return false; // clean tree, nothing to snapshot
+
+    // Codex CRITICAL: `git add -A` would stage .env / .env.local if
+    // .gitignore got corrupted in the worktree (Mason edit, branch
+    // weirdness, etc.). Hard-exclude env files via pathspec so the
+    // snapshot push CANNOT leak credentials regardless of gitignore
+    // state. The exclusion is belt-and-braces — gitignore should
+    // already cover this — but a single mishap on a published branch
+    // is a credential incident, so defense in depth wins.
+    safeSpawnSync(
+      'git',
+      ['add', '-A', '--', ':!.env', ':!.env.local', ':!.env.*'],
+      { envClass: 'system-tool', cwd: wt.cwd, timeout: 5_000 },
+    );
+    const commitRes = safeSpawnSync(
+      'git',
+      ['commit', '-m', `snapshot(mission ${wt.missionId}): uncommitted state captured before worktree cleanup`],
+      { envClass: 'system-tool', cwd: wt.cwd, encoding: 'utf-8', timeout: 10_000 },
+    );
+    // status !== 0 also covers the "nothing to commit" case (which can
+    // happen if the only dirty entry was an excluded env file). That's
+    // the desired no-op.
+    if (commitRes.status !== 0) return false;
+
+    pushMissionBranch(wt);
+    return true;
+  } catch (err) {
+    logger.warn({ err, branch: wt.branch }, 'snapshotAndPushMissionBranch: failed');
+    return false;
+  }
 }
 
 /**
