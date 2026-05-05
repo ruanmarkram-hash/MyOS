@@ -2,7 +2,7 @@ import {
   Home, LayoutGrid, ListTodo, Users, MessageSquare,
   Brain, BrainCircuit, Network, Activity, ShieldCheck,
   Radio, Cpu,
-  Mic, Settings, FileText,
+  Mic, Settings, FileText, Inbox,
 } from 'lucide-preact';
 import type { ComponentChildren } from 'preact';
 
@@ -19,6 +19,7 @@ export interface RouteDef {
 // Single source of truth for the sidebar, command palette, and router.
 export const ROUTES: RouteDef[] = [
   { path: '/home',       label: 'Home',            section: 'workspace',    icon: Home,          shortcut: 'g d' },
+  { path: '/review',     label: 'Review Inbox',    section: 'workspace',    icon: Inbox,         shortcut: 'g i' },
   { path: '/mission',    label: 'Mission Control', section: 'workspace',    icon: LayoutGrid,    shortcut: 'g m' },
   { path: '/scheduled',  label: 'Scheduled',       section: 'workspace',    icon: ListTodo,      shortcut: 'g s' },
   { path: '/agents',     label: 'Agents',          section: 'workspace',    icon: Users,         shortcut: 'g a' },

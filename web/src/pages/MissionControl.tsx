@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { Plus, Wand2, Trash2, X, History, Inbox } from 'lucide-preact';
+import { Plus, Wand2, Trash2, X, History, Inbox, FileText } from 'lucide-preact';
 import { PageHeader } from '@/components/PageHeader';
 import { Pill, StatusDot } from '@/components/Pill';
 import { PageState } from '@/components/PageState';
@@ -15,7 +15,7 @@ interface MissionTask {
   title: string;
   prompt: string;
   assigned_agent: string | null;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'partial' | 'cancelled';
   priority: number;
   created_by: string;
   created_at: number;
@@ -27,7 +27,7 @@ interface MissionTask {
 
 interface Agent { id: string; name: string; description: string; running: boolean; }
 
-const TERMINAL: MissionTask['status'][] = ['completed', 'failed', 'cancelled'];
+const TERMINAL: MissionTask['status'][] = ['completed', 'failed', 'partial', 'cancelled'];
 const DONE_VISIBLE_SECS = 30 * 60;
 
 export function MissionControl() {
@@ -134,7 +134,9 @@ export function MissionControl() {
                 key={a.id}
                 agent={a}
                 tasks={byAgent[a.id] ?? []}
+                agents={agents.data?.agents ?? []}
                 onChange={tasks.refresh}
+                navigate={navigate}
               />
             ))}
           </div>
@@ -195,7 +197,7 @@ function InboxColumn({ tasks, agents, onChange }: { tasks: MissionTask[]; agents
   );
 }
 
-function AgentColumn({ agent, tasks, onChange }: { agent: Agent; tasks: MissionTask[]; onChange: () => void }) {
+function AgentColumn({ agent, tasks, agents, onChange, navigate }: { agent: Agent; tasks: MissionTask[]; agents: Agent[]; onChange: () => void; navigate: (path: string) => void }) {
   const [dragOver, setDragOver] = useState(false);
   const queued = tasks.filter((t) => t.status === 'queued');
   const running = tasks.filter((t) => t.status === 'running');
@@ -206,7 +208,8 @@ function AgentColumn({ agent, tasks, onChange }: { agent: Agent; tasks: MissionT
     const taskId = e.dataTransfer?.getData('text/plain');
     if (!taskId) return;
     try {
-      await apiPatch(`/api/mission/tasks/${taskId}`, { assigned_agent: agent.id });
+      const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${taskId}`, { assigned_agent: agent.id });
+      if (!result.ok) throw new Error('Task is running or no longer exists');
       onChange();
     } catch (err: any) {
       alert('Reassign failed: ' + (err?.message || err));
@@ -246,7 +249,7 @@ function AgentColumn({ agent, tasks, onChange }: { agent: Agent; tasks: MissionT
           </div>
         )}
         {[...running, ...queued, ...terminal].map((t) => (
-          <TaskCard key={t.id} task={t} onChange={onChange} />
+          <TaskCard key={t.id} task={t} agents={agents} onChange={onChange} navigate={navigate} />
         ))}
       </div>
     </div>
@@ -336,11 +339,11 @@ function InboxCard({
   );
 }
 
-function TaskCard({ task, onChange }: { task: MissionTask; onChange: () => void }) {
+function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; agents: Agent[]; onChange: () => void; navigate: (path: string) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const priorityTone = task.priority >= 7 ? 'high' : task.priority >= 4 ? 'medium' : 'low';
-  const draggable = task.status === 'queued';
+  const draggable = task.status !== 'running';
 
   async function cancel() {
     setBusy('cancel');
@@ -355,6 +358,20 @@ function TaskCard({ task, onChange }: { task: MissionTask; onChange: () => void 
     try { await apiDelete(`/api/mission/tasks/${task.id}`); onChange(); }
     catch (err: any) { alert('Delete failed: ' + (err?.message || err)); }
     finally { setBusy(null); }
+  }
+
+  async function reassign(agentId: string) {
+    if (!agentId || agentId === task.assigned_agent) return;
+    setBusy('assign');
+    try {
+      const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { assigned_agent: agentId });
+      if (!result.ok) throw new Error('Task is running or no longer exists');
+      onChange();
+    } catch (err: any) {
+      alert('Reassign failed: ' + (err?.message || err));
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (
@@ -383,7 +400,32 @@ function TaskCard({ task, onChange }: { task: MissionTask; onChange: () => void 
       <div class="flex items-center gap-1.5 flex-wrap">
         {task.priority > 0 && <Pill tone={priorityTone}>P{task.priority}</Pill>}
         <Pill tone={task.status as any}>{task.status}</Pill>
+        {task.status !== 'running' && (
+          <select
+            value={task.assigned_agent || ''}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              e.stopPropagation();
+              void reassign((e.target as HTMLSelectElement).value);
+            }}
+            disabled={busy !== null}
+            class="bg-[var(--color-card)] border border-[var(--color-border)] rounded text-[10.5px] text-[var(--color-text-muted)] px-1 py-0.5 outline-none disabled:opacity-40"
+            title="Assign to agent"
+          >
+            {agents.map((a) => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
+          </select>
+        )}
         <div class="ml-auto flex items-center gap-1">
+          {TERMINAL.includes(task.status) && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); navigate('/review'); }}
+              class="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+              title="Review deliverable"
+            >
+              <FileText size={11} />
+            </button>
+          )}
           {(task.status === 'queued' || task.status === 'running') && (
             <button
               type="button"

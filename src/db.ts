@@ -2546,7 +2546,7 @@ export function cleanupOldMissionTasks(olderThanDays = 7): number {
 
 export function reassignMissionTask(id: string, newAgent: string): boolean {
   const result = db.prepare(
-    `UPDATE mission_tasks SET assigned_agent = ? WHERE id = ? AND status = 'queued'`,
+    `UPDATE mission_tasks SET assigned_agent = ? WHERE id = ? AND status != 'running'`,
   ).run(newAgent, id);
   return result.changes > 0;
 }

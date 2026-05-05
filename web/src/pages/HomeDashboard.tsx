@@ -1,11 +1,12 @@
 import type { ComponentChildren } from 'preact';
 import { CalendarDays, Cpu, ListChecks, Radio, ShieldCheck, Sunrise, Users } from 'lucide-preact';
+import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { PageHeader } from '@/components/PageHeader';
 import { PageState } from '@/components/PageState';
 import { Pill, StatusDot } from '@/components/Pill';
 import { useFetch } from '@/lib/useFetch';
-import { chatId } from '@/lib/api';
+import { apiPost, chatId } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/format';
 
 interface Health {
@@ -14,6 +15,7 @@ interface Health {
   compactions: number;
   sessionAge: string;
   provider: 'claude' | 'codex';
+  supportedProviders: Array<'claude' | 'codex'>;
   configuredProvider: string;
   resolvedModel: string;
   telegramConnected: boolean;
@@ -99,6 +101,9 @@ const TERMINAL = new Set(['completed', 'failed', 'partial', 'cancelled']);
 
 export function HomeDashboard() {
   const [, navigate] = useLocation();
+  const [expandedBriefs, setExpandedBriefs] = useState<Record<string, boolean>>({});
+  const [switchingProvider, setSwitchingProvider] = useState(false);
+  const [providerNote, setProviderNote] = useState<string | null>(null);
   const health = useFetch<Health>(`/api/health?chatId=${encodeURIComponent(chatId)}`, 30_000);
   const missions = useFetch<{ tasks: MissionTask[] }>('/api/mission/tasks', 15_000);
   const briefs = useFetch<{ updatedAt: string; briefs: HomeBrief[]; latest: HomeBrief | null }>('/api/home/briefs', 30_000);
@@ -122,6 +127,24 @@ export function HomeDashboard() {
   const briefItems = briefs.data?.briefs ?? [];
   const agendaItems = agenda.data?.items ?? [];
 
+  async function switchMainProvider() {
+    if (!health.data || switchingProvider) return;
+    const supported = health.data.supportedProviders?.length ? health.data.supportedProviders : ['claude', 'codex'];
+    const next = supported.find((provider) => provider !== health.data?.provider) || (health.data.provider === 'codex' ? 'claude' : 'codex');
+    setSwitchingProvider(true);
+    setProviderNote(null);
+    try {
+      const result = await apiPost<{ ok: boolean; provider: 'claude' | 'codex'; message: string; restartRequired: boolean }>('/api/provider/switch', { provider: next });
+      setProviderNote(result.restartRequired ? `${result.provider} saved, restart required` : result.message);
+      health.refresh();
+      runtime.refresh();
+    } catch (err: any) {
+      setProviderNote(err?.body?.error || err?.message || String(err));
+    } finally {
+      setSwitchingProvider(false);
+    }
+  }
+
   return (
     <div class="flex flex-col h-full">
       <PageHeader
@@ -140,10 +163,27 @@ export function HomeDashboard() {
       {!error && health.data && (
         <div class="flex-1 overflow-y-auto p-6 space-y-4">
           <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            <Metric icon={<Sunrise size={16} />} label="Today" value={attentionItems.length + ' attention items'} detail={`${activeMissions.length} mission loops · ${runningMissions.length} running · ${unassigned.length} unassigned`} tone={attentionItems.some((item) => item.severity === 'high') ? 'medium' : 'neutral'} />
-            <Metric icon={<CalendarDays size={16} />} label="Calendar" value={agenda.data?.externalCalendar.connected ? 'connected' : 'OS schedule'} detail={agenda.data?.externalCalendar.connected ? agenda.data.externalCalendar.provider || 'calendar' : 'external connector pending'} tone="medium" />
-            <Metric icon={<Users size={16} />} label="Agents" value={`${liveAgents.length}/${agents.data?.agents.length ?? 0} live`} detail={liveAgents.map((a) => a.name || a.id).slice(0, 3).join(', ') || 'none live'} />
-            <Metric icon={<Cpu size={16} />} label="Runtime" value={health.data.provider} detail={health.data.resolvedModel} tone={stackIssues.length ? 'medium' : 'done'} />
+            <Metric icon={<Sunrise size={16} />} label="Today" value={attentionItems.length + ' attention items'} detail={`${activeMissions.length} mission loops · ${runningMissions.length} running · ${unassigned.length} unassigned`} tone={attentionItems.some((item) => item.severity === 'high') ? 'medium' : 'neutral'} onClick={() => navigate('/review')} />
+            <Metric icon={<CalendarDays size={16} />} label="Calendar" value={agenda.data?.externalCalendar.connected ? 'connected' : 'OS schedule'} detail={agenda.data?.externalCalendar.connected ? agenda.data.externalCalendar.provider || 'calendar' : 'external connector pending'} tone="medium" onClick={() => navigate('/scheduled')} />
+            <Metric icon={<Users size={16} />} label="Agents" value={`${liveAgents.length}/${agents.data?.agents.length ?? 0} live`} detail={liveAgents.map((a) => a.name || a.id).slice(0, 3).join(', ') || 'none live'} onClick={() => navigate('/agents')} />
+            <Metric
+              icon={<Cpu size={16} />}
+              label="Runtime"
+              value={health.data.provider}
+              detail={providerNote || health.data.resolvedModel}
+              tone={stackIssues.length ? 'medium' : 'done'}
+              onClick={() => navigate('/runtime')}
+              action={
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); void switchMainProvider(); }}
+                  disabled={switchingProvider}
+                  class="shrink-0 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-elevated)] text-[10.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-40"
+                >
+                  {switchingProvider ? 'Switching...' : `Switch to ${health.data.provider === 'codex' ? 'claude' : 'codex'}`}
+                </button>
+              }
+            />
           </div>
 
           <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] gap-4">
@@ -155,7 +195,12 @@ export function HomeDashboard() {
                   <div class="space-y-3">
                     <BriefAttention items={attentionItems.filter((item) => item.source === 'brief')} />
                     {briefItems.map((brief) => (
-                      <BriefCard key={brief.taskId} brief={brief} />
+                      <BriefCard
+                        key={brief.taskId}
+                        brief={brief}
+                        expanded={!!expandedBriefs[brief.taskId]}
+                        onToggle={() => setExpandedBriefs((prev) => ({ ...prev, [brief.taskId]: !prev[brief.taskId] }))}
+                      />
                     ))}
                   </div>
                 )}
@@ -218,14 +263,48 @@ export function HomeDashboard() {
   );
 }
 
-function Metric({ icon, label, value, detail, tone = 'neutral' }: { icon: ComponentChildren; label: string; value: string; detail: string; tone?: 'neutral' | 'done' | 'medium' }) {
+function Metric({
+  icon,
+  label,
+  value,
+  detail,
+  tone = 'neutral',
+  onClick,
+  action,
+}: {
+  icon: ComponentChildren;
+  label: string;
+  value: string;
+  detail: string;
+  tone?: 'neutral' | 'done' | 'medium';
+  onClick?: () => void;
+  action?: ComponentChildren;
+}) {
   return (
-    <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+    <div
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (!onClick) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      class={[
+        'bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 transition-colors min-h-[118px]',
+        onClick ? 'cursor-pointer hover:border-[var(--color-border-strong)] hover:bg-[var(--color-elevated)] focus:outline-none focus:border-[var(--color-accent)]' : '',
+      ].join(' ')}
+    >
       <div class="flex items-center justify-between gap-2 mb-3">
         <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">{label}</div>
         <div class={tone === 'done' ? 'text-[var(--color-status-done)]' : tone === 'medium' ? 'text-[var(--color-priority-medium)]' : 'text-[var(--color-text-muted)]'}>{icon}</div>
       </div>
-      <div class="text-[19px] font-semibold text-[var(--color-text)] truncate" title={value}>{value}</div>
+      <div class="flex items-start justify-between gap-2">
+        <div class="text-[19px] font-semibold text-[var(--color-text)] truncate min-w-0" title={value}>{value}</div>
+        {action}
+      </div>
       <div class="text-[11px] text-[var(--color-text-muted)] truncate mt-1" title={detail}>{detail}</div>
     </div>
   );
@@ -291,19 +370,32 @@ function ScheduledLine({ item }: { item: HomeAgendaItem }) {
   );
 }
 
-function BriefCard({ brief }: { brief: HomeBrief }) {
+function BriefCard({ brief, expanded, onToggle }: { brief: HomeBrief; expanded: boolean; onToggle: () => void }) {
   return (
-    <div class={(brief.primary ? 'bg-[var(--color-elevated)] border-[var(--color-border-strong)]' : 'bg-[var(--color-card)] border-[var(--color-border)]') + ' rounded-md border p-3 min-w-0'}>
+    <div
+      role="button"
+      tabIndex={0}
+      aria-expanded={expanded}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+      class={(brief.primary ? 'bg-[var(--color-elevated)] border-[var(--color-border-strong)]' : 'bg-[var(--color-card)] border-[var(--color-border)]') + ' rounded-md border p-3 min-w-0 cursor-pointer hover:border-[var(--color-border-strong)] focus:outline-none focus:border-[var(--color-accent)]'}
+    >
       <div class="flex items-center justify-between gap-2 mb-2">
         <div class="flex items-center gap-2 min-w-0">
           <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">{brief.label}</div>
           {brief.primary && <Pill tone="accent">latest</Pill>}
+          <Pill tone="neutral">{expanded ? 'full' : 'click to expand'}</Pill>
         </div>
         <Pill tone={brief.status === 'paused' ? 'cancelled' : brief.lastStatus === 'failed' ? 'failed' : 'done'}>
           {brief.lastRun ? formatRelativeTime(brief.lastRun) : formatCountdown(brief.nextRun)}
         </Pill>
       </div>
-      <div class="text-[12px] text-[var(--color-text-muted)] whitespace-pre-wrap leading-relaxed line-clamp-5">
+      <div class={'text-[12px] text-[var(--color-text-muted)] whitespace-pre-wrap leading-relaxed ' + (expanded ? '' : 'line-clamp-5')}>
         {brief.content}
       </div>
       <div class="text-[10.5px] text-[var(--color-text-faint)] mt-2">

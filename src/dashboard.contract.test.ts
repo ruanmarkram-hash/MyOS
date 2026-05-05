@@ -14,7 +14,7 @@
 // land BEFORE config.ts evaluates at import time.
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
-import { _initTestDatabase, createMissionTask, createScheduledTask, updateTaskAfterRun } from './db.js';
+import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, updateTaskAfterRun } from './db.js';
 import { buildDashboardApp } from './dashboard.js';
 import type { Hono } from 'hono';
 
@@ -527,6 +527,52 @@ describe('GET /api/mission/history', () => {
       tasks: expect.any(Array),
       total: expect.any(Number),
     });
+  });
+});
+
+describe('GET /api/review/inbox', () => {
+  it('returns completed mission deliverables for review', async () => {
+    createMissionTask('m-review-1', 'Write deliverable', 'produce output', 'mason', 'dashboard', 6);
+    completeMissionTask('m-review-1', 'Created /tmp/review-deliverable.txt', 'completed');
+
+    const res = await get('/api/review/inbox?limit=10');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      updatedAt: expect.any(String),
+      total: expect.any(Number),
+      items: expect.any(Array),
+      exportEmailConfigured: expect.any(Boolean),
+    });
+    expect(body.items[0]).toMatchObject({
+      id: 'm-review-1',
+      title: 'Write deliverable',
+      status: 'completed',
+      deliverables: expect.any(Array),
+    });
+  });
+});
+
+describe('POST /api/review/tasks/:id/email', () => {
+  it('respects DASHBOARD_MUTATIONS_ENABLED=false before exporting or sending', async () => {
+    createMissionTask('m-review-email', 'Email deliverable', 'produce output', 'mason', 'dashboard', 6);
+    completeMissionTask('m-review-email', 'Ready for review.', 'completed');
+
+    const prev = process.env.DASHBOARD_MUTATIONS_ENABLED;
+    process.env.DASHBOARD_MUTATIONS_ENABLED = 'false';
+    try {
+      const res = await app.request('/api/review/tasks/m-review-email/email' + Q, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ format: 'docx' }),
+      });
+      expect(res.status).toBe(423);
+      const body = await jsonOf(res);
+      expect(body).toMatchObject({ ok: false, error: expect.any(String) });
+    } finally {
+      if (prev === undefined) delete process.env.DASHBOARD_MUTATIONS_ENABLED;
+      else process.env.DASHBOARD_MUTATIONS_ENABLED = prev;
+    }
   });
 });
 

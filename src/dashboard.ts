@@ -153,6 +153,261 @@ function writeEnvValue(key: string, value: string): void {
   fs.writeFileSync(envPath, lines.join('\n'), { encoding: 'utf-8', mode: 0o600 });
 }
 
+const REVIEW_FILE_MAX_BYTES = 50 * 1024 * 1024;
+const REVIEW_EXPORT_DIR = path.join('/tmp', 'claudeclaw-review-exports');
+const MSGRAPH_SEND_SCRIPT = path.join(PROJECT_ROOT, 'skills', 'msgraph', 'send_graph_email.py');
+
+type ReviewDeliverable = {
+  id: string;
+  kind: 'file' | 'url' | 'text';
+  label: string;
+  target: string;
+  href: string | null;
+  exists: boolean;
+  sizeBytes: number | null;
+};
+
+function userHomeDir(): string {
+  return path.dirname(PROJECT_ROOT);
+}
+
+function expandUserPath(raw: string): string {
+  if (raw.startsWith('~/')) return path.join(userHomeDir(), raw.slice(2));
+  return raw;
+}
+
+function isPathInside(child: string, parent: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function resolveReviewFilePath(raw: string): string | null {
+  if (!raw || raw.length > 2000) return null;
+  const expanded = expandUserPath(raw.trim());
+  if (!path.isAbsolute(expanded)) return null;
+
+  const resolved = path.resolve(expanded);
+  const workspaceRoot = path.join(userHomeDir(), 'workspace');
+  const allowedRoots = [PROJECT_ROOT, workspaceRoot, '/tmp', '/private/tmp'];
+  if (!allowedRoots.some((root) => isPathInside(resolved, root))) return null;
+
+  const deniedRoots = [
+    path.join(PROJECT_ROOT, 'store'),
+    path.join(PROJECT_ROOT, '.git'),
+    path.join(PROJECT_ROOT, '.env'),
+  ];
+  if (deniedRoots.some((root) => isPathInside(resolved, root))) return null;
+  if (/\.(?:db|db-wal|db-shm|sqlite|sqlite3)$/i.test(resolved)) return null;
+
+  try {
+    const real = fs.realpathSync(resolved);
+    if (!allowedRoots.some((root) => isPathInside(real, root))) return null;
+    if (deniedRoots.some((root) => isPathInside(real, root))) return null;
+    return real;
+  } catch {
+    return resolved;
+  }
+}
+
+function sanitizeExportSlug(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 72) || 'mission-deliverable';
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function maskEmail(email: string): string {
+  const [name, domain] = email.split('@');
+  if (!domain) return 'configured owner';
+  const visible = name.length <= 2 ? name[0] || '*' : `${name[0]}***${name[name.length - 1]}`;
+  return `${visible}@${domain}`;
+}
+
+function configuredOwnerEmail(): string | null {
+  const env = readEnvFile(['OWNER_EMAIL', 'RUAN_EMAIL', 'APPLE_ID_EMAIL', 'GRAPH_USER_EMAIL', 'MSGRAPH_USER_EMAIL']);
+  return process.env.OWNER_EMAIL
+    || process.env.RUAN_EMAIL
+    || process.env.GRAPH_USER_EMAIL
+    || process.env.MSGRAPH_USER_EMAIL
+    || env.OWNER_EMAIL
+    || env.RUAN_EMAIL
+    || env.GRAPH_USER_EMAIL
+    || env.MSGRAPH_USER_EMAIL
+    || env.APPLE_ID_EMAIL
+    || null;
+}
+
+function reviewFileHref(filePath: string): string {
+  return `/api/review/file?path=${encodeURIComponent(filePath)}`;
+}
+
+function extractMissionDeliverables(task: MissionTask): ReviewDeliverable[] {
+  const text = [task.result || '', task.error || ''].filter(Boolean).join('\n');
+  const deliverables: ReviewDeliverable[] = [];
+  const seen = new Set<string>();
+
+  const addFile = (rawPath: string) => {
+    const clean = rawPath.replace(/[),.;:]+$/g, '');
+    const filePath = resolveReviewFilePath(clean);
+    if (!filePath || seen.has(`file:${filePath}`)) return;
+    seen.add(`file:${filePath}`);
+    let exists = false;
+    let sizeBytes: number | null = null;
+    try {
+      const stat = fs.statSync(filePath);
+      exists = stat.isFile();
+      sizeBytes = stat.size;
+    } catch {
+      exists = false;
+    }
+    deliverables.push({
+      id: crypto.createHash('sha1').update(`file:${filePath}`).digest('hex').slice(0, 12),
+      kind: 'file',
+      label: path.basename(filePath),
+      target: filePath,
+      href: exists ? reviewFileHref(filePath) : null,
+      exists,
+      sizeBytes,
+    });
+  };
+
+  const addUrl = (rawUrl: string) => {
+    const clean = rawUrl.replace(/[),.;]+$/g, '');
+    if (seen.has(`url:${clean}`)) return;
+    seen.add(`url:${clean}`);
+    deliverables.push({
+      id: crypto.createHash('sha1').update(`url:${clean}`).digest('hex').slice(0, 12),
+      kind: 'url',
+      label: clean.replace(/^https?:\/\//, '').slice(0, 80),
+      target: clean,
+      href: clean,
+      exists: true,
+      sizeBytes: null,
+    });
+  };
+
+  const sendFileRe = /\[SEND_(?:FILE|PHOTO):([^\]|]+)(?:\|[^\]]*)?\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = sendFileRe.exec(text))) addFile(match[1]);
+
+  const pathRe = /(?:^|[\s("'`])((?:~\/|\/Users\/|\/tmp\/|\/private\/tmp\/)[^\s"'`<>]+(?:\.[A-Za-z0-9]{1,12})?)/g;
+  while ((match = pathRe.exec(text))) addFile(match[1]);
+
+  const urlRe = /https?:\/\/[^\s"'`<>]+/g;
+  while ((match = urlRe.exec(text))) addUrl(match[0]);
+
+  if (deliverables.length === 0 && (task.result || task.error)) {
+    deliverables.push({
+      id: 'mission-result',
+      kind: 'text',
+      label: 'Mission result',
+      target: task.id,
+      href: null,
+      exists: true,
+      sizeBytes: null,
+    });
+  }
+
+  return deliverables;
+}
+
+function buildReviewItem(task: MissionTask) {
+  const text = task.result || task.error || '';
+  return {
+    id: task.id,
+    title: task.title,
+    agentId: task.assigned_agent,
+    status: task.status,
+    priority: task.priority,
+    createdAt: task.created_at,
+    completedAt: task.completed_at,
+    summary: text.replace(/\s+/g, ' ').trim().slice(0, 260),
+    result: task.result,
+    error: task.error,
+    deliverables: extractMissionDeliverables(task),
+  };
+}
+
+function missionTaskExportHtml(task: MissionTask): string {
+  const when = task.completed_at ? new Date(task.completed_at * 1000).toLocaleString('en-AU') : 'not completed';
+  const body = task.result || task.error || 'No result content was recorded for this mission task.';
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(task.title)}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #111827; line-height: 1.5; }
+    h1 { font-size: 24px; margin: 0 0 8px; }
+    .meta { color: #6b7280; font-size: 12px; margin-bottom: 24px; }
+    pre { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f3f4f6; padding: 16px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(task.title)}</h1>
+  <div class="meta">Mission ${escapeHtml(task.id)} · ${escapeHtml(task.assigned_agent || 'unassigned')} · ${escapeHtml(task.status)} · ${escapeHtml(when)}</div>
+  <pre>${escapeHtml(body)}</pre>
+</body>
+</html>`;
+}
+
+async function createMissionTaskExport(task: MissionTask, format: 'docx' | 'html' = 'docx'): Promise<{ path: string; format: string }> {
+  fs.mkdirSync(REVIEW_EXPORT_DIR, { recursive: true, mode: 0o700 });
+  const slug = sanitizeExportSlug(task.title);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const htmlPath = path.join(REVIEW_EXPORT_DIR, `${slug}-${task.id}-${stamp}.html`);
+  fs.writeFileSync(htmlPath, missionTaskExportHtml(task), { encoding: 'utf-8', mode: 0o600 });
+
+  if (format === 'html') return { path: htmlPath, format: 'html' };
+
+  const docxPath = htmlPath.replace(/\.html$/, '.docx');
+  try {
+    const { safeExecFileAsync } = await import('./safe-spawn.js');
+    await safeExecFileAsync('textutil', ['-convert', 'docx', '-output', docxPath, htmlPath], {
+      envClass: 'system-tool',
+      timeout: 30_000,
+    });
+    if (fs.existsSync(docxPath)) return { path: docxPath, format: 'docx' };
+  } catch {
+    // Fall back to HTML on systems without textutil conversion support.
+  }
+
+  return { path: htmlPath, format: 'html' };
+}
+
+async function sendMissionTaskExportEmail(task: MissionTask, to: string, attachmentPath: string): Promise<void> {
+  const graphEnv = readEnvFile(['GRAPH_CLIENT_ID', 'GRAPH_TENANT_ID', 'GRAPH_CLIENT_SECRET', 'GRAPH_REFRESH_TOKEN']);
+  const bodyPath = attachmentPath.replace(/\.[^.]+$/, '.email.html');
+  const body = `<p>Attached is the exported deliverable from Mission Control.</p>
+<p><strong>${escapeHtml(task.title)}</strong><br>
+Mission ${escapeHtml(task.id)} · ${escapeHtml(task.assigned_agent || 'unassigned')} · ${escapeHtml(task.status)}</p>`;
+  fs.writeFileSync(bodyPath, body, { encoding: 'utf-8', mode: 0o600 });
+
+  const { safeExecFileAsync } = await import('./safe-spawn.js');
+  await safeExecFileAsync('python3', [
+    MSGRAPH_SEND_SCRIPT,
+    '--to', to,
+    '--subject', `Mission deliverable: ${task.title}`,
+    '--body-file', bodyPath,
+    '--html',
+    '--attach', attachmentPath,
+  ], {
+    envClass: 'sdk',
+    extraEnv: graphEnv,
+    cwd: PROJECT_ROOT,
+    timeout: 60_000,
+  });
+}
+
 function openBrainConfigured(): boolean {
   return BRAIN === 'ob1' && !!OB1_SUPABASE_URL && !!MCP_ACCESS_KEY && !!OB1_BRAIN_FUNCTION;
 }
@@ -1352,6 +1607,9 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     if (!newAgent) return c.json({ error: 'assigned_agent required' }, 400);
     const validAgents = ['main', ...listAgentIds()];
     if (!validAgents.includes(newAgent)) return c.json({ error: 'Unknown agent' }, 400);
+    const task = getMissionTask(id);
+    if (!task) return c.json({ error: 'Not found' }, 404);
+    if (task.status === 'running') return c.json({ ok: false, error: 'Running mission tasks cannot be reassigned.' }, 409);
     const ok = reassignMissionTask(id, newAgent);
     return c.json({ ok });
   });
@@ -1366,6 +1624,80 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const limit = parseInt(c.req.query('limit') || '30', 10);
     const offset = parseInt(c.req.query('offset') || '0', 10);
     return c.json(getMissionTaskHistory(limit, offset));
+  });
+
+  // ── Review Inbox endpoints ───────────────────────────────────────────
+
+  app.get('/api/review/inbox', (c) => {
+    const limit = Math.max(1, Math.min(100, parseInt(c.req.query('limit') || '50', 10) || 50));
+    const history = getMissionTaskHistory(limit, 0);
+    return c.json({
+      updatedAt: new Date().toISOString(),
+      items: history.tasks.map(buildReviewItem),
+      total: history.total,
+      exportEmailConfigured: !!configuredOwnerEmail(),
+    });
+  });
+
+  app.get('/api/review/file', (c) => {
+    const rawPath = c.req.query('path') || '';
+    const filePath = resolveReviewFilePath(rawPath);
+    if (!filePath) return c.json({ error: 'file path is not allowed' }, 400);
+    if (!fs.existsSync(filePath)) return c.json({ error: 'file not found' }, 404);
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return c.json({ error: 'path is not a file' }, 400);
+    if (stat.size > REVIEW_FILE_MAX_BYTES) return c.json({ error: 'file is too large to serve from dashboard' }, 413);
+
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = ext === '.pdf' ? 'application/pdf'
+      : ext === '.docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : ext === '.html' ? 'text/html; charset=utf-8'
+          : ext === '.md' || ext === '.txt' ? 'text/plain; charset=utf-8'
+            : 'application/octet-stream';
+    return new Response(fs.readFileSync(filePath), {
+      headers: {
+        'content-type': contentType,
+        'content-disposition': `inline; filename="${path.basename(filePath).replace(/"/g, '')}"`,
+      },
+    });
+  });
+
+  app.post('/api/review/tasks/:id/email', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+
+    const id = c.req.param('id');
+    const task = getMissionTask(id);
+    if (!task) return c.json({ ok: false, error: 'Not found' }, 404);
+    if (!['completed', 'failed', 'partial'].includes(task.status)) {
+      return c.json({ ok: false, error: 'Only completed, partial, or failed mission tasks can be exported.' }, 400);
+    }
+
+    const ownerEmail = configuredOwnerEmail();
+    if (!ownerEmail) return c.json({ ok: false, error: 'No owner email configured. Set OWNER_EMAIL or APPLE_ID_EMAIL.' }, 400);
+
+    let body: { format?: 'docx' | 'html' } = {};
+    try { body = await c.req.json(); } catch { body = {}; }
+    const exported = await createMissionTaskExport(task, body.format === 'html' ? 'html' : 'docx');
+    try {
+      await sendMissionTaskExportEmail(task, ownerEmail, exported.path);
+    } catch (err: any) {
+      return c.json({
+        ok: false,
+        error: err?.message || String(err),
+        exported,
+        to: maskEmail(ownerEmail),
+      }, 502);
+    }
+
+    return c.json({
+      ok: true,
+      taskId: task.id,
+      exported,
+      emailed: true,
+      to: maskEmail(ownerEmail),
+    });
   });
 
   // ── Live Meetings (Pika meet-cli wrapper) ──────────────────────────

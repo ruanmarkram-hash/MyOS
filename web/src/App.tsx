@@ -4,6 +4,7 @@ import { CommandPalette } from '@/components/CommandPalette';
 import { Placeholder } from '@/pages/Placeholder';
 import { HomeDashboard } from '@/pages/HomeDashboard';
 import { MissionControl } from '@/pages/MissionControl';
+import { ReviewInbox } from '@/pages/ReviewInbox';
 import { Brain } from '@/pages/Brain';
 import { Memories } from '@/pages/Memories';
 import { HiveMind } from '@/pages/HiveMind';
@@ -31,6 +32,7 @@ export function App() {
         <main class="flex-1 min-w-0 overflow-hidden">
           <Switch>
             <Route path="/home"><HomeDashboard /></Route>
+            <Route path="/review"><ReviewInbox /></Route>
             <Route path="/mission"><MissionControl /></Route>
             <Route path="/scheduled"><Scheduled /></Route>
             <Route path="/agents"><Agents /></Route>
