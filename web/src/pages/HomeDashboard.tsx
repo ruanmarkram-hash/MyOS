@@ -121,11 +121,12 @@ export function HomeDashboard() {
             <section class="space-y-4">
               <Panel title="Briefs" icon={<Sunrise size={15} />}>
                 {briefGroups.length === 0 ? (
-                  <EmptyLine text="No scheduled brief jobs found." />
+                  <EmptyLine text="No recent brief outputs found." />
                 ) : (
-                  <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
+                  <div class="space-y-3">
+                    <BriefAttention briefs={briefGroups} />
                     {briefGroups.map((group) => (
-                      <BriefCard key={group.label} label={group.label} task={group.task} />
+                      <BriefCard key={group.label} label={group.label} task={group.task} primary={group.primary} />
                     ))}
                   </div>
                 )}
@@ -255,26 +256,62 @@ function ScheduledLine({ task }: { task: ScheduledTask }) {
   );
 }
 
-function BriefCard({ label, task }: { label: string; task: ScheduledTask | null }) {
+function BriefCard({ label, task, primary }: { label: string; task: ScheduledTask; primary?: boolean }) {
   return (
-    <div class="rounded-md bg-[var(--color-elevated)] border border-[var(--color-border)] p-3 min-w-0">
+    <div class={(primary ? 'bg-[var(--color-elevated)] border-[var(--color-border-strong)]' : 'bg-[var(--color-card)] border-[var(--color-border)]') + ' rounded-md border p-3 min-w-0'}>
       <div class="flex items-center justify-between gap-2 mb-2">
-        <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">{label}</div>
-        {task && <Pill tone={task.status === 'paused' ? 'cancelled' : 'done'}>{formatCountdown(task.next_run)}</Pill>}
+        <div class="flex items-center gap-2 min-w-0">
+          <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">{label}</div>
+          {primary && <Pill tone="accent">latest</Pill>}
+        </div>
+        <Pill tone={task.status === 'paused' ? 'cancelled' : 'done'}>
+          {task.last_run ? formatRelativeTime(task.last_run) : formatCountdown(task.next_run)}
+        </Pill>
       </div>
-      {task ? (
-        <>
-          <div class="text-[12.5px] text-[var(--color-text)] leading-snug line-clamp-2">{scheduleTitle(task.prompt)}</div>
-          <div class="text-[10.5px] text-[var(--color-text-faint)] mt-1">{describeCron(task.schedule)} · @{task.agent_id}</div>
-          {task.last_result && (
-            <div class="mt-2 text-[11px] text-[var(--color-text-muted)] line-clamp-3 whitespace-pre-wrap">
-              {task.last_result}
-            </div>
-          )}
-        </>
-      ) : (
-        <div class="text-[12px] text-[var(--color-text-muted)]">Not scheduled</div>
-      )}
+      <div class="text-[12px] text-[var(--color-text-muted)] whitespace-pre-wrap leading-relaxed line-clamp-5">
+        {task.last_result}
+      </div>
+      <div class="text-[10.5px] text-[var(--color-text-faint)] mt-2">
+        {scheduleTitle(task.prompt)} · {describeCron(task.schedule)} · @{task.agent_id}
+      </div>
+    </div>
+  );
+}
+
+function AttentionLine({ text }: { text: string }) {
+  const urgent = /urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|🚨/i.test(text);
+  return (
+    <div class="flex items-start gap-2 text-[12px] text-[var(--color-text-muted)]">
+      <span class={(urgent ? 'bg-[var(--color-priority-high)]' : 'bg-[var(--color-text-faint)]') + ' mt-1.5 w-1.5 h-1.5 rounded-full shrink-0'} />
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function extractAttentionItems(briefs: Array<{ task: ScheduledTask }>): string[] {
+  const lines: string[] = [];
+  for (const { task } of briefs) {
+    for (const line of (task.last_result || '').split(/\r?\n/)) {
+      const cleaned = line.replace(/^[-*•]\s*/, '').trim();
+      if (!cleaned || /^OK$/i.test(cleaned)) continue;
+      if (/urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|🚨|tomorrow top|open threads/i.test(cleaned)) {
+        lines.push(cleaned);
+      }
+      if (lines.length >= 6) return lines;
+    }
+  }
+  return lines;
+}
+
+function BriefAttention({ briefs }: { briefs: Array<{ task: ScheduledTask }> }) {
+  const items = extractAttentionItems(briefs);
+  if (items.length === 0) return null;
+  return (
+    <div class="rounded-md bg-[var(--color-elevated)] border border-[var(--color-border)] p-3">
+      <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-2">Needs attention</div>
+      <div class="space-y-1.5">
+        {items.map((item, index) => <AttentionLine key={index} text={item} />)}
+      </div>
     </div>
   );
 }
@@ -316,25 +353,31 @@ function scheduleTitle(prompt: string): string {
   return beforeMode.length > 180 ? beforeMode.slice(0, 177) + '...' : beforeMode;
 }
 
-function groupBriefTasks(tasks: ScheduledTask[]): Array<{ label: string; task: ScheduledTask | null }> {
-  const candidates = tasks.filter((task) => /morning|mid.?day|evening|daily|brief|wrap/i.test(task.prompt));
+function groupBriefTasks(tasks: ScheduledTask[]): Array<{ label: string; task: ScheduledTask; primary?: boolean }> {
+  const candidates = tasks
+    .filter((task) => task.last_result && !/^OK$/i.test(task.last_result.trim()))
+    .filter((task) => /morning|mid.?day|evening|daily|brief|wrap|pulse/i.test(task.prompt));
   const pick = (patterns: RegExp[]) =>
     candidates
       .filter((task) => patterns.some((pattern) => pattern.test(task.prompt)))
-      .sort((a, b) => a.next_run - b.next_run)[0] || null;
+      .sort((a, b) => (b.last_run || 0) - (a.last_run || 0))[0] || null;
 
   const morning = pick([/morning/i]);
   const midday = pick([/mid.?day|afternoon|pulse/i]);
   const evening = pick([/evening|wrap|shutdown/i]);
   const used = new Set([morning?.id, midday?.id, evening?.id].filter(Boolean));
-  const other = candidates.filter((task) => !used.has(task.id)).sort((a, b) => a.next_run - b.next_run)[0] || null;
+  const other = candidates.filter((task) => !used.has(task.id)).sort((a, b) => (b.last_run || 0) - (a.last_run || 0))[0] || null;
+  const groups = [
+    morning && { label: 'Morning', task: morning },
+    midday && { label: 'Midday', task: midday },
+    evening && { label: 'Evening', task: evening },
+    other && { label: 'Other', task: other },
+  ].filter(Boolean) as Array<{ label: string; task: ScheduledTask; primary?: boolean }>;
+  const latestId = groups
+    .map((group) => group.task)
+    .sort((a, b) => (b.last_run || 0) - (a.last_run || 0))[0]?.id;
 
-  return [
-    { label: 'Morning', task: morning },
-    { label: 'Midday', task: midday },
-    { label: 'Evening', task: evening },
-    ...(other ? [{ label: 'Other', task: other }] : []),
-  ];
+  return groups.map((group) => ({ ...group, primary: group.task.id === latestId }));
 }
 
 function compactCommandTitle(command: string): string {
