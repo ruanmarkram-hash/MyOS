@@ -13,6 +13,7 @@ import { Settings } from '@/pages/Settings';
 import { Voices } from '@/pages/Voices';
 import { Chat } from '@/pages/Chat';
 import { WarRoom } from '@/pages/WarRoom';
+import { Files } from '@/pages/Files';
 import { DEFAULT_ROUTE } from '@/lib/routes';
 
 export function App() {
@@ -31,6 +32,7 @@ export function App() {
           <Route path="/audit"><Audit /></Route>
           <Route path="/warroom"><WarRoom /></Route>
           <Route path="/voices"><Voices /></Route>
+          <Route path="/files"><Files /></Route>
           <Route path="/settings"><Settings /></Route>
 
           <Route path="/"><Redirect to={DEFAULT_ROUTE} /></Route>

@@ -2,7 +2,7 @@ import {
   LayoutGrid, ListTodo, Users, MessageSquare,
   Brain, Network, Activity, ShieldCheck,
   Radio,
-  Mic, Settings,
+  Mic, Settings, FileText,
 } from 'lucide-preact';
 import type { ComponentChildren } from 'preact';
 
@@ -31,6 +31,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/warroom',    label: 'War Room',        section: 'collaborate',  icon: Radio,         shortcut: 'g w' },
 
   { path: '/voices',     label: 'Voices',          section: 'configure',    icon: Mic                       },
+  { path: '/files',      label: 'Files',           section: 'configure',    icon: FileText,      shortcut: 'g f' },
   { path: '/settings',   label: 'Settings',        section: 'configure',    icon: Settings                  },
 ];
 
