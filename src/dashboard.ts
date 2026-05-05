@@ -331,6 +331,10 @@ function reviewTaskText(task: MissionTask): string {
   return `${task.title}\n${task.prompt}\n${task.result || ''}\n${task.error || ''}`;
 }
 
+function reviewOutcomeText(task: MissionTask): string {
+  return `${task.title}\n${task.result || ''}\n${task.error || ''}`;
+}
+
 function missionAgeHours(task: MissionTask): number {
   const t = task.completed_at || task.created_at || Math.floor(Date.now() / 1000);
   return (Date.now() / 1000 - t) / 3600;
@@ -341,14 +345,14 @@ function isReviewSpawnedTask(task: MissionTask): boolean {
 }
 
 function containsHumanActionSignal(task: MissionTask): boolean {
-  return /(ruan|manual|needs? your|waiting on you|approve|approval|review required|for review|awaiting review|sign.?off|full disk access|app-specific password|credentials?|password refresh|grant permission|what you need to do|send \/restart)/i
-    .test(reviewTaskText(task));
+  return /(ruan|manual|needs? your|waiting on you|approval required|requires approval|requires your review|awaiting your review|awaiting ruan review|ruan review|sign.?off|full disk access|app-specific password|credentials?|password refresh|grant permission|what you need to do|send \/restart)/i
+    .test(reviewOutcomeText(task));
 }
 
 function isNonDevDeliverable(task: MissionTask): boolean {
   if (task.assigned_agent === 'mason' || task.assigned_agent === 'warden') return false;
   return /(deliverable|handoff|review pack|prepared|draft|response|audit|compliance|support plan|restrictive practice|charter|inquiry)/i
-    .test(reviewTaskText(task));
+    .test(reviewOutcomeText(task));
 }
 
 function isRecentActionableFailure(task: MissionTask): boolean {
@@ -364,11 +368,14 @@ function defaultReviewStatusForTask(task: MissionTask, missions: MissionTask[]):
   }
   if (task.status === 'completed') {
     if (completedMissionHasFollowUp(task, missions)) return null;
+    if (task.assigned_agent === 'mason') {
+      if (isReviewSpawnedTask(task) && extractMissionDeliverables(task).some((deliverable) => deliverable.kind !== 'text' || /what you need to do|manual|full disk access/i.test(reviewTaskText(task)))) {
+        return 'needs_review';
+      }
+      return null;
+    }
     if (containsHumanActionSignal(task)) return 'needs_review';
     if (isNonDevDeliverable(task)) return 'needs_review';
-    if (isReviewSpawnedTask(task) && extractMissionDeliverables(task).some((deliverable) => deliverable.kind !== 'text' || /what you need to do|manual|full disk access/i.test(reviewTaskText(task)))) {
-      return 'needs_review';
-    }
     return null;
   }
   return null;

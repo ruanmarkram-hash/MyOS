@@ -593,6 +593,26 @@ describe('GET /api/review/inbox', () => {
     expect(body.items.map((item: any) => item.id)).not.toContain('m-dev-history');
   });
 
+  it('does not treat generic Codex review wording as a Ruan review decision', async () => {
+    createMissionTask('m-codex-review-history', 'Close Codex review findings', 'address Codex review notes', 'mason', 'dashboard', 4);
+    completeMissionTask('m-codex-review-history', 'Codex review fixes landed and tests passed.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=10');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.items.map((item: any) => item.id)).not.toContain('m-codex-review-history');
+  });
+
+  it('does not show completed Mason work just because it mentions Ruan in the result', async () => {
+    createMissionTask('m-mason-ruan-history', 'Build internal thing', 'do code work', 'mason', 'dashboard', 4);
+    completeMissionTask('m-mason-ruan-history', 'Done. Ruan can inspect the commit later if needed.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=10');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.items.map((item: any) => item.id)).not.toContain('m-mason-ruan-history');
+  });
+
   it('creates a child mission with review instructions and moves parent to waiting_followup', async () => {
     createMissionTask('m-review-fail', 'Fix broken thing', 'original prompt', 'mason', 'dashboard', 6);
     completeMissionTask('m-review-fail', null, 'failed', 'TypeError: broke');
