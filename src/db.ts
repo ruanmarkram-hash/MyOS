@@ -449,6 +449,9 @@ export function appendAgentFileHistory(row: {
   contentSha: string;
   editedByChatId?: string | null;
 }): number {
+  // Encrypt content at rest. CLAUDE.md may contain operational rules,
+  // endpoints, kill-switch logic, or chat IDs. Same pattern as message stores.
+  // content_sha stays plaintext so the listing endpoint can show version IDs.
   const now = Math.floor(Date.now() / 1000);
   const result = db
     .prepare(
@@ -459,7 +462,7 @@ export function appendAgentFileHistory(row: {
     .run(
       row.filePath,
       row.realPath,
-      row.content,
+      encryptField(row.content),
       row.contentSha,
       row.editedByChatId ?? null,
       now,
@@ -467,9 +470,9 @@ export function appendAgentFileHistory(row: {
   return Number(result.lastInsertRowid);
 }
 
-/** Most-recent-first history for a single file_path. */
+/** Most-recent-first history for a single file_path. Decrypts content on read. */
 export function listAgentFileHistory(filePath: string, limit = 50): AgentFileHistoryRow[] {
-  return db
+  const rows = db
     .prepare(
       `SELECT id, file_path, real_path, content, content_sha, edited_by_chat_id, created_at
          FROM agent_file_history
@@ -478,6 +481,10 @@ export function listAgentFileHistory(filePath: string, limit = 50): AgentFileHis
         LIMIT ?`,
     )
     .all(filePath, limit) as AgentFileHistoryRow[];
+  return rows.map((r) => ({
+    ...r,
+    content: decryptField(r.content),
+  }));
 }
 
 export function initDatabase(): void {

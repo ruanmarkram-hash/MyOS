@@ -1,24 +1,22 @@
 // Phase C1.a — main CLAUDE.md editor with live hot-reload.
 //
 // Surface owned by this module:
-//   - Path allowlist: ONLY the project's CLAUDE.md is writable through the
+//   - Path allowlist: ONLY the active main CLAUDE.md is writable through the
 //     dashboard editor today. C1.b will widen the list to per-agent files.
 //   - Atomic write: every save lands via a sibling temp file + renameSync
 //     so a crash mid-write can't truncate the live file.
 //   - History append: one row per successful save, for revert + audit.
 //   - Hot-reload: after a successful write the in-memory `agentSystemPrompt`
 //     is refreshed so a NEW session picks up the new rules without a process
-//     restart. Resumed sessions re-read CLAUDE.md from disk on every SDK
-//     subprocess spawn (settingSources: ['project'], cwd: PROJECT_ROOT), so
-//     they pick the change up automatically on the very next turn.
+//     restart.
 
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
 import {
-  PROJECT_ROOT,
   agentSystemPrompt,
+  resolveMainClaudeMdPath,
   setAgentSystemPrompt,
 } from './config.js';
 import { appendAgentFileHistory, listAgentFileHistory, AgentFileHistoryRow } from './db.js';
@@ -26,15 +24,16 @@ import { logger } from './logger.js';
 
 /** Logical id used in the dashboard URL: /api/agent-files/:id. */
 export const MAIN_FILE_ID = 'main' as const;
+export const MAX_AGENT_FILE_BYTES = 256 * 1024;
 
 /**
  * Allowlist of files the editor may write. Keyed by id so the API surface
  * never exposes raw filesystem paths to the client. Belt-and-braces
  * defence: every write helper rejects ids outside this map.
  */
-const ALLOWLIST: Record<string, { absolutePath: string; label: string }> = {
+const ALLOWLIST: Record<string, { absolutePath: () => string; label: string }> = {
   [MAIN_FILE_ID]: {
-    absolutePath: path.join(PROJECT_ROOT, 'CLAUDE.md'),
+    absolutePath: resolveMainClaudeMdPath,
     label: 'Sage main CLAUDE.md',
   },
 };
@@ -50,8 +49,8 @@ export function listEditableFiles(): AgentFileDescriptor[] {
   return Object.entries(ALLOWLIST).map(([id, entry]) => ({
     id,
     label: entry.label,
-    path: entry.absolutePath,
-    exists: fs.existsSync(entry.absolutePath),
+    path: entry.absolutePath(),
+    exists: fs.existsSync(entry.absolutePath()),
   }));
 }
 
@@ -64,7 +63,7 @@ function resolveEntry(id: string): { absolutePath: string; label: string } {
   if (!entry) {
     throw new EditorError(400, `Unknown file id: ${id}`);
   }
-  return entry;
+  return { absolutePath: entry.absolutePath(), label: entry.label };
 }
 
 export class EditorError extends Error {
@@ -106,6 +105,12 @@ export function atomicWrite(absolutePath: string, content: string): void {
 
 export function sha256(content: string): string {
   return crypto.createHash('sha256').update(content, 'utf-8').digest('hex');
+}
+
+function assertWithinSizeLimit(content: string): void {
+  if (Buffer.byteLength(content, 'utf-8') > MAX_AGENT_FILE_BYTES) {
+    throw new EditorError(413, 'content exceeds 256 KiB cap');
+  }
 }
 
 export interface ReadResult {
@@ -158,6 +163,7 @@ export function saveEditableFile(
   opts: SaveOptions = {},
 ): SaveResult {
   const entry = resolveEntry(id);
+  assertWithinSizeLimit(newContent);
 
   // Optimistic concurrency: refuse stale writes if caller passed
   // an expectedSha that no longer matches what's on disk.
@@ -196,8 +202,6 @@ export function saveEditableFile(
 
   // Hot-reload: refresh the in-memory systemPrompt for the main agent so a
   // brand-new session (no `resume`) picks up the new rules immediately.
-  // Resumed sessions get the change automatically because each per-turn
-  // SDK subprocess re-reads CLAUDE.md from cwd.
   let hotReloaded = false;
   if (id === MAIN_FILE_ID) {
     try {

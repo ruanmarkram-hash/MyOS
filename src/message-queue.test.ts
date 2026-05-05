@@ -55,6 +55,23 @@ describe('MessageQueue.drain', () => {
     await new Promise((r) => setTimeout(r, 10));
     messageQueue._resetForTest();
   });
+
+  it('exposes active chat ids while handlers are still pending', async () => {
+    messageQueue._resetForTest();
+
+    const gate = defer<void>();
+    messageQueue.enqueue('chat-active-1', async () => {
+      await gate.promise;
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(messageQueue.activeChatIds).toEqual(['chat-active-1']);
+
+    gate.resolve();
+    await messageQueue.drain(1000);
+    expect(messageQueue.activeChatIds).toEqual([]);
+    messageQueue._resetForTest();
+  });
 });
 
 describe('MessageQueue.close', () => {

@@ -4,9 +4,9 @@ import path from 'path';
 import { loadAgentConfig, listAgentIds, resolveAgentDir, resolveAgentClaudeMd } from './agent-config.js';
 import { createBot } from './bot.js';
 import { checkPendingMigrations } from './migrations.js';
-import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, WARROOM_ENABLED, WARROOM_PORT } from './config.js';
+import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, WARROOM_ENABLED, WARROOM_PORT, resolveMainClaudeMdPath } from './config.js';
 import { startDashboard } from './dashboard.js';
-import { initDatabase, cleanupOldMissionTasks, insertAuditLog, pruneSentTelegramOutbox, pruneWaMessages, pruneSlackMessages } from './db.js';
+import { initDatabase, cleanupOldMissionTasks, insertAuditLog, pruneSentTelegramOutbox, pruneWaMessages, pruneSlackMessages, clearSession } from './db.js';
 import { initSecurity, setAuditCallback, getScrubbedSdkEnv } from './security.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
@@ -55,11 +55,11 @@ if (AGENT_ID !== 'main') {
   // systemPrompt — the same pattern used by sub-agents. Never copy the file
   // into the repo; that defeats the purpose of CLAUDECLAW_CONFIG and risks
   // accidentally committing personal config.
-  const externalClaudeMd = path.join(CLAUDECLAW_CONFIG, 'CLAUDE.md');
-  if (fs.existsSync(externalClaudeMd)) {
+  const mainClaudeMd = resolveMainClaudeMdPath();
+  if (fs.existsSync(mainClaudeMd)) {
     let systemPrompt: string | undefined;
     try {
-      systemPrompt = fs.readFileSync(externalClaudeMd, 'utf-8');
+      systemPrompt = fs.readFileSync(mainClaudeMd, 'utf-8');
     } catch { /* unreadable */ }
     if (systemPrompt) {
       setAgentOverrides({
@@ -68,7 +68,7 @@ if (AGENT_ID !== 'main') {
         cwd: PROJECT_ROOT,
         systemPrompt,
       });
-      logger.info({ source: externalClaudeMd }, 'Loaded CLAUDE.md from CLAUDECLAW_CONFIG');
+      logger.info({ source: mainClaudeMd }, 'Loaded main CLAUDE.md');
     }
   } else if (!fs.existsSync(path.join(PROJECT_ROOT, 'CLAUDE.md'))) {
     logger.warn(
@@ -478,7 +478,19 @@ async function main(): Promise<void> {
     try {
       const { drained, remaining } = await messageQueue.drain(30_000);
       if (!drained) {
-        logger.warn({ remaining }, 'Shutdown drain timed out — handlers still pending, exiting anyway');
+        const activeChatIds = messageQueue.activeChatIds;
+        logger.warn({ remaining, activeChatIds }, 'Shutdown drain timed out — handlers still pending, exiting anyway');
+        for (const chatId of activeChatIds) {
+          try {
+            clearSession(chatId, AGENT_ID);
+          } catch (err) {
+            logger.error({ err, chatId, agentId: AGENT_ID }, 'Failed to clear resume session during shutdown');
+          }
+        }
+        logger.warn(
+          { activeChatIds, agentId: AGENT_ID },
+          'Cleared resume sessions for undrained handlers to prevent stale Claude turn replay',
+        );
       } else {
         logger.info('Shutdown drain complete — all handlers finished cleanly');
       }

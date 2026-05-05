@@ -9,7 +9,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { _initTestDatabase, listAgentFileHistory } from './db.js';
+import { _initTestDatabase, _testDbHandle, listAgentFileHistory } from './db.js';
 import {
   atomicWrite,
   sha256,
@@ -20,7 +20,7 @@ import {
   EditorError,
 } from './agent-files.js';
 import * as configMod from './config.js';
-import { PROJECT_ROOT, setAgentSystemPrompt } from './config.js';
+import { resolveMainClaudeMdPath, setAgentSystemPrompt } from './config.js';
 
 describe('atomicWrite', () => {
   it('writes content to the target path', () => {
@@ -67,7 +67,7 @@ describe('allowlist', () => {
   it('exposes exactly one editable file today (main)', () => {
     const files = listEditableFiles();
     expect(files.map((f) => f.id)).toEqual(['main']);
-    expect(files[0].path).toBe(path.join(PROJECT_ROOT, 'CLAUDE.md'));
+    expect(files[0].path).toBe(resolveMainClaudeMdPath());
   });
 
   it('isEditableFileId only accepts known ids', () => {
@@ -94,7 +94,7 @@ describe('allowlist', () => {
 });
 
 describe('saveEditableFile (history append + hot-reload)', () => {
-  const claudeMdPath = path.join(PROJECT_ROOT, 'CLAUDE.md');
+  const claudeMdPath = resolveMainClaudeMdPath();
   let snapshot: string | null = null;
   let snapshotPrompt: string | undefined;
 
@@ -120,6 +120,20 @@ describe('saveEditableFile (history append + hot-reload)', () => {
     expect(history[0].content).toBe(newContent);
     expect(history[0].content_sha).toBe(result.contentSha);
     expect(history[0].edited_by_chat_id).toBe('tester');
+
+    const raw = _testDbHandle()
+      .prepare('SELECT content FROM agent_file_history WHERE id = ?')
+      .get(result.historyId) as { content: string };
+    expect(raw.content).not.toBe(newContent);
+    expect(raw.content.split(':')).toHaveLength(3);
+  });
+
+  it('refuses content over the 256 KiB cap before writing', () => {
+    fs.writeFileSync(claudeMdPath, 'original');
+    expect(() =>
+      saveEditableFile('main', 'x'.repeat(256 * 1024 + 1), { editedByChatId: 'tester' }),
+    ).toThrowError(/256 KiB cap/i);
+    expect(fs.readFileSync(claudeMdPath, 'utf-8')).toBe('original');
   });
 
   it('updates the in-memory agentSystemPrompt for hot-reload', () => {

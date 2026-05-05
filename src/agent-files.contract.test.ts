@@ -3,11 +3,10 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
-import path from 'path';
 
 import { _initTestDatabase } from './db.js';
 import { buildDashboardApp } from './dashboard.js';
-import { PROJECT_ROOT } from './config.js';
+import { resolveMainClaudeMdPath } from './config.js';
 import type { Hono } from 'hono';
 
 const TOKEN = 'test-contract-token';
@@ -21,7 +20,7 @@ beforeEach(() => {
   _initTestDatabase();
 });
 
-const claudeMdPath = path.join(PROJECT_ROOT, 'CLAUDE.md');
+const claudeMdPath = resolveMainClaudeMdPath();
 let snapshot: string | null = null;
 
 beforeEach(() => {
@@ -46,6 +45,12 @@ async function put(p: string, body: unknown): Promise<Response> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
+
+async function mainSha(): Promise<string> {
+  const res = await get('/api/agent-files/main');
+  const body = (await res.json()) as { contentSha: string };
+  return body.contentSha;
 }
 
 describe('GET /api/agent-files', () => {
@@ -109,6 +114,11 @@ describe('PUT /api/agent-files/:id', () => {
     expect(res.status).toBe(400);
   });
 
+  it('rejects missing expectedSha with 400', async () => {
+    const res = await put('/api/agent-files/main', { content: 'blind overwrite' });
+    expect(res.status).toBe(400);
+  });
+
   it('rejects oversize content with 413', async () => {
     const huge = 'x'.repeat(257 * 1024);
     const res = await put('/api/agent-files/main', { content: huge });
@@ -117,7 +127,10 @@ describe('PUT /api/agent-files/:id', () => {
 
   it('saves valid main edit and returns hot-reload flag', async () => {
     const next = '# Sage rules\nstay chill.\n';
-    const res = await put('/api/agent-files/main', { content: next });
+    const res = await put('/api/agent-files/main', {
+      content: next,
+      expectedSha: await mainSha(),
+    });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toMatchObject({
@@ -128,6 +141,16 @@ describe('PUT /api/agent-files/:id', () => {
       historyId: expect.any(Number),
     });
     expect(fs.readFileSync(claudeMdPath, 'utf-8')).toBe(next);
+  });
+
+  it('rejects stale expectedSha with 409', async () => {
+    fs.writeFileSync(claudeMdPath, 'current');
+    const res = await put('/api/agent-files/main', {
+      content: 'overwrite',
+      expectedSha: '0'.repeat(64),
+    });
+    expect(res.status).toBe(409);
+    expect(fs.readFileSync(claudeMdPath, 'utf-8')).toBe('current');
   });
 });
 
@@ -145,8 +168,14 @@ describe('GET /api/agent-files/:id/history', () => {
   });
 
   it('returns rows after a save (newest first), without inlining content', async () => {
-    await put('/api/agent-files/main', { content: 'first' });
-    await put('/api/agent-files/main', { content: 'second' });
+    await put('/api/agent-files/main', {
+      content: 'first',
+      expectedSha: await mainSha(),
+    });
+    await put('/api/agent-files/main', {
+      content: 'second',
+      expectedSha: await mainSha(),
+    });
     const res = await get('/api/agent-files/main/history');
     expect(res.status).toBe(200);
     const body = (await res.json()) as {

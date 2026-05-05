@@ -75,6 +75,7 @@ import {
   listHistory,
   isEditableFileId,
   EditorError,
+  MAX_AGENT_FILE_BYTES,
 } from './agent-files.js';
 import { getWarRoomHtml } from './warroom-html.js';
 import { WARROOM_ENABLED, WARROOM_PORT } from './config.js';
@@ -1588,11 +1589,14 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     // Belt-and-braces size cap: refuse anything wildly larger than the
     // largest sane CLAUDE.md (~256 KiB). Stops a runaway client/UI bug
     // from blowing out SQLite history rows.
-    if (body.content.length > 256 * 1024) {
+    if (Buffer.byteLength(body.content, 'utf-8') > MAX_AGENT_FILE_BYTES) {
       return c.json({ error: 'content exceeds 256 KiB cap' }, 413);
     }
+    if (typeof body.expectedSha !== 'string' || !/^[a-f0-9]{64}$/i.test(body.expectedSha)) {
+      return c.json({ error: 'expectedSha (sha-256 hex string) required' }, 400);
+    }
     const expectedSha =
-      typeof body.expectedSha === 'string' ? body.expectedSha : undefined;
+      body.expectedSha;
     try {
       const result = saveEditableFile(id, body.content, {
         editedByChatId: ALLOWED_CHAT_ID || null,
@@ -1601,7 +1605,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       return c.json({ ok: true, ...result });
     } catch (err) {
       if (err instanceof EditorError) {
-        return c.json({ error: err.message }, err.status as 400 | 409);
+        return c.json({ error: err.message }, err.status as 400 | 409 | 413);
       }
       logger.error({ err, id }, 'agent-files save failed');
       return c.json({ error: 'Save failed' }, 500);

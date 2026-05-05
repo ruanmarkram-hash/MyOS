@@ -1,5 +1,6 @@
 import os from 'os';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 import { readEnvFile } from './env.js';
@@ -139,6 +140,13 @@ const rawConfigDir =
  * Defaults to ~/.claudeclaw. Set CLAUDECLAW_CONFIG in .env or environment to override.
  */
 export const CLAUDECLAW_CONFIG = expandHome(rawConfigDir);
+
+/** Active main CLAUDE.md path, matching startup's external-config preference. */
+export function resolveMainClaudeMdPath(): string {
+  const externalPath = path.join(CLAUDECLAW_CONFIG, 'CLAUDE.md');
+  if (fs.existsSync(externalPath)) return externalPath;
+  return path.join(PROJECT_ROOT, 'CLAUDE.md');
+}
 
 // Telegram limits
 export const MAX_MESSAGE_LENGTH = 4096;

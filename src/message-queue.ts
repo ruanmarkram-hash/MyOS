@@ -72,6 +72,11 @@ class MessageQueue {
     return this.chains.size;
   }
 
+  /** Chat ids that currently have a running or queued handler. */
+  get activeChatIds(): string[] {
+    return Array.from(this.chains.keys());
+  }
+
   /** Number of pending messages for a given chat. */
   queuedFor(chatId: string): number {
     return this.pending.get(chatId) ?? 0;
