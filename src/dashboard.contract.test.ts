@@ -457,6 +457,17 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(body.items.find((item: any) => item.title === 'Fix Reminders CalDAV auth').createdAt).toBeGreaterThanOrEqual(now);
   });
 
+  it('does not surface old dev completed missions just because their result contains critical review text', async () => {
+    createMissionTask('m-dev-critical', 'Stream2-M2: full-chain integration tests', 'dev work', 'mason', 'dashboard', 5);
+    const { completeMissionTask } = await import('./db.js');
+    completeMissionTask('m-dev-critical', 'CRITICAL #1 fixed: test harness issue closed.', 'completed');
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.items.map((item: any) => item.title)).not.toContain('Stream2-M2: full-chain integration tests');
+  });
+
   it('returns OS scheduled work for the home agenda while calendar is unwired', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('agenda-1', 'Run: scripts/daily-brief.sh', '0 9 * * *', now + 1800, 'main');

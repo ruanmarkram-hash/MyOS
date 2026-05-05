@@ -239,7 +239,7 @@ function extractAttentionItems(text: string, limit = 4): string[] {
       .replace(/\s+/g, ' ')
       .trim();
     if (!cleaned || /^OK$/i.test(cleaned)) continue;
-    if (/^(action needed|blocked on you|open threads|stale|breakdown|notes|projects|compliance|calendar|inbox|today):?$/i.test(cleaned)) continue;
+    if (/^(action needed|blocked on you|open threads|stale|breakdown|notes|projects|compliance|calendar|inbox|today|tomorrow top 3):?$/i.test(cleaned)) continue;
     if (/^(items blocked\/awaiting|total unread|after triage|skipped):/i.test(cleaned)) continue;
     if (!/urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|risk|review|approve|follow.?up|due|tomorrow top|open threads/i.test(cleaned)) continue;
     const key = cleaned.toLowerCase();
@@ -324,6 +324,8 @@ function briefDetailCoveredByMission(detail: string, missions: MissionTask[]): b
 function completedMissionNeedsAttention(mission: MissionTask, now: number): boolean {
   if (mission.status !== 'completed') return false;
   if ((mission.completed_at || 0) < now - 86400) return false;
+  if (mission.assigned_agent !== 'warden') return false;
+  if (!/reminders|caldav|imessage|digest|full disk access|tcc|keychain|auth/i.test(mission.title)) return false;
   const result = `${mission.result || ''}\n${mission.error || ''}`;
   return /critical|unauthorized|permission|full disk access|app-specific password|required|requires|blocked|needs? r(u|)an|manual/i.test(result);
 }
