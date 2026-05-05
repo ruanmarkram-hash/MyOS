@@ -629,7 +629,7 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       MODEL_FALLBACK_CHAIN.length > 0 ? MODEL_FALLBACK_CHAIN : undefined,
       agentMcpAllowlist,
       undefined,
-      !sessionId ? agentSystemPrompt : undefined,
+      agentSystemPrompt,
     );
 
     clearTimeout(timeoutId);
@@ -1025,7 +1025,7 @@ export function createBot(): Bot {
       })();
     }
 
-    clearSession(chatIdStr, AGENT_ID);
+    clearSession(chatIdStr, AGENT_ID, activeProvider);
     sessionBaseline.delete(chatIdStr);
     await ctx.reply('Session cleared. Starting fresh.');
     logger.info({ chatId: ctx.chat!.id }, 'Session cleared by user');
@@ -1157,7 +1157,7 @@ export function createBot(): Bot {
   // /forget — clear session (memory decay handles the rest)
   bot.command('forget', async (ctx) => {
     if (await replyIfLocked(ctx)) return;
-    clearSession(ctx.chat!.id.toString(), AGENT_ID);
+    clearSession(ctx.chat!.id.toString(), AGENT_ID, getActiveProviderName());
     await ctx.reply('Session cleared. Memories will fade naturally over time.');
   });
 
@@ -1792,7 +1792,7 @@ async function processDashboardMessage(
       undefined, // no streaming for dashboard
       agentMcpAllowlist,
       undefined,
-      !sessionId ? agentSystemPrompt : undefined,
+      agentSystemPrompt,
     );
 
     clearTimeout(dashTimeout);

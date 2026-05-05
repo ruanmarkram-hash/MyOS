@@ -4,7 +4,7 @@ import path from 'path';
 import { loadAgentConfig, listAgentIds, resolveAgentDir, resolveAgentClaudeMd } from './agent-config.js';
 import { createBot } from './bot.js';
 import { checkPendingMigrations } from './migrations.js';
-import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, WARROOM_ENABLED, WARROOM_PORT, resolveMainClaudeMdPath } from './config.js';
+import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, WARROOM_ENABLED, WARROOM_PORT, resolveMainClaudeMdPath, LLM_PROVIDER } from './config.js';
 import { startDashboard } from './dashboard.js';
 import { initDatabase, cleanupOldMissionTasks, insertAuditLog, pruneSentTelegramOutbox, pruneWaMessages, pruneSlackMessages, clearSession } from './db.js';
 import { initSecurity, setAuditCallback, getScrubbedSdkEnv } from './security.js';
@@ -22,6 +22,7 @@ import { RUNTIME_BUILD_META, createStaleWatcher, shortSha, markShuttingDown } fr
 import { enqueueTelegramSend } from './telegram-outbox.js';
 import { getTelegramOutboxRow } from './db.js';
 import { createStaleCodeAlerter } from './stale-code-alert.js';
+import { normalizeLlmProvider } from './llm-provider.js';
 
 // Parse --agent flag
 const agentFlagIndex = process.argv.indexOf('--agent');
@@ -482,7 +483,7 @@ async function main(): Promise<void> {
         logger.warn({ remaining, activeChatIds }, 'Shutdown drain timed out — handlers still pending, exiting anyway');
         for (const chatId of activeChatIds) {
           try {
-            clearSession(chatId, AGENT_ID);
+            clearSession(chatId, AGENT_ID, normalizeLlmProvider(LLM_PROVIDER));
           } catch (err) {
             logger.error({ err, chatId, agentId: AGENT_ID }, 'Failed to clear resume session during shutdown');
           }

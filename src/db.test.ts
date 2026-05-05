@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
 import {
+  _createSchema,
   _initTestDatabase,
+  _runMigrationsForTest,
   setSession,
   getSession,
   clearSession,
@@ -58,10 +61,62 @@ describe('database', () => {
       expect(getSession('chat1', 'main', 'codex')).toBeUndefined();
     });
 
+    it('migrates legacy session rows into a non-resumed legacy provider bucket', () => {
+      const database = new Database(':memory:');
+      _createSchema(database);
+      database.exec(`
+        DROP TABLE sessions;
+        CREATE TABLE sessions (
+          chat_id    TEXT NOT NULL,
+          agent_id   TEXT NOT NULL DEFAULT 'main',
+          session_id TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (chat_id, agent_id)
+        );
+        INSERT INTO sessions (chat_id, agent_id, session_id, updated_at)
+          VALUES
+            ('chat-claude-shaped', 'main', '3fbb8b12-b4cc-41ae-bf46-db2ad900eb6a', 'now'),
+            ('chat-codex-shaped', 'main', '019de375-ca31-7d12-9b37-62ffd7b26ca3', 'now');
+        CREATE TABLE sessions_new (leftover TEXT);
+      `);
+
+      _runMigrationsForTest(database);
+
+      const rows = database
+        .prepare('SELECT chat_id, provider, session_id FROM sessions ORDER BY chat_id')
+        .all() as Array<{ chat_id: string; provider: string; session_id: string }>;
+      expect(rows).toEqual([
+        {
+          chat_id: 'chat-claude-shaped',
+          provider: 'legacy',
+          session_id: '3fbb8b12-b4cc-41ae-bf46-db2ad900eb6a',
+        },
+        {
+          chat_id: 'chat-codex-shaped',
+          provider: 'legacy',
+          session_id: '019de375-ca31-7d12-9b37-62ffd7b26ca3',
+        },
+      ]);
+      const pkCols = database
+        .prepare('PRAGMA table_info(sessions)')
+        .all() as Array<{ pk: number }>;
+      expect(pkCols.filter((c) => c.pk > 0)).toHaveLength(3);
+    });
+
     it('clearSession removes the session', () => {
       setSession('chat1', 'sess-abc');
       clearSession('chat1');
       expect(getSession('chat1')).toBeUndefined();
+    });
+
+    it('clearSession without provider does not remove non-default provider sessions', () => {
+      setSession('chat1', 'claude-sess', 'main', 'claude');
+      setSession('chat1', 'codex-sess', 'main', 'codex');
+
+      clearSession('chat1');
+
+      expect(getSession('chat1', 'main', 'claude')).toBeUndefined();
+      expect(getSession('chat1', 'main', 'codex')).toBe('codex-sess');
     });
 
     it('clearSession on missing session does not throw', () => {

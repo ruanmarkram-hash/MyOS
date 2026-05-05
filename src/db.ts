@@ -527,31 +527,36 @@ function runMigrations(database: Database.Database): void {
   }
 
   // Multi-agent and multi-provider: sessions are isolated by chat, agent,
-  // and provider. This lets the operator switch between Claude, Codex, and future
-  // local providers without feeding one provider another provider's resume id.
+  // and provider. Legacy unscoped rows are moved to provider='legacy' rather
+  // than guessed from opaque session id shapes, so no provider accidentally
+  // resumes another provider's thread after an upgrade.
   const sessionCols = database.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string; pk: number }>;
   const hasSessionAgentId = sessionCols.some((c) => c.name === 'agent_id');
   const hasSessionProvider = sessionCols.some((c) => c.name === 'provider');
   const pkCount = sessionCols.filter((c) => c.pk > 0).length;
   if (!hasSessionAgentId || !hasSessionProvider || pkCount < 3) {
+    const tempTable = `sessions_new_${process.pid}_${Date.now()}`;
     const agentExpr = hasSessionAgentId ? `COALESCE(agent_id, 'main')` : `'main'`;
     const providerExpr = hasSessionProvider
-      ? `COALESCE(provider, CASE WHEN session_id LIKE '019%' THEN 'codex' ELSE 'claude' END)`
-      : `CASE WHEN session_id LIKE '019%' THEN 'codex' ELSE 'claude' END`;
-    database.exec(`
-      CREATE TABLE sessions_new (
-        chat_id    TEXT NOT NULL,
-        agent_id   TEXT NOT NULL DEFAULT 'main',
-        provider   TEXT NOT NULL DEFAULT 'claude',
-        session_id TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (chat_id, agent_id, provider)
-      );
-      INSERT OR IGNORE INTO sessions_new (chat_id, agent_id, provider, session_id, updated_at)
-        SELECT chat_id, ${agentExpr}, ${providerExpr}, session_id, updated_at FROM sessions;
-      DROP TABLE sessions;
-      ALTER TABLE sessions_new RENAME TO sessions;
-    `);
+      ? `COALESCE(provider, 'legacy')`
+      : `'legacy'`;
+    const migrateSessions = database.transaction(() => {
+      database.exec(`
+        CREATE TABLE ${tempTable} (
+          chat_id    TEXT NOT NULL,
+          agent_id   TEXT NOT NULL DEFAULT 'main',
+          provider   TEXT NOT NULL DEFAULT 'claude',
+          session_id TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (chat_id, agent_id, provider)
+        );
+        INSERT OR IGNORE INTO ${tempTable} (chat_id, agent_id, provider, session_id, updated_at)
+          SELECT chat_id, ${agentExpr}, ${providerExpr}, session_id, updated_at FROM sessions;
+        DROP TABLE sessions;
+        ALTER TABLE ${tempTable} RENAME TO sessions;
+      `);
+    });
+    migrateSessions();
   }
 
   const taskCols = database.prepare(`PRAGMA table_info(scheduled_tasks)`).all() as Array<{ name: string }>;
@@ -836,6 +841,11 @@ export function _createSchema(database: Database.Database): void {
   return createSchema(database);
 }
 
+/** @internal - exported for migration upgrade tests. */
+export function _runMigrationsForTest(database: Database.Database): void {
+  return runMigrations(database);
+}
+
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   // Use a test encryption key for field-level encryption
@@ -884,12 +894,8 @@ export function setSession(chatId: string, sessionId: string, agentId = 'main', 
   ).run(chatId, agentId, provider, sessionId, new Date().toISOString());
 }
 
-export function clearSession(chatId: string, agentId = 'main', provider?: string): void {
-  if (provider) {
-    db.prepare('DELETE FROM sessions WHERE chat_id = ? AND agent_id = ? AND provider = ?').run(chatId, agentId, provider);
-    return;
-  }
-  db.prepare('DELETE FROM sessions WHERE chat_id = ? AND agent_id = ?').run(chatId, agentId);
+export function clearSession(chatId: string, agentId = 'main', provider = 'claude'): void {
+  db.prepare('DELETE FROM sessions WHERE chat_id = ? AND agent_id = ? AND provider = ?').run(chatId, agentId, provider);
 }
 
 // ── Memory (V2: structured with LLM extraction) ────────────────────
