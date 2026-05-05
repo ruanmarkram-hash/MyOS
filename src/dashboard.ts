@@ -30,6 +30,7 @@ import {
   getAgentRecentConversation,
   getMissionTasks,
   getMissionTask,
+  getMissionReview,
   createMissionTask,
   cancelMissionTask,
   deleteMissionTask,
@@ -37,6 +38,8 @@ import {
   assignMissionTask,
   getUnassignedMissionTasks,
   getMissionTaskHistory,
+  upsertMissionReview,
+  updateMissionReviewState,
   getAuditLog,
   getAuditLogCount,
   getRecentBlockedActions,
@@ -50,6 +53,8 @@ import {
   getWarRoomMeetings,
   getWarRoomTranscript,
   type MissionTask,
+  type MissionReview,
+  type MissionReviewStatus,
   type ScheduledTask,
 } from './db.js';
 import { generateContent, parseJsonResponse } from './gemini.js';
@@ -320,7 +325,66 @@ function extractMissionDeliverables(task: MissionTask): ReviewDeliverable[] {
   return deliverables;
 }
 
-function buildReviewItem(task: MissionTask) {
+const OPEN_REVIEW_STATUSES = new Set<MissionReviewStatus>(['needs_review', 'needs_triage', 'waiting_followup', 'snoozed']);
+
+function defaultReviewStatusForTask(task: MissionTask, missions: MissionTask[]): MissionReviewStatus | null {
+  if (task.status === 'failed' || task.status === 'partial') return 'needs_triage';
+  if (task.status === 'completed') {
+    if (completedMissionHasFollowUp(task, missions)) return null;
+    return 'needs_review';
+  }
+  return null;
+}
+
+function refreshReviewFromFollowup(review: MissionReview): MissionReview {
+  if (review.review_status !== 'waiting_followup' || !review.followup_task_id) return review;
+  const followup = getMissionTask(review.followup_task_id);
+  if (!followup || !TERMINAL_MISSION_STATUSES.has(followup.status)) return review;
+  if (followup.status === 'completed') {
+    return upsertMissionReview({
+      taskId: review.task_id,
+      reviewStatus: 'resolved',
+      resolution: 'followup_completed',
+      followupTaskId: followup.id,
+      instruction: review.instruction,
+    });
+  }
+  return upsertMissionReview({
+    taskId: review.task_id,
+    reviewStatus: 'needs_triage',
+    resolution: 'retried',
+    followupTaskId: followup.id,
+    instruction: review.instruction,
+  });
+}
+
+function effectiveMissionReview(task: MissionTask, missions: MissionTask[]): MissionReview | null {
+  const existing = getMissionReview(task.id);
+  if (existing) return refreshReviewFromFollowup(existing);
+
+  const reviewStatus = defaultReviewStatusForTask(task, missions);
+  if (!reviewStatus) return null;
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    task_id: task.id,
+    review_status: reviewStatus,
+    resolution: null,
+    followup_task_id: null,
+    instruction: null,
+    snoozed_until: null,
+    reviewed_at: null,
+    created_at: task.completed_at || task.created_at || now,
+    updated_at: task.completed_at || task.created_at || now,
+  };
+}
+
+function shouldShowReview(review: MissionReview): boolean {
+  if (!OPEN_REVIEW_STATUSES.has(review.review_status)) return false;
+  if (review.review_status === 'snoozed' && review.snoozed_until && review.snoozed_until > Math.floor(Date.now() / 1000)) return false;
+  return true;
+}
+
+function buildReviewItem(task: MissionTask, review: MissionReview) {
   const text = task.result || task.error || '';
   return {
     id: task.id,
@@ -334,7 +398,36 @@ function buildReviewItem(task: MissionTask) {
     result: task.result,
     error: task.error,
     deliverables: extractMissionDeliverables(task),
+    review: {
+      status: review.review_status,
+      resolution: review.resolution,
+      followupTaskId: review.followup_task_id,
+      instruction: review.instruction,
+      snoozedUntil: review.snoozed_until,
+      reviewedAt: review.reviewed_at,
+      updatedAt: review.updated_at,
+    },
   };
+}
+
+function buildReviewFollowupPrompt(task: MissionTask, instructions: string): string {
+  return [
+    `This is a follow-up mission created from Review Inbox.`,
+    `Parent mission: ${task.id}`,
+    `Parent title: ${task.title}`,
+    `Parent status: ${task.status}`,
+    '',
+    `Original prompt:`,
+    task.prompt,
+    '',
+    `Previous result/error:`,
+    task.result || task.error || 'No result text was recorded.',
+    '',
+    `Ruan's instructions for this pass:`,
+    instructions || 'Review the previous result, close the loop, and return a clear deliverable or blocker.',
+    '',
+    `Expected output: return the deliverable, exact file/link if one is created, and any remaining blocker.`,
+  ].join('\n');
 }
 
 function missionTaskExportHtml(task: MissionTask): string {
@@ -665,6 +758,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
   }
 
   for (const mission of missions) {
+    const review = getMissionReview(mission.id);
     if (!TERMINAL_MISSION_STATUSES.has(mission.status)) {
       const followUpSource = missionFollowUpSourceKey(mission);
       if (followUpSource && !canonicalFollowUps.has(mission.id)) continue;
@@ -680,6 +774,8 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
         taskId: mission.id,
         href: '/mission',
       });
+    } else if (review && ['archived', 'resolved', 'waiting_followup'].includes(review.review_status)) {
+      continue;
     } else if ((mission.status === 'failed' || mission.status === 'partial') && (mission.completed_at || 0) > Date.now() / 1000 - 8 * 3600) {
       items.push({
         id: `mission:${mission.id}:terminal`,
@@ -1673,12 +1769,91 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   app.get('/api/review/inbox', (c) => {
     const limit = Math.max(1, Math.min(100, parseInt(c.req.query('limit') || '50', 10) || 50));
     const history = getMissionTaskHistory(limit, 0);
+    const missions = getMissionTasks();
+    const items = history.tasks
+      .map((task) => {
+        const review = effectiveMissionReview(task, missions);
+        return review && shouldShowReview(review) ? buildReviewItem(task, review) : null;
+      })
+      .filter(Boolean);
     return c.json({
       updatedAt: new Date().toISOString(),
-      items: history.tasks.map(buildReviewItem),
+      items,
       total: history.total,
+      openTotal: items.length,
       exportEmailConfigured: !!configuredOwnerEmail(),
     });
+  });
+
+  app.post('/api/review/tasks/:id/archive', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+    const id = c.req.param('id');
+    const task = getMissionTask(id);
+    if (!task) return c.json({ ok: false, error: 'Not found' }, 404);
+    const review = updateMissionReviewState(id, 'archived', 'ignored');
+    return c.json({ ok: true, review });
+  });
+
+  app.post('/api/review/tasks/:id/approve', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+    const id = c.req.param('id');
+    const task = getMissionTask(id);
+    if (!task) return c.json({ ok: false, error: 'Not found' }, 404);
+    const review = updateMissionReviewState(id, 'resolved', 'approved');
+    return c.json({ ok: true, review });
+  });
+
+  app.post('/api/review/tasks/:id/follow-up', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+
+    const id = c.req.param('id');
+    const task = getMissionTask(id);
+    if (!task) return c.json({ ok: false, error: 'Not found' }, 404);
+
+    let body: { assigned_agent?: string; instructions?: string; mode?: 'retry' | 'followup' } = {};
+    try { body = await c.req.json(); } catch { body = {}; }
+    const assignedAgent = body.assigned_agent?.trim();
+    if (!assignedAgent) return c.json({ ok: false, error: 'assigned_agent required' }, 400);
+    const validAgents = ['main', ...listAgentIds()];
+    if (!validAgents.includes(assignedAgent)) return c.json({ ok: false, error: 'Unknown agent' }, 400);
+
+    const existingReview = getMissionReview(id);
+    if (existingReview?.review_status === 'waiting_followup' && existingReview.followup_task_id) {
+      const existingFollowup = getMissionTask(existingReview.followup_task_id);
+      if (existingFollowup && !TERMINAL_MISSION_STATUSES.has(existingFollowup.status)) {
+        if (existingFollowup.status !== 'running' && existingFollowup.assigned_agent !== assignedAgent) {
+          reassignMissionTask(existingFollowup.id, assignedAgent);
+        }
+        return c.json({ ok: true, task: getMissionTask(existingFollowup.id), review: existingReview, reused: true });
+      }
+    }
+
+    const instructions = (body.instructions || '').trim().slice(0, 6000);
+    const childId = crypto.randomBytes(4).toString('hex');
+    const mode = body.mode === 'retry' ? 'Retry' : 'Follow up';
+    createMissionTask(
+      childId,
+      `${mode}: ${task.title}`.slice(0, 200),
+      buildReviewFollowupPrompt(task, instructions),
+      assignedAgent,
+      'review-inbox',
+      task.status === 'failed' || task.status === 'partial' ? Math.max(task.priority, 7) : Math.max(task.priority, 5),
+    );
+    const childTask = getMissionTask(childId);
+    const review = upsertMissionReview({
+      taskId: task.id,
+      reviewStatus: 'waiting_followup',
+      resolution: body.mode === 'retry' ? 'retried' : 'delegated',
+      followupTaskId: childId,
+      instruction: instructions,
+    });
+    return c.json({ ok: true, task: childTask, review, reused: false }, 201);
   });
 
   app.get('/api/review/file', (c) => {

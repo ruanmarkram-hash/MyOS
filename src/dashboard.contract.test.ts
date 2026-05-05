@@ -14,7 +14,7 @@
 // land BEFORE config.ts evaluates at import time.
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
-import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, updateTaskAfterRun } from './db.js';
+import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, getMissionReview, getMissionTask, updateTaskAfterRun } from './db.js';
 import { buildDashboardApp } from './dashboard.js';
 import type { Hono } from 'hono';
 
@@ -570,6 +570,7 @@ describe('GET /api/review/inbox', () => {
     expect(body).toMatchObject({
       updatedAt: expect.any(String),
       total: expect.any(Number),
+      openTotal: expect.any(Number),
       items: expect.any(Array),
       exportEmailConfigured: expect.any(Boolean),
     });
@@ -577,8 +578,70 @@ describe('GET /api/review/inbox', () => {
       id: 'm-review-1',
       title: 'Write deliverable',
       status: 'completed',
+      review: expect.objectContaining({ status: 'needs_review' }),
       deliverables: expect.any(Array),
     });
+  });
+
+  it('creates a child mission with review instructions and moves parent to waiting_followup', async () => {
+    createMissionTask('m-review-fail', 'Fix broken thing', 'original prompt', 'mason', 'dashboard', 6);
+    completeMissionTask('m-review-fail', null, 'failed', 'TypeError: broke');
+
+    const res = await app.request('/api/review/tasks/m-review-fail/follow-up' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        assigned_agent: 'mason',
+        mode: 'retry',
+        instructions: 'Check the failing route first.',
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      ok: true,
+      task: expect.objectContaining({
+        title: 'Retry: Fix broken thing',
+        assigned_agent: 'mason',
+        status: 'queued',
+        prompt: expect.stringContaining('Check the failing route first.'),
+      }),
+      review: expect.objectContaining({
+        review_status: 'waiting_followup',
+        resolution: 'retried',
+      }),
+    });
+    expect(getMissionReview('m-review-fail')?.followup_task_id).toBe(body.task.id);
+    expect(getMissionTask(body.task.id)?.prompt).toContain('Parent mission: m-review-fail');
+  });
+
+  it('approves review items so they leave the default inbox', async () => {
+    createMissionTask('m-review-approve', 'Approve me', 'deliver', 'mason', 'dashboard', 6);
+    completeMissionTask('m-review-approve', 'Done.', 'completed');
+
+    const approve = await app.request('/api/review/tasks/m-review-approve/approve' + Q, { method: 'POST' });
+    expect(approve.status).toBe(200);
+    expect(getMissionReview('m-review-approve')?.review_status).toBe('resolved');
+
+    const res = await get('/api/review/inbox?limit=10');
+    const body = await jsonOf(res);
+    expect(body.items.map((item: any) => item.id)).not.toContain('m-review-approve');
+  });
+
+  it('removes failed missions from Home attention after a follow-up is created', async () => {
+    createMissionTask('m-home-failed-review', 'Mason failed task', 'original prompt', 'mason', 'dashboard', 6);
+    completeMissionTask('m-home-failed-review', null, 'failed', 'boom');
+
+    const followup = await app.request('/api/review/tasks/m-home-failed-review/follow-up' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assigned_agent: 'mason', mode: 'retry', instructions: 'Try a narrower patch.' }),
+    });
+    expect(followup.status).toBe(201);
+
+    const res = await get('/api/home/attention');
+    const body = await jsonOf(res);
+    expect(body.items.map((item: any) => item.id)).not.toContain('mission:m-home-failed-review:terminal');
   });
 });
 

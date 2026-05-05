@@ -244,6 +244,22 @@ function createSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_mission_status
       ON mission_tasks(assigned_agent, status, priority DESC, created_at ASC);
 
+    CREATE TABLE IF NOT EXISTS mission_reviews (
+      task_id          TEXT PRIMARY KEY,
+      review_status    TEXT NOT NULL,
+      resolution       TEXT,
+      followup_task_id TEXT,
+      instruction      TEXT,
+      snoozed_until    INTEGER,
+      reviewed_at      INTEGER,
+      created_at       INTEGER NOT NULL,
+      updated_at       INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mission_reviews_status
+      ON mission_reviews(review_status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mission_reviews_followup
+      ON mission_reviews(followup_task_id);
+
     CREATE TABLE IF NOT EXISTS meet_sessions (
       id              TEXT PRIMARY KEY,         -- session id from the provider's join response
       agent_id        TEXT NOT NULL,            -- which agent is in the meeting
@@ -665,6 +681,24 @@ function runMigrations(database: Database.Database): void {
   if (missionColNames.length > 0 && !missionColNames.includes('notify_attempt_count')) {
     database.exec(`ALTER TABLE mission_tasks ADD COLUMN notify_attempt_count INTEGER NOT NULL DEFAULT 0`);
   }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS mission_reviews (
+      task_id          TEXT PRIMARY KEY,
+      review_status    TEXT NOT NULL,
+      resolution       TEXT,
+      followup_task_id TEXT,
+      instruction      TEXT,
+      snoozed_until    INTEGER,
+      reviewed_at      INTEGER,
+      created_at       INTEGER NOT NULL,
+      updated_at       INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mission_reviews_status
+      ON mission_reviews(review_status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mission_reviews_followup
+      ON mission_reviews(followup_task_id);
+  `);
 
   // ── Memory V2 migration ──────────────────────────────────────────────
   // Detect old schema (has 'sector' column but no 'importance') and migrate.
@@ -2289,6 +2323,21 @@ export interface MissionTask {
   notify_attempt_count: number;
 }
 
+export type MissionReviewStatus = 'needs_review' | 'needs_triage' | 'waiting_followup' | 'resolved' | 'archived' | 'snoozed';
+export type MissionReviewResolution = 'approved' | 'retried' | 'delegated' | 'followup_completed' | 'superseded' | 'ignored' | null;
+
+export interface MissionReview {
+  task_id: string;
+  review_status: MissionReviewStatus;
+  resolution: MissionReviewResolution;
+  followup_task_id: string | null;
+  instruction: string | null;
+  snoozed_until: number | null;
+  reviewed_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
 export function createMissionTask(
   id: string,
   title: string,
@@ -2489,6 +2538,59 @@ export function getMissionTasks(agentId?: string, status?: string): MissionTask[
 
 export function getMissionTask(id: string): MissionTask | null {
   return (db.prepare('SELECT * FROM mission_tasks WHERE id = ?').get(id) as MissionTask) ?? null;
+}
+
+export function getMissionReview(taskId: string): MissionReview | null {
+  return (db.prepare('SELECT * FROM mission_reviews WHERE task_id = ?').get(taskId) as MissionReview) ?? null;
+}
+
+export function upsertMissionReview(input: {
+  taskId: string;
+  reviewStatus: MissionReviewStatus;
+  resolution?: MissionReviewResolution;
+  followupTaskId?: string | null;
+  instruction?: string | null;
+  snoozedUntil?: number | null;
+  reviewedAt?: number | null;
+}): MissionReview {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(`
+    INSERT INTO mission_reviews (
+      task_id, review_status, resolution, followup_task_id, instruction,
+      snoozed_until, reviewed_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(task_id) DO UPDATE SET
+      review_status = excluded.review_status,
+      resolution = excluded.resolution,
+      followup_task_id = excluded.followup_task_id,
+      instruction = excluded.instruction,
+      snoozed_until = excluded.snoozed_until,
+      reviewed_at = excluded.reviewed_at,
+      updated_at = excluded.updated_at
+  `).run(
+    input.taskId,
+    input.reviewStatus,
+    input.resolution ?? null,
+    input.followupTaskId ?? null,
+    input.instruction ?? null,
+    input.snoozedUntil ?? null,
+    input.reviewedAt ?? (input.reviewStatus === 'resolved' || input.reviewStatus === 'archived' ? now : null),
+    now,
+    now,
+  );
+  return getMissionReview(input.taskId)!;
+}
+
+export function updateMissionReviewState(taskId: string, reviewStatus: MissionReviewStatus, resolution?: MissionReviewResolution): MissionReview {
+  const existing = getMissionReview(taskId);
+  return upsertMissionReview({
+    taskId,
+    reviewStatus,
+    resolution: resolution ?? existing?.resolution ?? null,
+    followupTaskId: existing?.followup_task_id ?? null,
+    instruction: existing?.instruction ?? null,
+    snoozedUntil: reviewStatus === 'snoozed' ? existing?.snoozed_until ?? null : null,
+  });
 }
 
 export function claimNextMissionTask(agentId: string): MissionTask | null {

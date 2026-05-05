@@ -1,4 +1,4 @@
-import { Download, ExternalLink, FileText, Mail, RefreshCcw } from 'lucide-preact';
+import { Archive, Check, Download, ExternalLink, FileText, Mail, RefreshCcw, RotateCcw, Send } from 'lucide-preact';
 import { useState } from 'preact/hooks';
 import { PageHeader } from '@/components/PageHeader';
 import { PageState } from '@/components/PageState';
@@ -6,6 +6,8 @@ import { Pill } from '@/components/Pill';
 import { useFetch } from '@/lib/useFetch';
 import { apiPost, dashboardToken } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/format';
+
+interface Agent { id: string; name: string; running: boolean; }
 
 interface Deliverable {
   id: string;
@@ -15,6 +17,16 @@ interface Deliverable {
   href: string | null;
   exists: boolean;
   sizeBytes: number | null;
+}
+
+interface ReviewState {
+  status: 'needs_review' | 'needs_triage' | 'waiting_followup' | 'resolved' | 'archived' | 'snoozed';
+  resolution: string | null;
+  followupTaskId: string | null;
+  instruction: string | null;
+  snoozedUntil: number | null;
+  reviewedAt: number | null;
+  updatedAt: number;
 }
 
 interface ReviewItem {
@@ -29,28 +41,81 @@ interface ReviewItem {
   result: string | null;
   error: string | null;
   deliverables: Deliverable[];
+  review: ReviewState;
 }
 
 interface ReviewInboxPayload {
   updatedAt: string;
   items: ReviewItem[];
   total: number;
+  openTotal: number;
   exportEmailConfigured: boolean;
 }
 
+const REVIEW_LABEL: Record<ReviewState['status'], string> = {
+  needs_review: 'Needs review',
+  needs_triage: 'Needs triage',
+  waiting_followup: 'Waiting follow-up',
+  resolved: 'Resolved',
+  archived: 'Archived',
+  snoozed: 'Snoozed',
+};
+
 export function ReviewInbox() {
   const inbox = useFetch<ReviewInboxPayload>('/api/review/inbox?limit=75', 15_000);
+  const agents = useFetch<{ agents: Agent[] }>('/api/agents', 60_000);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [sending, setSending] = useState<Record<string, string>>({});
+  const [instructions, setInstructions] = useState<Record<string, string>>({});
+  const [selectedAgent, setSelectedAgent] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState<Record<string, string>>({});
+
+  const agentList = agents.data?.agents ?? [];
+  const grouped = groupItems(inbox.data?.items ?? []);
+
+  async function mutate(item: ReviewItem, label: string, fn: () => Promise<unknown>, refresh = true) {
+    setBusy((prev) => ({ ...prev, [item.id]: label }));
+    setMessage((prev) => ({ ...prev, [item.id]: '' }));
+    try {
+      await fn();
+      if (refresh) inbox.refresh();
+    } catch (err: any) {
+      setMessage((prev) => ({ ...prev, [item.id]: err?.body?.error || err?.message || String(err) }));
+    } finally {
+      setBusy((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+    }
+  }
 
   async function emailExport(item: ReviewItem) {
-    setSending((prev) => ({ ...prev, [item.id]: 'Exporting...' }));
-    try {
-      const result = await apiPost<{ ok: boolean; to: string; exported: { format: string } }>(`/api/review/tasks/${item.id}/email`, { format: 'docx' });
-      setSending((prev) => ({ ...prev, [item.id]: `Sent ${result.exported.format} to ${result.to}` }));
-    } catch (err: any) {
-      setSending((prev) => ({ ...prev, [item.id]: err?.body?.error || err?.message || String(err) }));
+    await mutate(item, 'Emailing...', async () => {
+      const result = await apiPost<{ to: string; exported: { format: string } }>(`/api/review/tasks/${item.id}/email`, { format: 'docx' });
+      setMessage((prev) => ({ ...prev, [item.id]: `Sent ${result.exported.format} to ${result.to}` }));
+    }, false);
+  }
+
+  async function approve(item: ReviewItem) {
+    await mutate(item, 'Approving...', () => apiPost(`/api/review/tasks/${item.id}/approve`));
+  }
+
+  async function archive(item: ReviewItem) {
+    await mutate(item, 'Archiving...', () => apiPost(`/api/review/tasks/${item.id}/archive`));
+  }
+
+  async function sendFollowup(item: ReviewItem, mode: 'retry' | 'followup') {
+    const assigned = selectedAgent[item.id] || item.agentId || agentList[0]?.id || '';
+    if (!assigned) {
+      setMessage((prev) => ({ ...prev, [item.id]: 'Choose an agent first.' }));
+      return;
     }
+    await mutate(item, mode === 'retry' ? 'Retrying...' : 'Sending...', () => apiPost(`/api/review/tasks/${item.id}/follow-up`, {
+      assigned_agent: assigned,
+      instructions: instructions[item.id] || '',
+      mode,
+    }));
   }
 
   return (
@@ -74,79 +139,208 @@ export function ReviewInbox() {
       {inbox.data && (
         <div class="flex-1 overflow-y-auto p-6 space-y-4">
           <div class="grid grid-cols-3 gap-3">
-            <Metric label="Awaiting review" value={String(inbox.data.items.length)} />
-            <Metric label="Deliverables" value={String(inbox.data.items.reduce((n, item) => n + item.deliverables.length, 0))} />
-            <Metric label="Email export" value={inbox.data.exportEmailConfigured ? 'configured' : 'not configured'} />
+            <Metric label="Open decisions" value={String(inbox.data.openTotal)} />
+            <Metric label="Needs triage" value={String((grouped.needs_triage ?? []).length)} />
+            <Metric label="Waiting follow-up" value={String((grouped.waiting_followup ?? []).length)} />
           </div>
 
-          <div class="space-y-3">
-            {inbox.data.items.length === 0 && (
-              <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-6 text-[12px] text-[var(--color-text-muted)]">
-                No mission deliverables are waiting for review.
-              </div>
+          {inbox.data.items.length === 0 && (
+            <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-6 text-[12px] text-[var(--color-text-muted)]">
+              No open review decisions.
+            </div>
+          )}
+
+          <ReviewSection title="Needs triage" items={grouped.needs_triage ?? []}>
+            {(item) => (
+              <ReviewCard
+                item={item}
+                agents={agentList}
+                expanded={!!expanded[item.id]}
+                instructions={instructions[item.id] || ''}
+                selectedAgent={selectedAgent[item.id] || item.agentId || ''}
+                busy={busy[item.id]}
+                message={message[item.id]}
+                onToggle={() => setExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                onInstructions={(value) => setInstructions((prev) => ({ ...prev, [item.id]: value }))}
+                onAgent={(value) => setSelectedAgent((prev) => ({ ...prev, [item.id]: value }))}
+                onRetry={() => void sendFollowup(item, 'retry')}
+                onFollowup={() => void sendFollowup(item, 'followup')}
+                onApprove={() => void approve(item)}
+                onArchive={() => void archive(item)}
+                onEmail={() => void emailExport(item)}
+              />
             )}
+          </ReviewSection>
 
-            {inbox.data.items.map((item) => {
-              const isOpen = !!expanded[item.id];
-              return (
-                <div key={item.id} class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
-                  <div class="flex items-start gap-3">
-                    <div class="w-9 h-9 rounded-md bg-[var(--color-elevated)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-accent)] shrink-0">
-                      <FileText size={17} />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
-                      class="flex-1 min-w-0 text-left"
-                    >
-                      <div class="flex items-center gap-2 min-w-0">
-                        <Pill tone={item.status as any}>{item.status}</Pill>
-                        {item.agentId && <Pill tone="neutral">@{item.agentId}</Pill>}
-                        <span class="text-[10px] text-[var(--color-text-faint)] tabular-nums uppercase tracking-wider">{item.id.slice(0, 6)}</span>
-                        <span class="ml-auto text-[10px] text-[var(--color-text-faint)] shrink-0">{formatRelativeTime(item.completedAt || item.createdAt)}</span>
-                      </div>
-                      <div class="text-[14px] font-medium text-[var(--color-text)] mt-2 line-clamp-2">{item.title}</div>
-                      <div class={'text-[12px] text-[var(--color-text-muted)] mt-1 leading-relaxed whitespace-pre-wrap ' + (isOpen ? '' : 'line-clamp-2')}>
-                        {isOpen ? (item.result || item.error || item.summary) : item.summary}
-                      </div>
-                    </button>
-                  </div>
+          <ReviewSection title="Waiting follow-up" items={grouped.waiting_followup ?? []}>
+            {(item) => <WaitingCard item={item} onArchive={() => void archive(item)} busy={busy[item.id]} />}
+          </ReviewSection>
 
-                  <div class="mt-3 flex flex-wrap gap-2">
-                    {item.deliverables.map((deliverable) => (
-                      <DeliverableAction key={deliverable.id} deliverable={deliverable} />
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => void emailExport(item)}
-                      class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-[var(--color-border)] text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-elevated)] transition-colors"
-                    >
-                      <Mail size={12} /> Email export
-                    </button>
-                  </div>
-
-                  {sending[item.id] && (
-                    <div class="mt-2 text-[10.5px] text-[var(--color-text-faint)]">{sending[item.id]}</div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <ReviewSection title="Deliverables ready" items={grouped.needs_review ?? []}>
+            {(item) => (
+              <ReviewCard
+                item={item}
+                agents={agentList}
+                expanded={!!expanded[item.id]}
+                instructions={instructions[item.id] || ''}
+                selectedAgent={selectedAgent[item.id] || item.agentId || ''}
+                busy={busy[item.id]}
+                message={message[item.id]}
+                onToggle={() => setExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                onInstructions={(value) => setInstructions((prev) => ({ ...prev, [item.id]: value }))}
+                onAgent={(value) => setSelectedAgent((prev) => ({ ...prev, [item.id]: value }))}
+                onRetry={() => void sendFollowup(item, 'retry')}
+                onFollowup={() => void sendFollowup(item, 'followup')}
+                onApprove={() => void approve(item)}
+                onArchive={() => void archive(item)}
+                onEmail={() => void emailExport(item)}
+              />
+            )}
+          </ReviewSection>
         </div>
       )}
     </div>
   );
 }
 
+function ReviewCard({
+  item,
+  agents,
+  expanded,
+  instructions,
+  selectedAgent,
+  busy,
+  message,
+  onToggle,
+  onInstructions,
+  onAgent,
+  onRetry,
+  onFollowup,
+  onApprove,
+  onArchive,
+  onEmail,
+}: {
+  item: ReviewItem;
+  agents: Agent[];
+  expanded: boolean;
+  instructions: string;
+  selectedAgent: string;
+  busy?: string;
+  message?: string;
+  onToggle: () => void;
+  onInstructions: (value: string) => void;
+  onAgent: (value: string) => void;
+  onRetry: () => void;
+  onFollowup: () => void;
+  onApprove: () => void;
+  onArchive: () => void;
+  onEmail: () => void;
+}) {
+  const triage = item.review.status === 'needs_triage';
+  return (
+    <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+      <div class="flex items-start gap-3">
+        <div class="w-9 h-9 rounded-md bg-[var(--color-elevated)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-accent)] shrink-0">
+          <FileText size={17} />
+        </div>
+        <button type="button" onClick={onToggle} class="flex-1 min-w-0 text-left">
+          <div class="flex items-center gap-2 min-w-0">
+            <Pill tone={triage ? 'failed' : 'accent'}>{REVIEW_LABEL[item.review.status]}</Pill>
+            <Pill tone={item.status as any}>{item.status}</Pill>
+            {item.agentId && <Pill tone="neutral">@{item.agentId}</Pill>}
+            <span class="text-[10px] text-[var(--color-text-faint)] tabular-nums uppercase tracking-wider">{item.id.slice(0, 6)}</span>
+            <span class="ml-auto text-[10px] text-[var(--color-text-faint)] shrink-0">{formatRelativeTime(item.completedAt || item.createdAt)}</span>
+          </div>
+          <div class="text-[14px] font-medium text-[var(--color-text)] mt-2 line-clamp-2">{item.title}</div>
+          <div class={'text-[12px] text-[var(--color-text-muted)] mt-1 leading-relaxed whitespace-pre-wrap ' + (expanded ? '' : 'line-clamp-2')}>
+            {expanded ? (item.result || item.error || item.summary) : item.summary}
+          </div>
+        </button>
+      </div>
+
+      <div class="mt-3 flex flex-wrap gap-2">
+        {item.deliverables.map((deliverable) => <DeliverableAction key={deliverable.id} deliverable={deliverable} />)}
+        <button type="button" onClick={onEmail} disabled={!!busy} class="review-btn">
+          <Mail size={12} /> Email export
+        </button>
+        <button type="button" onClick={onApprove} disabled={!!busy} class="review-btn">
+          <Check size={12} /> Approve
+        </button>
+        <button type="button" onClick={onArchive} disabled={!!busy} class="review-btn">
+          <Archive size={12} /> Archive
+        </button>
+      </div>
+
+      <div class="mt-3 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px] gap-2">
+        <textarea
+          value={instructions}
+          onInput={(e) => onInstructions((e.target as HTMLTextAreaElement).value)}
+          placeholder="Instructions for follow-up. What should the agent do differently or check this time?"
+          rows={3}
+          class="w-full bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md px-2.5 py-2 text-[12px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] resize-none"
+        />
+        <div class="space-y-2">
+          <select
+            value={selectedAgent}
+            onChange={(e) => onAgent((e.target as HTMLSelectElement).value)}
+            class="w-full bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md px-2 py-1.5 text-[12px] text-[var(--color-text)] outline-none"
+          >
+            <option value="">Assign to...</option>
+            {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name || agent.id}</option>)}
+          </select>
+          <button type="button" onClick={triage ? onRetry : onFollowup} disabled={!!busy} class="w-full review-primary">
+            {triage ? <RotateCcw size={13} /> : <Send size={13} />}
+            {triage ? 'Retry with instructions' : 'Send follow-up'}
+          </button>
+          {triage && (
+            <button type="button" onClick={onFollowup} disabled={!!busy} class="w-full review-btn justify-center">
+              <Send size={12} /> Assign follow-up
+            </button>
+          )}
+        </div>
+      </div>
+
+      {(busy || message) && (
+        <div class="mt-2 text-[10.5px] text-[var(--color-text-faint)]">{busy || message}</div>
+      )}
+    </div>
+  );
+}
+
+function WaitingCard({ item, busy, onArchive }: { item: ReviewItem; busy?: string; onArchive: () => void }) {
+  return (
+    <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+      <div class="flex items-center gap-2">
+        <Pill tone="medium">Waiting follow-up</Pill>
+        {item.review.followupTaskId && <Pill tone="neutral">child {item.review.followupTaskId.slice(0, 6)}</Pill>}
+        <span class="ml-auto text-[10px] text-[var(--color-text-faint)]">{formatRelativeTime(item.review.updatedAt)}</span>
+      </div>
+      <div class="text-[14px] font-medium text-[var(--color-text)] mt-2">{item.title}</div>
+      <div class="text-[12px] text-[var(--color-text-muted)] mt-1 line-clamp-2">{item.review.instruction || item.summary}</div>
+      <button type="button" onClick={onArchive} disabled={!!busy} class="review-btn mt-3">
+        <Archive size={12} /> Archive
+      </button>
+    </div>
+  );
+}
+
+function ReviewSection({ title, items, children }: { title: string; items: ReviewItem[]; children: (item: ReviewItem) => preact.ComponentChildren }) {
+  if (items.length === 0) return null;
+  return (
+    <section class="space-y-2">
+      <div class="flex items-center gap-2">
+        <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">{title}</div>
+        <span class="text-[10px] text-[var(--color-text-muted)] tabular-nums">{items.length}</span>
+      </div>
+      <div class="space-y-3">{items.map((item) => children(item))}</div>
+    </section>
+  );
+}
+
 function DeliverableAction({ deliverable }: { deliverable: Deliverable }) {
   if (deliverable.kind === 'url' && deliverable.href) {
     return (
-      <a
-        href={deliverable.href}
-        target="_blank"
-        rel="noreferrer"
-        class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-[var(--color-border)] text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-elevated)] transition-colors"
-      >
+      <a href={deliverable.href} target="_blank" rel="noreferrer" class="review-btn">
         <ExternalLink size={12} /> {deliverable.label}
       </a>
     );
@@ -155,12 +349,7 @@ function DeliverableAction({ deliverable }: { deliverable: Deliverable }) {
   if (deliverable.kind === 'file' && deliverable.href) {
     const href = `${deliverable.href}${deliverable.href.includes('?') ? '&' : '?'}token=${encodeURIComponent(dashboardToken)}`;
     return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-[var(--color-border)] text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-elevated)] transition-colors"
-      >
+      <a href={href} target="_blank" rel="noreferrer" class="review-btn">
         <Download size={12} /> {deliverable.label}
       </a>
     );
@@ -180,4 +369,11 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div class="text-[19px] font-semibold text-[var(--color-text)] truncate" title={value}>{value}</div>
     </div>
   );
+}
+
+function groupItems(items: ReviewItem[]): Partial<Record<ReviewState['status'], ReviewItem[]>> {
+  return items.reduce<Partial<Record<ReviewState['status'], ReviewItem[]>>>((acc, item) => {
+    (acc[item.review.status] ??= []).push(item);
+    return acc;
+  }, {});
 }
