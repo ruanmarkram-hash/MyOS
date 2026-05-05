@@ -105,12 +105,13 @@ Reply with JSON: {"agent": "agent_id"}`;
   }
 }
 
-export function startDashboard(botApi?: Api<RawApi>): void {
-  if (!DASHBOARD_TOKEN) {
-    logger.info('DASHBOARD_TOKEN not set, dashboard disabled');
-    return;
-  }
-
+/**
+ * Build the dashboard Hono app without binding it to a port. Exported for
+ * contract tests so the route surface can be exercised via `app.request()`
+ * without standing up a real server. Production callers should use
+ * `startDashboard` instead, which builds the app then serves it.
+ */
+export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   const app = new Hono();
 
   // CORS headers for cross-origin access (Cloudflare tunnel, mobile browsers)
@@ -120,6 +121,26 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     c.header('Access-Control-Allow-Headers', 'Content-Type');
     if (c.req.method === 'OPTIONS') return c.body(null, 204);
     await next();
+  });
+
+  // Security headers (defense-in-depth on top of token-in-URL auth).
+  // Referrer-Policy: stops `?token=...` leaking via Referer when a user
+  // clicks an external link from inside the dashboard.
+  // X-Content-Type-Options: nosniff blocks MIME-sniff XSS on binary
+  // routes (favicon, avatars).
+  // X-Frame-Options: DENY because the dashboard should never be framed —
+  // protects against clickjacking against the token-in-URL session.
+  // Cache-Control: no-store on /api/* so memory contents and conversation
+  // history can't get cached by shared proxies.
+  app.use('*', async (c, next) => {
+    c.header('Referrer-Policy', 'no-referrer');
+    c.header('X-Content-Type-Options', 'nosniff');
+    c.header('X-Frame-Options', 'DENY');
+    await next();
+    const path = new URL(c.req.url).pathname;
+    if (path.startsWith('/api/')) {
+      c.header('Cache-Control', 'no-store');
+    }
   });
 
   // Global error handler — prevents unhandled throws from killing the server
@@ -978,6 +999,23 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       }
     }
 
+    // Kill-switch surface — fork doesn't yet wire central kill-switches
+    // module, so we publish the contract shape with env-derived defaults.
+    // The frontend reads these flags to render gate state.
+    const ksFlag = (name: string, dflt: boolean): boolean => {
+      const v = process.env[name];
+      if (v === undefined) return dflt;
+      return v !== 'false' && v !== '0';
+    };
+    const killSwitchesShape = {
+      WARROOM_TEXT_ENABLED: ksFlag('WARROOM_TEXT_ENABLED', true),
+      WARROOM_VOICE_ENABLED: ksFlag('WARROOM_VOICE_ENABLED', true),
+      LLM_SPAWN_ENABLED: ksFlag('LLM_SPAWN_ENABLED', true),
+      DASHBOARD_MUTATIONS_ENABLED: ksFlag('DASHBOARD_MUTATIONS_ENABLED', true),
+      MISSION_AUTO_ASSIGN_ENABLED: ksFlag('MISSION_AUTO_ASSIGN_ENABLED', true),
+      SCHEDULER_ENABLED: ksFlag('SCHEDULER_ENABLED', true),
+    };
+
     return c.json({
       contextPct,
       turns,
@@ -987,6 +1025,9 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       telegramConnected: getTelegramConnected(),
       waConnected: WHATSAPP_ENABLED,
       slackConnected: !!SLACK_USER_TOKEN,
+      killSwitches: killSwitchesShape,
+      killSwitchRefusals: {},
+      warroom: { textOpenMeetings: 0 },
     });
   });
 
@@ -1119,13 +1160,14 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
     try {
       if (agentId === 'main') {
-        // Main agent uses in-memory override (same as /model command)
+        // Main agent uses in-memory override (same as /model command);
+        // takes effect on the next turn — no process restart required.
         const { setMainModelOverride } = await import('./bot.js');
         setMainModelOverride(model);
-      } else {
-        setAgentModel(agentId, model);
+        return c.json({ ok: true, agent: 'main', model, restartRequired: false });
       }
-      return c.json({ ok: true, agent: agentId, model });
+      setAgentModel(agentId, model);
+      return c.json({ ok: true, agent: agentId, model, restartRequired: true });
     } catch (err) {
       return c.json({ error: 'Failed to update model' }, 500);
     }
@@ -1342,6 +1384,21 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const aborted = abortActiveQuery(chatId);
     return c.json({ ok: aborted });
   });
+
+  return app;
+}
+
+/**
+ * Production entry point: build the dashboard app and bind it to a port.
+ * Wires the War Room WS proxy onto the same HTTP server when enabled.
+ */
+export function startDashboard(botApi?: Api<RawApi>): void {
+  if (!DASHBOARD_TOKEN) {
+    logger.info('DASHBOARD_TOKEN not set, dashboard disabled');
+    return;
+  }
+
+  const app = buildDashboardApp(botApi);
 
   let server: ReturnType<typeof serve>;
   try {
