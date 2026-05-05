@@ -207,11 +207,11 @@ function compactCommandTitle(command: string): string {
 }
 
 function briefSlot(task: ScheduledTask): BriefSlot | null {
-  const haystack = `${task.prompt}\n${task.last_result || ''}`;
-  if (!/morning|mid.?day|afternoon|evening|daily|brief|wrap|pulse|shutdown/i.test(haystack)) return null;
-  if (/morning/i.test(haystack)) return 'morning';
-  if (/mid.?day|afternoon|pulse/i.test(haystack)) return 'midday';
-  if (/evening|wrap|shutdown/i.test(haystack)) return 'evening';
+  const prompt = task.prompt;
+  if (!/morning|mid.?day|afternoon|evening|daily|brief|wrap|pulse|shutdown/i.test(prompt)) return null;
+  if (/morning/i.test(prompt)) return 'morning';
+  if (/mid.?day|afternoon|pulse/i.test(prompt)) return 'midday';
+  if (/evening|wrap|shutdown/i.test(prompt)) return 'evening';
   return 'other';
 }
 

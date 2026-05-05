@@ -350,6 +350,21 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(body.briefs[0].content).not.toContain('prompt that should not be primary');
   });
 
+  it('classifies brief slots from the scheduled prompt, not body wording', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-evening', 'Produce Ruan evening wrap', '0 18 * * *', now + 3600, 'main');
+    updateTaskAfterRun('brief-evening', now + 86400, 'What landed this morning: shipped dashboard work', 'success');
+
+    const res = await get('/api/home/briefs');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.briefs[0]).toMatchObject({
+      slot: 'evening',
+      label: 'Evening',
+      content: expect.stringContaining('this morning'),
+    });
+  });
+
   it('returns attention items from briefs and active missions', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-2', 'Midday pulse', '0 */4 * * *', now + 3600, 'main');
