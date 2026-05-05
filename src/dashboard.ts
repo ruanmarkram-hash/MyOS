@@ -12,6 +12,7 @@ import {
   deleteScheduledTask,
   pauseScheduledTask,
   resumeScheduledTask,
+  clearScheduledTaskAttention,
   getConversationPage,
   getDashboardMemoryStats,
   getDashboardPinnedMemories,
@@ -32,6 +33,7 @@ import {
   getMissionTask,
   getMissionReview,
   createMissionTask,
+  completeMissionTask,
   cancelMissionTask,
   deleteMissionTask,
   reassignMissionTask,
@@ -1787,6 +1789,58 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       updatedAt: new Date().toISOString(),
       items: buildHomeAttention(tasks, missions),
     });
+  });
+
+  app.post('/api/home/attention/resolve', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+
+    let body: { itemId?: string; action?: 'complete' | 'archive' } = {};
+    try { body = await c.req.json(); } catch { body = {}; }
+    const itemId = String(body.itemId || '');
+    const action = body.action;
+    if (!itemId || (action !== 'complete' && action !== 'archive')) {
+      return c.json({ ok: false, error: 'itemId and action are required.' }, 400);
+    }
+
+    const missionMatch = itemId.match(/^mission:([^:]+)/);
+    if (missionMatch) {
+      const id = missionMatch[1];
+      const task = getMissionTask(id);
+      if (!task) return c.json({ ok: false, error: 'Mission source not found.' }, 404);
+
+      if (action === 'archive') {
+        if (!TERMINAL_MISSION_STATUSES.has(task.status)) {
+          cancelMissionTask(id);
+        }
+        const review = updateMissionReviewState(id, 'archived', 'ignored');
+        return c.json({ ok: true, source: 'mission', action, review });
+      }
+
+      if (task.status === 'running') {
+        return c.json({ ok: false, error: 'Running missions cannot be manually completed from Home. Archive cancels the source task instead.' }, 409);
+      }
+      if (!TERMINAL_MISSION_STATUSES.has(task.status)) {
+        completeMissionTask(id, 'Manually marked complete from Home Needs Attention.', 'completed');
+      }
+      const review = updateMissionReviewState(id, 'resolved', 'approved');
+      return c.json({ ok: true, source: 'mission', action, review });
+    }
+
+    const scheduleMatch = itemId.match(/^(?:schedule|brief):([^:]+)/);
+    if (scheduleMatch) {
+      const id = scheduleMatch[1];
+      if (action === 'archive') {
+        pauseScheduledTask(id);
+        return c.json({ ok: true, source: itemId.startsWith('brief:') ? 'brief' : 'schedule', action });
+      }
+      const ok = clearScheduledTaskAttention(id);
+      if (!ok) return c.json({ ok: false, error: 'Scheduled source not found.' }, 404);
+      return c.json({ ok: true, source: itemId.startsWith('brief:') ? 'brief' : 'schedule', action });
+    }
+
+    return c.json({ ok: false, error: 'Unsupported attention source.' }, 400);
   });
 
   app.get('/api/home/agenda', async (c) => {

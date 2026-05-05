@@ -1,5 +1,5 @@
 import type { ComponentChildren } from 'preact';
-import { CalendarDays, Cpu, ListChecks, Radio, ShieldCheck, Sunrise, Users } from 'lucide-preact';
+import { Archive, CalendarDays, Check, Cpu, ListChecks, Radio, ShieldCheck, Sunrise, Users } from 'lucide-preact';
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { PageHeader } from '@/components/PageHeader';
@@ -448,6 +448,24 @@ function AttentionPanel({
   onChange: () => void;
 }) {
   const [assigning, setAssigning] = useState<Record<string, string>>({});
+  const [resolving, setResolving] = useState<Record<string, string>>({});
+
+  async function resolve(item: HomeAttentionItem, action: 'complete' | 'archive') {
+    const label = action === 'complete' ? 'Completing...' : 'Archiving...';
+    setResolving((prev) => ({ ...prev, [item.id]: label }));
+    try {
+      await apiPost('/api/home/attention/resolve', { itemId: item.id, action });
+      onChange();
+    } catch (err: any) {
+      alert((action === 'complete' ? 'Complete' : 'Archive') + ' failed: ' + (err?.body?.error || err?.message || err));
+    } finally {
+      setResolving((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+    }
+  }
 
   async function assign(item: HomeAttentionItem, agentId: string) {
     if (!agentId) return;
@@ -511,6 +529,26 @@ function AttentionPanel({
           </div>
           <div class="shrink-0 flex flex-col items-end gap-1.5">
             <div class="text-[10.5px] text-[var(--color-text-faint)]">{formatRelativeTime(item.createdAt)}</div>
+            <div class="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => void resolve(item, 'complete')}
+                disabled={!!resolving[item.id]}
+                class="inline-flex items-center justify-center w-7 h-7 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-status-done)] hover:border-[var(--color-status-done)] disabled:opacity-40"
+                title={resolving[item.id] || 'Mark complete at source'}
+              >
+                <Check size={12} />
+              </button>
+              <button
+                type="button"
+                onClick={() => void resolve(item, 'archive')}
+                disabled={!!resolving[item.id]}
+                class="inline-flex items-center justify-center w-7 h-7 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-40"
+                title={resolving[item.id] || 'Archive at source'}
+              >
+                <Archive size={12} />
+              </button>
+            </div>
             <select
               value=""
               onChange={(e) => {

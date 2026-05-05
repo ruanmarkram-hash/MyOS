@@ -1497,6 +1497,20 @@ export function updateTaskAfterRun(
   ).run(now, nextRun, result.slice(0, 4000), lastStatus, id);
 }
 
+export function clearScheduledTaskAttention(id: string, result = 'Cleared from Home Needs Attention.'): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const update = db.prepare(
+    `UPDATE scheduled_tasks
+     SET status = 'active',
+         last_run = COALESCE(last_run, ?),
+         last_result = ?,
+         last_status = 'success',
+         started_at = NULL
+     WHERE id = ?`,
+  ).run(now, result.slice(0, 4000), id);
+  return update.changes > 0;
+}
+
 export function resetStuckTasks(agentId: string): number {
   const result = db.prepare(
     `UPDATE scheduled_tasks SET status = 'active', started_at = NULL WHERE status = 'running' AND agent_id = ?`,

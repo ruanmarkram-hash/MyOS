@@ -388,6 +388,39 @@ describe('GET /api/home dashboard endpoints', () => {
     });
   });
 
+  it('resolves a mission attention item by updating the source mission', async () => {
+    createMissionTask('m-home-resolve', 'Resolve from Home', 'queued work', 'comms', 'dashboard', 7);
+
+    const complete = await app.request('/api/home/attention/resolve' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ itemId: 'mission:m-home-resolve', action: 'complete' }),
+    });
+    expect(complete.status).toBe(200);
+    expect(getMissionTask('m-home-resolve')?.status).toBe('completed');
+
+    const res = await get('/api/home/attention');
+    const body = await jsonOf(res);
+    expect(body.items.map((item: any) => item.id)).not.toContain('mission:m-home-resolve');
+  });
+
+  it('archives a mission attention item by updating review state at the source', async () => {
+    createMissionTask('m-home-archive', 'Archive from Home', 'partial work', 'mason', 'dashboard', 7);
+    completeMissionTask('m-home-archive', 'Partial output.', 'partial');
+
+    const archive = await app.request('/api/home/attention/resolve' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ itemId: 'mission:m-home-archive:terminal', action: 'archive' }),
+    });
+    expect(archive.status).toBe(200);
+    expect(getMissionReview('m-home-archive')?.review_status).toBe('archived');
+
+    const res = await get('/api/home/attention');
+    const body = await jsonOf(res);
+    expect(body.items.map((item: any) => item.id)).not.toContain('mission:m-home-archive:terminal');
+  });
+
   it('does not promote markdown section headings as attention items', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-headings', 'Morning brief', '0 9 * * *', now + 3600, 'main');
