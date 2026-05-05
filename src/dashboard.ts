@@ -49,6 +49,8 @@ import {
   addWarRoomTranscript,
   getWarRoomMeetings,
   getWarRoomTranscript,
+  type MissionTask,
+  type ScheduledTask,
 } from './db.js';
 import { generateContent, parseJsonResponse } from './gemini.js';
 import { getSecurityStatus, getScrubbedSdkEnv } from './security.js';
@@ -180,6 +182,247 @@ function killSwitchFlag(name: string, dflt: boolean): boolean {
   const v = process.env[name];
   if (v === undefined) return dflt;
   return v !== 'false' && v !== '0';
+}
+
+type BriefSlot = 'morning' | 'midday' | 'evening' | 'other';
+type AttentionSeverity = 'high' | 'medium' | 'low';
+
+const TERMINAL_MISSION_STATUSES = new Set(['completed', 'failed', 'partial', 'cancelled']);
+
+function scheduleTitle(prompt: string): string {
+  const firstLine = prompt.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || prompt.trim();
+  const beforeMode = firstLine.split('--- SILENT MODE:')[0].trim();
+  const execute = beforeMode.match(/Execute exactly:\s*([^—.-]+)/i);
+  if (execute?.[1]) return compactCommandTitle(execute[1]);
+  const run = beforeMode.match(/Run:\s*([^—.-]+)/i);
+  if (run?.[1]) return compactCommandTitle(run[1]);
+  return beforeMode.length > 180 ? beforeMode.slice(0, 177) + '...' : beforeMode;
+}
+
+function compactCommandTitle(command: string): string {
+  const cleaned = command.replace(/^python3\s+/, '').replace(/^bash\s+/, '').trim();
+  const parts = cleaned.split('/');
+  const file = parts[parts.length - 1] || cleaned;
+  return file.replace(/\.(py|sh)$/i, '').replace(/[-_]/g, ' ');
+}
+
+function briefSlot(task: ScheduledTask): BriefSlot | null {
+  const haystack = `${task.prompt}\n${task.last_result || ''}`;
+  if (!/morning|mid.?day|afternoon|evening|daily|brief|wrap|pulse|shutdown/i.test(haystack)) return null;
+  if (/morning/i.test(haystack)) return 'morning';
+  if (/mid.?day|afternoon|pulse/i.test(haystack)) return 'midday';
+  if (/evening|wrap|shutdown/i.test(haystack)) return 'evening';
+  return 'other';
+}
+
+function briefLabel(slot: BriefSlot): string {
+  if (slot === 'morning') return 'Morning';
+  if (slot === 'midday') return 'Midday';
+  if (slot === 'evening') return 'Evening';
+  return 'Other';
+}
+
+function isMeaningfulBriefResult(result: string | null): result is string {
+  if (!result) return false;
+  const cleaned = result.trim();
+  return cleaned.length > 0 && !/^OK$/i.test(cleaned);
+}
+
+function extractAttentionItems(text: string, limit = 4): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  for (const line of text.split(/\r?\n/)) {
+    const cleaned = line
+      .replace(/^[-*•☐\d.)\s]+/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned || /^OK$/i.test(cleaned)) continue;
+    if (!/urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|risk|review|approve|follow.?up|due|tomorrow top|open threads/i.test(cleaned)) continue;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(cleaned.length > 260 ? `${cleaned.slice(0, 257)}...` : cleaned);
+    if (out.length >= limit) break;
+  }
+
+  return out;
+}
+
+function buildHomeBriefs(tasks: ScheduledTask[]) {
+  const candidates = tasks
+    .filter((task) => isMeaningfulBriefResult(task.last_result))
+    .map((task) => ({ task, slot: briefSlot(task) }))
+    .filter((entry): entry is { task: ScheduledTask; slot: BriefSlot } => !!entry.slot)
+    .sort((a, b) => (b.task.last_run || 0) - (a.task.last_run || 0));
+
+  const bySlot = new Map<BriefSlot, ScheduledTask>();
+  for (const entry of candidates) {
+    if (!bySlot.has(entry.slot)) bySlot.set(entry.slot, entry.task);
+  }
+
+  const latestTaskId = candidates[0]?.task.id || null;
+  return (['morning', 'midday', 'evening', 'other'] as BriefSlot[])
+    .map((slot) => {
+      const task = bySlot.get(slot);
+      if (!task || !task.last_result) return null;
+      return {
+        slot,
+        label: briefLabel(slot),
+        taskId: task.id,
+        title: scheduleTitle(task.prompt),
+        agentId: task.agent_id,
+        status: task.status,
+        schedule: task.schedule,
+        nextRun: task.next_run,
+        lastRun: task.last_run,
+        lastStatus: task.last_status,
+        content: task.last_result,
+        attentionItems: extractAttentionItems(task.last_result),
+        primary: task.id === latestTaskId,
+      };
+    })
+    .filter(Boolean);
+}
+
+function severityForText(text: string): AttentionSeverity {
+  if (/urgent|overdue|blocked|failed|missing|error|risk|deadline/i.test(text)) return 'high';
+  if (/awaiting|needs|action|review|approve|follow.?up|due/i.test(text)) return 'medium';
+  return 'low';
+}
+
+function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
+  const items: Array<{
+    id: string;
+    source: 'brief' | 'mission' | 'schedule';
+    severity: AttentionSeverity;
+    title: string;
+    detail: string;
+    createdAt: number;
+    agentId?: string | null;
+    taskId?: string;
+    href?: string;
+  }> = [];
+
+  for (const brief of buildHomeBriefs(tasks)) {
+    if (!brief) continue;
+    for (const [index, detail] of brief.attentionItems.entries()) {
+      items.push({
+        id: `brief:${brief.taskId}:${index}`,
+        source: 'brief',
+        severity: severityForText(detail),
+        title: `${brief.label} brief`,
+        detail,
+        createdAt: brief.lastRun || 0,
+        agentId: brief.agentId,
+        taskId: brief.taskId,
+        href: '/home',
+      });
+    }
+  }
+
+  for (const mission of missions) {
+    if (!TERMINAL_MISSION_STATUSES.has(mission.status)) {
+      const ageHours = (Date.now() / 1000 - mission.created_at) / 3600;
+      items.push({
+        id: `mission:${mission.id}`,
+        source: 'mission',
+        severity: mission.status === 'running' || ageHours > 12 || !mission.assigned_agent ? 'medium' : 'low',
+        title: mission.title,
+        detail: `${mission.status}${mission.assigned_agent ? ` with @${mission.assigned_agent}` : ', unassigned'} · priority ${mission.priority}`,
+        createdAt: mission.started_at || mission.created_at,
+        agentId: mission.assigned_agent,
+        taskId: mission.id,
+        href: '/mission',
+      });
+    } else if ((mission.status === 'failed' || mission.status === 'partial') && (mission.completed_at || 0) > Date.now() / 1000 - 86400) {
+      items.push({
+        id: `mission:${mission.id}:terminal`,
+        source: 'mission',
+        severity: mission.status === 'failed' ? 'high' : 'medium',
+        title: mission.title,
+        detail: mission.status === 'failed' ? (mission.error || 'Mission failed') : 'Mission landed partial work and needs review',
+        createdAt: mission.completed_at || mission.created_at,
+        agentId: mission.assigned_agent,
+        taskId: mission.id,
+        href: '/mission',
+      });
+    }
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  for (const task of tasks) {
+    if (task.status === 'running' && (task.started_at || 0) < now - 30 * 60) {
+      items.push({
+        id: `schedule:${task.id}:stuck`,
+        source: 'schedule',
+        severity: 'high',
+        title: scheduleTitle(task.prompt),
+        detail: `Scheduled job still running after ${Math.floor((now - (task.started_at || now)) / 60)}m`,
+        createdAt: task.started_at || task.created_at,
+        agentId: task.agent_id,
+        taskId: task.id,
+        href: '/tasks',
+      });
+    }
+    if (task.last_status === 'failed' || task.last_status === 'timeout') {
+      items.push({
+        id: `schedule:${task.id}:last-status`,
+        source: 'schedule',
+        severity: 'high',
+        title: scheduleTitle(task.prompt),
+        detail: `Last run ${task.last_status}${task.last_result ? `: ${task.last_result.slice(0, 180)}` : ''}`,
+        createdAt: task.last_run || task.created_at,
+        agentId: task.agent_id,
+        taskId: task.id,
+        href: '/tasks',
+      });
+    }
+  }
+
+  const rank = { high: 0, medium: 1, low: 2 } satisfies Record<AttentionSeverity, number>;
+  return items
+    .sort((a, b) => rank[a.severity] - rank[b.severity] || b.createdAt - a.createdAt)
+    .slice(0, 12);
+}
+
+function describeCron(cron: string): string {
+  if (cron === '0 9 * * *') return 'Daily at 9am';
+  if (cron === '0 8 * * 1-5') return 'Weekdays at 8am';
+  if (cron === '0 9 * * 1') return 'Mondays at 9am';
+  if (cron === '0 18 * * 0') return 'Sundays at 6pm';
+  const hourly = cron.match(/^0 \*\/(\d+) \* \* \*$/);
+  if (hourly) return 'Every ' + hourly[1] + 'h';
+  return cron;
+}
+
+function buildHomeAgenda(tasks: ScheduledTask[]) {
+  const now = Math.floor(Date.now() / 1000);
+  const horizon = now + 24 * 60 * 60;
+  const items = tasks
+    .filter((task) => task.status !== 'paused')
+    .filter((task) => task.next_run <= horizon || task.next_run < now)
+    .sort((a, b) => a.next_run - b.next_run)
+    .slice(0, 12)
+    .map((task) => ({
+      id: task.id,
+      source: 'schedule',
+      title: scheduleTitle(task.prompt),
+      agentId: task.agent_id,
+      status: task.status,
+      dueAt: task.next_run,
+      overdue: task.next_run < now,
+      detail: describeCron(task.schedule),
+    }));
+
+  return {
+    externalCalendar: {
+      connected: false,
+      provider: null,
+      note: 'External calendar connector is not wired yet. This view currently shows OS scheduled work only.',
+    },
+    items,
+  };
 }
 
 function providerRuntime(provider: LlmProviderName, model: string | undefined, sessionId: string | undefined) {
@@ -910,6 +1153,33 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   app.get('/api/tasks', (c) => {
     const tasks = getAllScheduledTasks();
     return c.json({ tasks });
+  });
+
+  app.get('/api/home/briefs', (c) => {
+    const tasks = getAllScheduledTasks();
+    const briefs = buildHomeBriefs(tasks);
+    return c.json({
+      updatedAt: new Date().toISOString(),
+      briefs,
+      latest: briefs.find((brief) => brief?.primary) || null,
+    });
+  });
+
+  app.get('/api/home/attention', (c) => {
+    const tasks = getAllScheduledTasks();
+    const missions = getMissionTasks();
+    return c.json({
+      updatedAt: new Date().toISOString(),
+      items: buildHomeAttention(tasks, missions),
+    });
+  });
+
+  app.get('/api/home/agenda', (c) => {
+    const tasks = getAllScheduledTasks();
+    return c.json({
+      updatedAt: new Date().toISOString(),
+      ...buildHomeAgenda(tasks),
+    });
   });
 
   // Delete a scheduled task

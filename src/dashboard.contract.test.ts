@@ -14,7 +14,7 @@
 // land BEFORE config.ts evaluates at import time.
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
-import { _initTestDatabase } from './db.js';
+import { _initTestDatabase, createMissionTask, createScheduledTask, updateTaskAfterRun } from './db.js';
 import { buildDashboardApp } from './dashboard.js';
 import type { Hono } from 'hono';
 
@@ -324,6 +324,77 @@ describe('GET /api/runtime/stack', () => {
       'session-store',
       'safety-gates',
     ]));
+  });
+});
+
+describe('GET /api/home dashboard endpoints', () => {
+  it('returns brief outputs from last_result, not scheduled prompts', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-1', 'Morning brief prompt that should not be primary content', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun('brief-1', now + 86400, 'Needs review: approve supplier invoice\nLow risk note', 'success');
+
+    const res = await get('/api/home/briefs');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      updatedAt: expect.any(String),
+      briefs: expect.any(Array),
+      latest: expect.any(Object),
+    });
+    expect(body.briefs[0]).toMatchObject({
+      label: 'Morning',
+      content: expect.stringContaining('Needs review'),
+      attentionItems: expect.arrayContaining([expect.stringContaining('Needs review')]),
+      primary: true,
+    });
+    expect(body.briefs[0].content).not.toContain('prompt that should not be primary');
+  });
+
+  it('returns attention items from briefs and active missions', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-2', 'Midday pulse', '0 */4 * * *', now + 3600, 'main');
+    updateTaskAfterRun('brief-2', now + 86400, 'Blocked: calendar connector still pending', 'success');
+    createMissionTask('m-home-1', 'Build calendar connector', 'wire agenda API', null, 'dashboard', 7);
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      updatedAt: expect.any(String),
+      items: expect.any(Array),
+    });
+    expect(body.items.map((item: any) => item.source)).toEqual(expect.arrayContaining(['brief', 'mission']));
+    expect(body.items[0]).toMatchObject({
+      id: expect.any(String),
+      severity: expect.stringMatching(/^(high|medium|low)$/),
+      title: expect.any(String),
+      detail: expect.any(String),
+      createdAt: expect.any(Number),
+    });
+  });
+
+  it('returns OS scheduled work for the home agenda while calendar is unwired', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('agenda-1', 'Run: scripts/daily-brief.sh', '0 9 * * *', now + 1800, 'main');
+
+    const res = await get('/api/home/agenda');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      updatedAt: expect.any(String),
+      externalCalendar: expect.objectContaining({
+        connected: false,
+        note: expect.any(String),
+      }),
+      items: expect.any(Array),
+    });
+    expect(body.items[0]).toMatchObject({
+      id: 'agenda-1',
+      source: 'schedule',
+      title: expect.any(String),
+      dueAt: expect.any(Number),
+      overdue: expect.any(Boolean),
+    });
   });
 });
 

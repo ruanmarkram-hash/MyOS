@@ -1,4 +1,3 @@
-import { useMemo } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { CalendarDays, Cpu, ListChecks, Radio, ShieldCheck, Sunrise, Users } from 'lucide-preact';
 import { useLocation } from 'wouter-preact';
@@ -27,22 +26,10 @@ interface MissionTask {
   id: string;
   title: string;
   assigned_agent: string | null;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'partial' | 'cancelled';
   priority: number;
   created_at: number;
   completed_at: number | null;
-}
-
-interface ScheduledTask {
-  id: string;
-  prompt: string;
-  schedule: string;
-  next_run: number;
-  last_run: number | null;
-  last_result: string | null;
-  status: 'active' | 'paused' | 'running';
-  agent_id: string;
-  last_status: 'success' | 'failed' | 'timeout' | null;
 }
 
 interface Agent {
@@ -60,38 +47,80 @@ interface RuntimeComponent {
   active: string;
 }
 
-const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
+interface HomeBrief {
+  slot: 'morning' | 'midday' | 'evening' | 'other';
+  label: string;
+  taskId: string;
+  title: string;
+  agentId: string;
+  status: 'active' | 'paused' | 'running';
+  schedule: string;
+  nextRun: number;
+  lastRun: number | null;
+  lastStatus: 'success' | 'failed' | 'timeout' | null;
+  content: string;
+  attentionItems: string[];
+  primary: boolean;
+}
+
+interface HomeAttentionItem {
+  id: string;
+  source: 'brief' | 'mission' | 'schedule';
+  severity: 'high' | 'medium' | 'low';
+  title: string;
+  detail: string;
+  createdAt: number;
+  agentId?: string | null;
+  taskId?: string;
+  href?: string;
+}
+
+interface HomeAgendaItem {
+  id: string;
+  source: 'schedule';
+  title: string;
+  agentId: string;
+  status: 'active' | 'paused' | 'running';
+  dueAt: number;
+  overdue: boolean;
+  detail: string;
+}
+
+interface HomeAgenda {
+  externalCalendar: {
+    connected: boolean;
+    provider: string | null;
+    note: string;
+  };
+  items: HomeAgendaItem[];
+}
+
+const TERMINAL = new Set(['completed', 'failed', 'partial', 'cancelled']);
 
 export function HomeDashboard() {
   const [, navigate] = useLocation();
   const health = useFetch<Health>(`/api/health?chatId=${encodeURIComponent(chatId)}`, 30_000);
   const missions = useFetch<{ tasks: MissionTask[] }>('/api/mission/tasks', 15_000);
-  const scheduled = useFetch<{ tasks: ScheduledTask[] }>('/api/tasks', 30_000);
+  const briefs = useFetch<{ updatedAt: string; briefs: HomeBrief[]; latest: HomeBrief | null }>('/api/home/briefs', 30_000);
+  const attention = useFetch<{ updatedAt: string; items: HomeAttentionItem[] }>('/api/home/attention', 15_000);
+  const agenda = useFetch<{ updatedAt: string } & HomeAgenda>('/api/home/agenda', 30_000);
   const agents = useFetch<{ agents: Agent[] }>(`/api/agents?chatId=${encodeURIComponent(chatId)}`, 30_000);
   const runtime = useFetch<{ components: RuntimeComponent[] }>(
     `/api/runtime/stack?chatId=${encodeURIComponent(chatId)}`,
     30_000,
   );
 
-  const error = health.error || missions.error || scheduled.error || agents.error || runtime.error;
-  const loading = (health.loading || missions.loading || scheduled.loading || agents.loading || runtime.loading) && !health.data;
+  const error = health.error || missions.error || briefs.error || attention.error || agenda.error || agents.error || runtime.error;
+  const loading = (health.loading || missions.loading || briefs.loading || attention.loading || agenda.loading || agents.loading || runtime.loading) && !health.data;
 
   const activeMissions = (missions.data?.tasks ?? []).filter((task) => !TERMINAL.has(task.status));
   const runningMissions = activeMissions.filter((task) => task.status === 'running');
   const unassigned = activeMissions.filter((task) => !task.assigned_agent);
-  const nextScheduled = useMemo(
-    () => (scheduled.data?.tasks ?? [])
-      .filter((task) => task.status !== 'paused')
-      .sort((a, b) => a.next_run - b.next_run)
-      .slice(0, 6),
-    [scheduled.data],
-  );
-  const briefGroups = useMemo(
-    () => groupBriefTasks(scheduled.data?.tasks ?? []),
-    [scheduled.data],
-  );
   const liveAgents = (agents.data?.agents ?? []).filter((agent) => agent.running);
   const stackIssues = (runtime.data?.components ?? []).filter((component) => component.status !== 'healthy');
+  const attentionItems = attention.data?.items ?? [];
+  const briefItems = briefs.data?.briefs ?? [];
+  const agendaItems = agenda.data?.items ?? [];
 
   return (
     <div class="flex flex-col h-full">
@@ -111,8 +140,8 @@ export function HomeDashboard() {
       {!error && health.data && (
         <div class="flex-1 overflow-y-auto p-6 space-y-4">
           <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            <Metric icon={<Sunrise size={16} />} label="Today" value={activeMissions.length + ' open loops'} detail={`${runningMissions.length} running · ${unassigned.length} unassigned`} />
-            <Metric icon={<CalendarDays size={16} />} label="Calendar" value="not connected" detail="external calendar connector pending" tone="medium" />
+            <Metric icon={<Sunrise size={16} />} label="Today" value={attentionItems.length + ' attention items'} detail={`${activeMissions.length} mission loops · ${runningMissions.length} running · ${unassigned.length} unassigned`} tone={attentionItems.some((item) => item.severity === 'high') ? 'medium' : 'neutral'} />
+            <Metric icon={<CalendarDays size={16} />} label="Calendar" value={agenda.data?.externalCalendar.connected ? 'connected' : 'OS schedule'} detail={agenda.data?.externalCalendar.connected ? agenda.data.externalCalendar.provider || 'calendar' : 'external connector pending'} tone="medium" />
             <Metric icon={<Users size={16} />} label="Agents" value={`${liveAgents.length}/${agents.data?.agents.length ?? 0} live`} detail={liveAgents.map((a) => a.name || a.id).slice(0, 3).join(', ') || 'none live'} />
             <Metric icon={<Cpu size={16} />} label="Runtime" value={health.data.provider} detail={health.data.resolvedModel} tone={stackIssues.length ? 'medium' : 'done'} />
           </div>
@@ -120,16 +149,20 @@ export function HomeDashboard() {
           <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] gap-4">
             <section class="space-y-4">
               <Panel title="Briefs" icon={<Sunrise size={15} />}>
-                {briefGroups.length === 0 ? (
+                {briefItems.length === 0 ? (
                   <EmptyLine text="No recent brief outputs found." />
                 ) : (
                   <div class="space-y-3">
-                    <BriefAttention briefs={briefGroups} />
-                    {briefGroups.map((group) => (
-                      <BriefCard key={group.label} label={group.label} task={group.task} primary={group.primary} />
+                    <BriefAttention items={attentionItems.filter((item) => item.source === 'brief')} />
+                    {briefItems.map((brief) => (
+                      <BriefCard key={brief.taskId} brief={brief} />
                     ))}
                   </div>
                 )}
+              </Panel>
+
+              <Panel title="Needs Attention" icon={<ShieldCheck size={15} />}>
+                <AttentionPanel items={attentionItems} />
               </Panel>
 
               <Panel title="Mission Queue" icon={<ListChecks size={15} />} action="/mission" navigate={navigate}>
@@ -143,13 +176,15 @@ export function HomeDashboard() {
 
             <section class="space-y-4">
               <Panel title="Today / Calendar" icon={<CalendarDays size={15} />}>
-                <div class="rounded-md border border-dashed border-[var(--color-border)] p-3 mb-3">
-                  <div class="text-[12px] text-[var(--color-text)]">External calendar is not wired into Mission Control yet.</div>
-                  <div class="text-[11px] text-[var(--color-text-muted)] mt-1">Next connector should read Google/Outlook agenda, availability, and meeting prep.</div>
-                </div>
-                {nextScheduled.length === 0 ? <EmptyLine text="No scheduled OS jobs." /> : (
+                {!agenda.data?.externalCalendar.connected && (
+                  <div class="rounded-md border border-dashed border-[var(--color-border)] p-3 mb-3">
+                    <div class="text-[12px] text-[var(--color-text)]">External calendar is not wired into Mission Control yet.</div>
+                    <div class="text-[11px] text-[var(--color-text-muted)] mt-1">{agenda.data?.externalCalendar.note}</div>
+                  </div>
+                )}
+                {agendaItems.length === 0 ? <EmptyLine text="No scheduled OS jobs in the next 24 hours." /> : (
                   <div class="space-y-2">
-                    {nextScheduled.map((task) => <ScheduledLine key={task.id} task={task} />)}
+                    {agendaItems.map((item) => <ScheduledLine key={item.id} item={item} />)}
                   </div>
                 )}
               </Panel>
@@ -244,74 +279,77 @@ function MissionLine({ task }: { task: MissionTask }) {
   );
 }
 
-function ScheduledLine({ task }: { task: ScheduledTask }) {
+function ScheduledLine({ item }: { item: HomeAgendaItem }) {
   return (
     <div class="flex items-start justify-between gap-3 border-b border-[var(--color-border)] last:border-b-0 pb-2 last:pb-0">
       <div class="min-w-0">
-        <div class="text-[12.5px] text-[var(--color-text)] line-clamp-1">{scheduleTitle(task.prompt)}</div>
-        <div class="text-[10.5px] text-[var(--color-text-faint)] mt-0.5">@{task.agent_id} · {describeCron(task.schedule)}</div>
+        <div class="text-[12.5px] text-[var(--color-text)] line-clamp-1">{item.title}</div>
+        <div class="text-[10.5px] text-[var(--color-text-faint)] mt-0.5">@{item.agentId} · {item.detail}</div>
       </div>
-      <Pill tone={task.status === 'running' ? 'running' : 'neutral'}>{formatCountdown(task.next_run)}</Pill>
+      <Pill tone={item.status === 'running' ? 'running' : item.overdue ? 'failed' : 'neutral'}>{formatCountdown(item.dueAt)}</Pill>
     </div>
   );
 }
 
-function BriefCard({ label, task, primary }: { label: string; task: ScheduledTask; primary?: boolean }) {
+function BriefCard({ brief }: { brief: HomeBrief }) {
   return (
-    <div class={(primary ? 'bg-[var(--color-elevated)] border-[var(--color-border-strong)]' : 'bg-[var(--color-card)] border-[var(--color-border)]') + ' rounded-md border p-3 min-w-0'}>
+    <div class={(brief.primary ? 'bg-[var(--color-elevated)] border-[var(--color-border-strong)]' : 'bg-[var(--color-card)] border-[var(--color-border)]') + ' rounded-md border p-3 min-w-0'}>
       <div class="flex items-center justify-between gap-2 mb-2">
         <div class="flex items-center gap-2 min-w-0">
-          <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">{label}</div>
-          {primary && <Pill tone="accent">latest</Pill>}
+          <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">{brief.label}</div>
+          {brief.primary && <Pill tone="accent">latest</Pill>}
         </div>
-        <Pill tone={task.status === 'paused' ? 'cancelled' : 'done'}>
-          {task.last_run ? formatRelativeTime(task.last_run) : formatCountdown(task.next_run)}
+        <Pill tone={brief.status === 'paused' ? 'cancelled' : brief.lastStatus === 'failed' ? 'failed' : 'done'}>
+          {brief.lastRun ? formatRelativeTime(brief.lastRun) : formatCountdown(brief.nextRun)}
         </Pill>
       </div>
       <div class="text-[12px] text-[var(--color-text-muted)] whitespace-pre-wrap leading-relaxed line-clamp-5">
-        {task.last_result}
+        {brief.content}
       </div>
       <div class="text-[10.5px] text-[var(--color-text-faint)] mt-2">
-        {scheduleTitle(task.prompt)} · {describeCron(task.schedule)} · @{task.agent_id}
+        {brief.title} · @{brief.agentId}
       </div>
     </div>
   );
 }
 
-function AttentionLine({ text }: { text: string }) {
-  const urgent = /urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|🚨/i.test(text);
+function AttentionLine({ item }: { item: HomeAttentionItem }) {
   return (
     <div class="flex items-start gap-2 text-[12px] text-[var(--color-text-muted)]">
-      <span class={(urgent ? 'bg-[var(--color-priority-high)]' : 'bg-[var(--color-text-faint)]') + ' mt-1.5 w-1.5 h-1.5 rounded-full shrink-0'} />
-      <span>{text}</span>
+      <span class={(item.severity === 'high' ? 'bg-[var(--color-priority-high)]' : item.severity === 'medium' ? 'bg-[var(--color-priority-medium)]' : 'bg-[var(--color-text-faint)]') + ' mt-1.5 w-1.5 h-1.5 rounded-full shrink-0'} />
+      <span><span class="text-[var(--color-text)]">{item.title}: </span>{item.detail}</span>
     </div>
   );
 }
 
-function extractAttentionItems(briefs: Array<{ task: ScheduledTask }>): string[] {
-  const lines: string[] = [];
-  for (const { task } of briefs) {
-    for (const line of (task.last_result || '').split(/\r?\n/)) {
-      const cleaned = line.replace(/^[-*•]\s*/, '').trim();
-      if (!cleaned || /^OK$/i.test(cleaned)) continue;
-      if (/urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|🚨|tomorrow top|open threads/i.test(cleaned)) {
-        lines.push(cleaned);
-      }
-      if (lines.length >= 6) return lines;
-    }
-  }
-  return lines;
-}
-
-function BriefAttention({ briefs }: { briefs: Array<{ task: ScheduledTask }> }) {
-  const items = extractAttentionItems(briefs);
+function BriefAttention({ items }: { items: HomeAttentionItem[] }) {
   if (items.length === 0) return null;
   return (
     <div class="rounded-md bg-[var(--color-elevated)] border border-[var(--color-border)] p-3">
       <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-2">Needs attention</div>
       <div class="space-y-1.5">
-        {items.map((item, index) => <AttentionLine key={index} text={item} />)}
+        {items.slice(0, 6).map((item) => <AttentionLine key={item.id} item={item} />)}
       </div>
+    </div>
+  );
+}
+
+function AttentionPanel({ items }: { items: HomeAttentionItem[] }) {
+  if (items.length === 0) return <EmptyLine text="Nothing currently needs attention." />;
+  return (
+    <div class="space-y-2">
+      {items.slice(0, 8).map((item) => (
+        <div key={item.id} class="flex items-start justify-between gap-3 border-b border-[var(--color-border)] last:border-b-0 pb-2 last:pb-0">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 min-w-0">
+              <Pill tone={item.severity === 'high' ? 'failed' : item.severity === 'medium' ? 'medium' : 'neutral'}>{item.source}</Pill>
+              <div class="text-[12.5px] text-[var(--color-text)] truncate">{item.title}</div>
+            </div>
+            <div class="text-[11px] text-[var(--color-text-muted)] mt-1 line-clamp-2">{item.detail}</div>
+          </div>
+          <div class="text-[10.5px] text-[var(--color-text-faint)] shrink-0">{formatRelativeTime(item.createdAt)}</div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -331,60 +369,6 @@ function EmptyLine({ text }: { text: string }) {
 
 function todayLabel(): string {
   return new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date());
-}
-
-function describeCron(cron: string): string {
-  if (cron === '0 9 * * *') return 'Daily at 9am';
-  if (cron === '0 8 * * 1-5') return 'Weekdays at 8am';
-  if (cron === '0 9 * * 1') return 'Mondays at 9am';
-  if (cron === '0 18 * * 0') return 'Sundays at 6pm';
-  const hourly = cron.match(/^0 \*\/(\d+) \* \* \*$/);
-  if (hourly) return 'Every ' + hourly[1] + 'h';
-  return cron;
-}
-
-function scheduleTitle(prompt: string): string {
-  const firstLine = prompt.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || prompt.trim();
-  const beforeMode = firstLine.split('--- SILENT MODE:')[0].trim();
-  const execute = beforeMode.match(/Execute exactly:\s*([^—.-]+)/i);
-  if (execute?.[1]) return compactCommandTitle(execute[1]);
-  const run = beforeMode.match(/Run:\s*([^—.-]+)/i);
-  if (run?.[1]) return compactCommandTitle(run[1]);
-  return beforeMode.length > 180 ? beforeMode.slice(0, 177) + '...' : beforeMode;
-}
-
-function groupBriefTasks(tasks: ScheduledTask[]): Array<{ label: string; task: ScheduledTask; primary?: boolean }> {
-  const candidates = tasks
-    .filter((task) => task.last_result && !/^OK$/i.test(task.last_result.trim()))
-    .filter((task) => /morning|mid.?day|evening|daily|brief|wrap|pulse/i.test(task.prompt));
-  const pick = (patterns: RegExp[]) =>
-    candidates
-      .filter((task) => patterns.some((pattern) => pattern.test(task.prompt)))
-      .sort((a, b) => (b.last_run || 0) - (a.last_run || 0))[0] || null;
-
-  const morning = pick([/morning/i]);
-  const midday = pick([/mid.?day|afternoon|pulse/i]);
-  const evening = pick([/evening|wrap|shutdown/i]);
-  const used = new Set([morning?.id, midday?.id, evening?.id].filter(Boolean));
-  const other = candidates.filter((task) => !used.has(task.id)).sort((a, b) => (b.last_run || 0) - (a.last_run || 0))[0] || null;
-  const groups = [
-    morning && { label: 'Morning', task: morning },
-    midday && { label: 'Midday', task: midday },
-    evening && { label: 'Evening', task: evening },
-    other && { label: 'Other', task: other },
-  ].filter(Boolean) as Array<{ label: string; task: ScheduledTask; primary?: boolean }>;
-  const latestId = groups
-    .map((group) => group.task)
-    .sort((a, b) => (b.last_run || 0) - (a.last_run || 0))[0]?.id;
-
-  return groups.map((group) => ({ ...group, primary: group.task.id === latestId }));
-}
-
-function compactCommandTitle(command: string): string {
-  const cleaned = command.replace(/^python3\s+/, '').replace(/^bash\s+/, '').trim();
-  const parts = cleaned.split('/');
-  const file = parts[parts.length - 1] || cleaned;
-  return file.replace(/\.(py|sh)$/i, '').replace(/[-_]/g, ' ');
 }
 
 function formatCountdown(unixSeconds: number): string {
