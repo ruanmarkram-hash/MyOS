@@ -86,8 +86,8 @@ export function HomeDashboard() {
       .slice(0, 6),
     [scheduled.data],
   );
-  const briefTask = useMemo(
-    () => (scheduled.data?.tasks ?? []).find((task) => /morning|brief|wrap|daily/i.test(task.prompt)),
+  const briefGroups = useMemo(
+    () => groupBriefTasks(scheduled.data?.tasks ?? []),
     [scheduled.data],
   );
   const liveAgents = (agents.data?.agents ?? []).filter((agent) => agent.running);
@@ -119,23 +119,15 @@ export function HomeDashboard() {
 
           <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] gap-4">
             <section class="space-y-4">
-              <Panel title="Morning Brief" icon={<Sunrise size={15} />}>
-                {briefTask ? (
-                  <div class="space-y-3">
-                    <div class="text-[13px] text-[var(--color-text)] leading-snug">{scheduleTitle(briefTask.prompt)}</div>
-                    <div class="flex flex-wrap gap-1.5">
-                      <Pill tone={briefTask.status === 'paused' ? 'cancelled' : 'done'}>{briefTask.status}</Pill>
-                      <Pill>{describeCron(briefTask.schedule)}</Pill>
-                      <Pill>{formatCountdown(briefTask.next_run)}</Pill>
-                    </div>
-                    {briefTask.last_result && (
-                      <div class="rounded-md bg-[var(--color-elevated)] border border-[var(--color-border)] p-3 text-[12px] text-[var(--color-text-muted)] whitespace-pre-wrap line-clamp-6">
-                        {briefTask.last_result}
-                      </div>
-                    )}
-                  </div>
+              <Panel title="Briefs" icon={<Sunrise size={15} />}>
+                {briefGroups.length === 0 ? (
+                  <EmptyLine text="No scheduled brief jobs found." />
                 ) : (
-                  <EmptyLine text="No scheduled morning brief found." />
+                  <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
+                    {briefGroups.map((group) => (
+                      <BriefCard key={group.label} label={group.label} task={group.task} />
+                    ))}
+                  </div>
                 )}
               </Panel>
 
@@ -263,6 +255,30 @@ function ScheduledLine({ task }: { task: ScheduledTask }) {
   );
 }
 
+function BriefCard({ label, task }: { label: string; task: ScheduledTask | null }) {
+  return (
+    <div class="rounded-md bg-[var(--color-elevated)] border border-[var(--color-border)] p-3 min-w-0">
+      <div class="flex items-center justify-between gap-2 mb-2">
+        <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">{label}</div>
+        {task && <Pill tone={task.status === 'paused' ? 'cancelled' : 'done'}>{formatCountdown(task.next_run)}</Pill>}
+      </div>
+      {task ? (
+        <>
+          <div class="text-[12.5px] text-[var(--color-text)] leading-snug line-clamp-2">{scheduleTitle(task.prompt)}</div>
+          <div class="text-[10.5px] text-[var(--color-text-faint)] mt-1">{describeCron(task.schedule)} · @{task.agent_id}</div>
+          {task.last_result && (
+            <div class="mt-2 text-[11px] text-[var(--color-text-muted)] line-clamp-3 whitespace-pre-wrap">
+              {task.last_result}
+            </div>
+          )}
+        </>
+      ) : (
+        <div class="text-[12px] text-[var(--color-text-muted)]">Not scheduled</div>
+      )}
+    </div>
+  );
+}
+
 function ControlLine({ label, on }: { label: string; on: boolean }) {
   return (
     <div class="flex items-center justify-between gap-3 text-[12px]">
@@ -298,6 +314,27 @@ function scheduleTitle(prompt: string): string {
   const run = beforeMode.match(/Run:\s*([^—.-]+)/i);
   if (run?.[1]) return compactCommandTitle(run[1]);
   return beforeMode.length > 180 ? beforeMode.slice(0, 177) + '...' : beforeMode;
+}
+
+function groupBriefTasks(tasks: ScheduledTask[]): Array<{ label: string; task: ScheduledTask | null }> {
+  const candidates = tasks.filter((task) => /morning|mid.?day|evening|daily|brief|wrap/i.test(task.prompt));
+  const pick = (patterns: RegExp[]) =>
+    candidates
+      .filter((task) => patterns.some((pattern) => pattern.test(task.prompt)))
+      .sort((a, b) => a.next_run - b.next_run)[0] || null;
+
+  const morning = pick([/morning/i]);
+  const midday = pick([/mid.?day|afternoon|pulse/i]);
+  const evening = pick([/evening|wrap|shutdown/i]);
+  const used = new Set([morning?.id, midday?.id, evening?.id].filter(Boolean));
+  const other = candidates.filter((task) => !used.has(task.id)).sort((a, b) => a.next_run - b.next_run)[0] || null;
+
+  return [
+    { label: 'Morning', task: morning },
+    { label: 'Midday', task: midday },
+    { label: 'Evening', task: evening },
+    ...(other ? [{ label: 'Other', task: other }] : []),
+  ];
 }
 
 function compactCommandTitle(command: string): string {
