@@ -240,6 +240,7 @@ function extractAttentionItems(text: string, limit = 4): string[] {
       .trim();
     if (!cleaned || /^OK$/i.test(cleaned)) continue;
     if (/^(action needed|blocked on you|open threads|stale|breakdown|notes|projects|compliance|calendar|inbox|today):?$/i.test(cleaned)) continue;
+    if (/^(items blocked\/awaiting|total unread|after triage|skipped):/i.test(cleaned)) continue;
     if (!/urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|risk|review|approve|follow.?up|due|tomorrow top|open threads/i.test(cleaned)) continue;
     const key = cleaned.toLowerCase();
     if (seen.has(key)) continue;
@@ -293,6 +294,48 @@ function severityForText(text: string): AttentionSeverity {
   return 'low';
 }
 
+function briefDetailCoveredByMission(detail: string, missions: MissionTask[]): boolean {
+  const d = detail.toLowerCase();
+  const missionTitles = missions.map((mission) => mission.title.toLowerCase());
+  const hasMission = (patterns: RegExp[]) => missionTitles.some((title) => patterns.some((pattern) => pattern.test(title)));
+
+  if (/(caldav|scripts unavailable|reminders)/i.test(d)) {
+    return hasMission([/reminders/, /caldav/]);
+  }
+  if (/(imessage|digest unavailable|database access error)/i.test(d)) {
+    return hasMission([/imessage/, /digest access/]);
+  }
+  if (/ca-05|support plans/i.test(d)) {
+    return hasMission([/ca-05/, /support plans/]);
+  }
+  if (/ca-10|restrictive practices/i.test(d)) {
+    return hasMission([/ca-10/, /restrictive practices/]);
+  }
+  if (/charter v3|sharepoint upload|external compliance review/i.test(d)) {
+    return hasMission([/charter v3/]);
+  }
+  if (/lucas rigucini|web inquiry/i.test(d)) {
+    return hasMission([/lucas/, /inquiry response/]);
+  }
+
+  return false;
+}
+
+function completedMissionNeedsAttention(mission: MissionTask, now: number): boolean {
+  if (mission.status !== 'completed') return false;
+  if ((mission.completed_at || 0) < now - 86400) return false;
+  const result = `${mission.result || ''}\n${mission.error || ''}`;
+  return /critical|unauthorized|permission|full disk access|app-specific password|required|requires|blocked|needs? r(u|)an|manual/i.test(result);
+}
+
+function completedMissionDetail(mission: MissionTask): string {
+  const result = (mission.result || mission.error || '').split(/\r?\n/).map((line) => line.replace(/\*\*/g, '').trim()).filter(Boolean);
+  const useful = result.find((line) => /critical|root cause|unauthorized|permission|full disk access|app-specific password|required|requires|blocked|manual/i.test(line))
+    || result[0]
+    || 'Completed with follow-up required';
+  return useful.length > 220 ? `${useful.slice(0, 217)}...` : useful;
+}
+
 function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
   const items: Array<{
     id: string;
@@ -309,6 +352,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
   for (const brief of buildHomeBriefs(tasks)) {
     if (!brief) continue;
     for (const [index, detail] of brief.attentionItems.entries()) {
+      if (briefDetailCoveredByMission(detail, missions)) continue;
       items.push({
         id: `brief:${brief.taskId}:${index}`,
         source: 'brief',
@@ -337,13 +381,25 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
         taskId: mission.id,
         href: '/mission',
       });
-    } else if ((mission.status === 'failed' || mission.status === 'partial') && (mission.completed_at || 0) > Date.now() / 1000 - 86400) {
+    } else if ((mission.status === 'failed' || mission.status === 'partial') && (mission.completed_at || 0) > Date.now() / 1000 - 8 * 3600) {
       items.push({
         id: `mission:${mission.id}:terminal`,
         source: 'mission',
         severity: mission.status === 'failed' ? 'high' : 'medium',
         title: mission.title,
         detail: mission.status === 'failed' ? (mission.error || 'Mission failed') : 'Mission landed partial work and needs review',
+        createdAt: mission.completed_at || mission.created_at,
+        agentId: mission.assigned_agent,
+        taskId: mission.id,
+        href: '/mission',
+      });
+    } else if (completedMissionNeedsAttention(mission, Math.floor(Date.now() / 1000))) {
+      items.push({
+        id: `mission:${mission.id}:follow-up`,
+        source: 'mission',
+        severity: 'medium',
+        title: mission.title,
+        detail: completedMissionDetail(mission),
         createdAt: mission.completed_at || mission.created_at,
         agentId: mission.assigned_agent,
         taskId: mission.id,

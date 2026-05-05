@@ -407,6 +407,56 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(details).not.toContain('Blocked on you:');
   });
 
+  it('suppresses brief items once a matching mission task exists', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-covered', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-covered',
+      now + 86400,
+      [
+        'Scripts unavailable (missing `caldav` module). Fix needed.',
+        'Digest unavailable (database access error). Fix needed.',
+        'CA-05 Support Plans personalised (overdue since 12 Apr)',
+      ].join('\n'),
+      'success',
+    );
+    createMissionTask('m-reminders', 'Fix Reminders CalDAV auth', 'fix reminders', 'warden', 'dashboard', 8);
+    createMissionTask('m-imessage', 'Fix iMessage digest access', 'fix imessage', 'warden', 'dashboard', 8);
+    createMissionTask('m-ca05', 'CA-05 support plans recovery', 'fix ca05', 'charter', 'dashboard', 9);
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    const details = body.items.map((item: any) => item.detail);
+    expect(details).not.toContain('Scripts unavailable (missing `caldav` module). Fix needed.');
+    expect(details).not.toContain('Digest unavailable (database access error). Fix needed.');
+    expect(details).not.toContain('CA-05 Support Plans personalised (overdue since 12 Apr)');
+    expect(body.items.map((item: any) => item.title)).toEqual(expect.arrayContaining([
+      'Fix Reminders CalDAV auth',
+      'Fix iMessage digest access',
+      'CA-05 support plans recovery',
+    ]));
+  });
+
+  it('keeps completed missions visible when their result says a manual fix is still required', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createMissionTask('m-auth', 'Fix Reminders CalDAV auth', 'fix auth', 'warden', 'dashboard', 8);
+    const { completeMissionTask } = await import('./db.js');
+    completeMissionTask('m-auth', 'Root cause: App-specific password is invalid. Manual refresh required.', 'completed');
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Fix Reminders CalDAV auth',
+        detail: expect.stringContaining('App-specific password'),
+        createdAt: expect.any(Number),
+      }),
+    ]));
+    expect(body.items.find((item: any) => item.title === 'Fix Reminders CalDAV auth').createdAt).toBeGreaterThanOrEqual(now);
+  });
+
   it('returns OS scheduled work for the home agenda while calendar is unwired', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('agenda-1', 'Run: scripts/daily-brief.sh', '0 9 * * *', now + 1800, 'main');
