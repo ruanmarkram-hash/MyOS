@@ -250,18 +250,11 @@ function safeEmailExportError(err: any): string {
   return 'Email export failed. Check the Sage logs for the detailed MS Graph error.';
 }
 
-function configuredOwnerEmail(): string | null {
-  const env = readEnvFile(['OWNER_EMAIL', 'RUAN_EMAIL', 'APPLE_ID_EMAIL', 'GRAPH_USER_EMAIL', 'MSGRAPH_USER_EMAIL']);
-  return process.env.OWNER_EMAIL
-    || process.env.RUAN_EMAIL
-    || process.env.GRAPH_USER_EMAIL
-    || process.env.MSGRAPH_USER_EMAIL
-    || env.OWNER_EMAIL
-    || env.RUAN_EMAIL
-    || env.GRAPH_USER_EMAIL
-    || env.MSGRAPH_USER_EMAIL
-    || env.APPLE_ID_EMAIL
-    || null;
+export function configuredReviewExportEmail(
+  runtimeEnv: Record<string, string | undefined> = process.env,
+  fileEnv: Record<string, string> = readEnvFile(['REVIEW_EXPORT_EMAIL']),
+): string | null {
+  return runtimeEnv.REVIEW_EXPORT_EMAIL || fileEnv.REVIEW_EXPORT_EMAIL || null;
 }
 
 function reviewFileHref(filePath: string): string {
@@ -1839,7 +1832,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       items,
       total: history.total,
       openTotal: items.length,
-      exportEmailConfigured: !!configuredOwnerEmail(),
+      exportEmailConfigured: !!configuredReviewExportEmail(),
     });
   });
 
@@ -1949,8 +1942,8 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       return c.json({ ok: false, error: 'Only completed, partial, or failed mission tasks can be exported.' }, 400);
     }
 
-    const ownerEmail = configuredOwnerEmail();
-    if (!ownerEmail) return c.json({ ok: false, error: 'No owner email configured. Set OWNER_EMAIL or APPLE_ID_EMAIL.' }, 400);
+    const ownerEmail = configuredReviewExportEmail();
+    if (!ownerEmail) return c.json({ ok: false, error: 'No review export email configured. Set REVIEW_EXPORT_EMAIL.' }, 400);
 
     let body: { format?: 'docx' | 'html' } = {};
     try { body = await c.req.json(); } catch { body = {}; }

@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, getMissionReview, getMissionTask, updateTaskAfterRun } from './db.js';
-import { buildDashboardApp } from './dashboard.js';
+import { buildDashboardApp, configuredReviewExportEmail } from './dashboard.js';
 import type { Hono } from 'hono';
 
 const TOKEN = 'test-contract-token';
@@ -676,6 +676,24 @@ describe('GET /api/review/inbox', () => {
 });
 
 describe('POST /api/review/tasks/:id/email', () => {
+  it('uses only the dedicated review export email, not personal owner fallbacks', () => {
+    expect(configuredReviewExportEmail(
+      { REVIEW_EXPORT_EMAIL: undefined },
+      {
+        OWNER_EMAIL: 'owner@example.com',
+        RUAN_EMAIL: 'personal@example.com',
+        APPLE_ID_EMAIL: 'apple@example.com',
+        GRAPH_USER_EMAIL: 'graph@example.com',
+        MSGRAPH_USER_EMAIL: 'msgraph@example.com',
+      },
+    )).toBeNull();
+
+    expect(configuredReviewExportEmail(
+      { REVIEW_EXPORT_EMAIL: 'work@example.com' },
+      { REVIEW_EXPORT_EMAIL: 'file@example.com' },
+    )).toBe('work@example.com');
+  });
+
   it('respects DASHBOARD_MUTATIONS_ENABLED=false before exporting or sending', async () => {
     createMissionTask('m-review-email', 'Email deliverable', 'produce output', 'mason', 'dashboard', 6);
     completeMissionTask('m-review-email', 'Ready for review.', 'completed');
