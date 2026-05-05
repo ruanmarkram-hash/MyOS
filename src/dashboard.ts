@@ -5,7 +5,7 @@ import { serve } from '@hono/node-server';
 
 import fs from 'fs';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel, LLM_PROVIDER } from './config.js';
 import crypto from 'crypto';
 import {
   getAllScheduledTasks,
@@ -81,6 +81,7 @@ import { getWarRoomHtml } from './warroom-html.js';
 import { WARROOM_ENABLED, WARROOM_PORT } from './config.js';
 import { logger } from './logger.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
+import { normalizeLlmProvider } from './llm-provider.js';
 
 async function classifyTaskAgent(prompt: string): Promise<string | null> {
   try {
@@ -1129,7 +1130,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   // System health
   app.get('/api/health', (c) => {
     const chatId = c.req.query('chatId') || '';
-    const sessionId = getSession(chatId);
+    const sessionId = getSession(chatId, AGENT_ID, normalizeLlmProvider(LLM_PROVIDER));
     let contextPct = 0;
     let turns = 0;
     let compactions = 0;

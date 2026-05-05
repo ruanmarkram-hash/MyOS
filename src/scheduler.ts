@@ -1,6 +1,6 @@
 import { CronExpressionParser } from 'cron-parser';
 
-import { AGENT_ID, ALLOWED_CHAT_ID, PROJECT_ROOT, agentCwd, agentMcpAllowlist } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, PROJECT_ROOT, agentCwd, agentMcpAllowlist, agentSystemPrompt } from './config.js';
 import { safeSpawnSync } from './safe-spawn.js';
 import {
   getDueTasks,
@@ -17,7 +17,7 @@ import {
 import type { MissionTerminalState } from './mission-notify.js';
 import { logger } from './logger.js';
 import { messageQueue } from './message-queue.js';
-import { runAgentWithRetry } from './agent.js';
+import { getActiveProviderName, runAgentWithRetry } from './agent.js';
 import { formatForTelegram, splitMessage } from './bot.js';
 import { classifyTaskModel, modelTierLabel } from './task-model-classifier.js';
 import { tryExtractShellCommand, runShellCommand } from './shell-task.js';
@@ -319,7 +319,7 @@ async function runDueTasks(): Promise<void> {
           }
 
           if (ALLOWED_CHAT_ID) {
-            const activeSession = getSession(ALLOWED_CHAT_ID, schedulerAgentId);
+            const activeSession = getSession(ALLOWED_CHAT_ID, schedulerAgentId, getActiveProviderName());
             logConversationTurn(ALLOWED_CHAT_ID, 'user', `[Scheduled task]: ${task.prompt}`, activeSession ?? undefined, schedulerAgentId);
             logConversationTurn(ALLOWED_CHAT_ID, 'assistant', text, activeSession ?? undefined, schedulerAgentId);
           }
@@ -336,7 +336,7 @@ async function runDueTasks(): Promise<void> {
         // Run as a fresh agent call (no session — scheduled tasks are autonomous).
         // Use runAgentWithRetry so transient failures (auth refresh, rate limits)
         // get retried with backoff instead of immediately failing.
-        const result = await runAgentWithRetry(task.prompt, undefined, () => {}, undefined, taskModel, abortController, undefined, undefined, undefined, agentMcpAllowlist);
+        const result = await runAgentWithRetry(task.prompt, undefined, () => {}, undefined, taskModel, abortController, undefined, undefined, undefined, agentMcpAllowlist, undefined, agentSystemPrompt);
         clearTimeout(timeout);
 
         if (result.aborted) {
@@ -361,7 +361,7 @@ async function runDueTasks(): Promise<void> {
 
         // Inject task output into the active chat session so user replies have context
         if (ALLOWED_CHAT_ID) {
-          const activeSession = getSession(ALLOWED_CHAT_ID, schedulerAgentId);
+          const activeSession = getSession(ALLOWED_CHAT_ID, schedulerAgentId, getActiveProviderName());
           logConversationTurn(ALLOWED_CHAT_ID, 'user', `[Scheduled task]: ${task.prompt}`, activeSession ?? undefined, schedulerAgentId);
           logConversationTurn(ALLOWED_CHAT_ID, 'assistant', text, activeSession ?? undefined, schedulerAgentId);
         }
@@ -454,7 +454,7 @@ async function runDueMissionTasks(): Promise<void> {
     const timeout = setTimeout(() => abortController.abort(), MISSION_TIMEOUT_MS);
 
     try {
-      const result = await runAgentWithRetry(promptToSend, undefined, () => {}, undefined, missionModel, abortController, undefined, undefined, undefined, agentMcpAllowlist, missionCwd);
+      const result = await runAgentWithRetry(promptToSend, undefined, () => {}, undefined, missionModel, abortController, undefined, undefined, undefined, agentMcpAllowlist, missionCwd, agentSystemPrompt);
       clearTimeout(timeout);
 
       if (result.aborted) {
@@ -542,7 +542,7 @@ async function runDueMissionTasks(): Promise<void> {
 
         // Inject into conversation context so agent can reference it
         if (ALLOWED_CHAT_ID) {
-          const activeSession = getSession(ALLOWED_CHAT_ID, schedulerAgentId);
+          const activeSession = getSession(ALLOWED_CHAT_ID, schedulerAgentId, getActiveProviderName());
           logConversationTurn(ALLOWED_CHAT_ID, 'user', '[Mission task: ' + mission.title + ']: ' + mission.prompt, activeSession ?? undefined, schedulerAgentId);
           logConversationTurn(ALLOWED_CHAT_ID, 'assistant', text, activeSession ?? undefined, schedulerAgentId);
         }

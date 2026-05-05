@@ -20,6 +20,7 @@ import { getScrubbedSdkEnv } from './security.js';
 import { initDatabase, getSession, setSession } from './db.js';
 import { buildMemoryContext } from './memory.js';
 import { loadMcpServers } from './agent.js';
+import { buildAgentRuntimePrompt } from './agent-runtime.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -129,7 +130,13 @@ async function main() {
     process.stderr.write(`[voice-bridge] agent=${agentId} mcpServers=${JSON.stringify(mcpServerNames)}\n`);
 
     // Resume session if one exists for this chat+agent
-    const sessionId = getSession(chatId, agentId) ?? undefined;
+    const sessionId = getSession(chatId, agentId, 'claude') ?? undefined;
+
+    let systemPrompt: string | undefined;
+    const claudeMdPath = path.join(agentDir, 'CLAUDE.md');
+    if (!sessionId && fs.existsSync(claudeMdPath)) {
+      systemPrompt = fs.readFileSync(claudeMdPath, 'utf-8');
+    }
 
     // Build memory context
     const { contextText: memCtx } = await buildMemoryContext(chatId, message, agentId);
@@ -145,7 +152,7 @@ async function main() {
       parts.push('[Voice meeting mode: Keep responses concise and conversational. Aim for 2-3 sentences unless asked for detail. Start with a brief acknowledgment.]');
     }
     parts.push(message);
-    const fullMessage = parts.join('\n\n');
+    const fullMessage = buildAgentRuntimePrompt(parts.join('\n\n'), systemPrompt);
 
     let resultText: string | null = null;
     let newSessionId: string | undefined;
@@ -188,7 +195,7 @@ async function main() {
 
     // Save session for continuity
     if (newSessionId) {
-      setSession(chatId, newSessionId, agentId);
+      setSession(chatId, newSessionId, agentId, 'claude');
     }
 
     console.log(JSON.stringify({

@@ -171,11 +171,10 @@ export async function delegateToAgent(
     // Build memory context for the delegated agent
     const { contextText: memCtx } = await buildMemoryContext(chatId, prompt, agentId);
 
-    // Build the delegated prompt with agent role context + memory
+    // Build delegated prompt context. The provider-neutral agent role is
+    // injected at the runAgent boundary so Claude, Codex, and future local
+    // providers all receive the same OS-owned definition.
     const contextParts: string[] = [];
-    if (systemPrompt) {
-      contextParts.push(`[Agent role — follow these instructions]\n${systemPrompt}\n[End agent role]`);
-    }
     if (memCtx) {
       contextParts.push(memCtx);
     }
@@ -196,6 +195,8 @@ export async function delegateToAgent(
         abortCtrl,
         undefined, // no streaming for delegation
         agentConfig.mcpServers,
+        undefined,
+        systemPrompt || undefined,
       );
 
       clearTimeout(timer);

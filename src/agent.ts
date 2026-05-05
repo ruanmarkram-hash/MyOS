@@ -1,9 +1,10 @@
 import { LLM_PROVIDER } from './config.js';
 import { AgentError } from './errors.js';
+import { buildAgentRuntimePrompt } from './agent-runtime.js';
 import { getLlmProvider } from './llm-provider.js';
 import { logger } from './logger.js';
 import { resolveFallbackModelsForProvider, resolveModelForProvider } from './model-router.js';
-import type { AgentProgressEvent, AgentResult } from './llm-provider.js';
+import type { AgentProgressEvent, AgentResult, LlmProviderName } from './llm-provider.js';
 
 export type {
   AgentProgressEvent,
@@ -28,12 +29,16 @@ function sessionIdForProvider(
   return sessionId;
 }
 
+export function getActiveProviderName(): LlmProviderName {
+  return getLlmProvider(LLM_PROVIDER).name;
+}
+
 /**
  * Run a single user message through the configured LLM provider.
  *
- * The public function signature stays stable so bot, scheduler, and
- * delegation callers keep the same behavior while provider internals move
- * behind the LlmProvider interface.
+ * `systemPrompt` is the provider-neutral ClaudeClaw agent definition. It is
+ * injected by this boundary so callers do not depend on Claude's CLAUDE.md
+ * loading behavior or Codex's AGENTS.md compatibility path.
  */
 export async function runAgent(
   message: string,
@@ -45,11 +50,13 @@ export async function runAgent(
   onStreamText?: (accumulatedText: string) => void,
   mcpAllowlist?: string[],
   cwdOverride?: string,
+  systemPrompt?: string,
 ): Promise<AgentResult> {
   const provider = getLlmProvider(LLM_PROVIDER);
   const providerModel = resolveModelForProvider(provider.name, model);
+  const providerMessage = buildAgentRuntimePrompt(message, systemPrompt);
   return provider.runAgent({
-    message,
+    message: providerMessage,
     sessionId: sessionIdForProvider(provider.name, sessionId),
     onTyping,
     onProgress,
@@ -88,6 +95,7 @@ export async function runAgentWithRetry(
   fallbackModels?: string[],
   mcpAllowlist?: string[],
   cwdOverride?: string,
+  systemPrompt?: string,
 ): Promise<AgentResult> {
   let lastError: AgentError | undefined;
   const provider = getLlmProvider(LLM_PROVIDER);
@@ -104,7 +112,7 @@ export async function runAgentWithRetry(
       return await runAgent(
         message, sessionId, onTyping, onProgress,
         currentModel, abortController, onStreamText,
-        mcpAllowlist, cwdOverride,
+        mcpAllowlist, cwdOverride, systemPrompt,
       );
     } catch (err) {
       if (!(err instanceof AgentError)) throw err;

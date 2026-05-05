@@ -3,7 +3,7 @@ import path from 'path';
 import os from 'os';
 import { Api, Bot, Context, InputFile, RawApi } from 'grammy';
 
-import { runAgent, runAgentWithRetry, UsageInfo, AgentProgressEvent } from './agent.js';
+import { runAgent, runAgentWithRetry, UsageInfo, AgentProgressEvent, getActiveProviderName } from './agent.js';
 import { AgentError } from './errors.js';
 import {
   AGENT_ID,
@@ -487,12 +487,12 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
   }
 
   // Fetch session first: if resuming, the model already has the system prompt in context.
-  const sessionId = getSession(chatIdStr, AGENT_ID);
+  const activeProvider = getActiveProviderName();
+  const sessionId = getSession(chatIdStr, AGENT_ID, activeProvider);
 
   // Build memory context and prepend to message
   const { contextText: memCtx, surfacedMemoryIds, surfacedMemorySummaries } = await buildMemoryContext(chatIdStr, message, AGENT_ID);
   const parts: string[] = [];
-  if (agentSystemPrompt && !sessionId) parts.push(`[Agent role — follow these instructions]\n${agentSystemPrompt}\n[End agent role]`);
   if (memCtx) parts.push(memCtx);
 
   // Inject recent scheduled task outputs so the user can reply to them naturally.
@@ -628,6 +628,8 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       },
       MODEL_FALLBACK_CHAIN.length > 0 ? MODEL_FALLBACK_CHAIN : undefined,
       agentMcpAllowlist,
+      undefined,
+      !sessionId ? agentSystemPrompt : undefined,
     );
 
     clearTimeout(timeoutId);
@@ -651,7 +653,7 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     }
 
     if (result.newSessionId) {
-      setSession(chatIdStr, result.newSessionId, AGENT_ID);
+      setSession(chatIdStr, result.newSessionId, AGENT_ID, activeProvider);
       logger.info({ newSessionId: result.newSessionId }, 'Session saved');
     }
 
@@ -676,7 +678,6 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     const { text: responseText, files: fileMarkers } = extractFileMarkers(rawResponse);
 
     // Add cost footer
-    const activeProvider = LLM_PROVIDER.trim().toLowerCase() === 'codex' ? 'codex' : 'claude';
     const footerModel = resolveModelForProvider(activeProvider, effectiveModel);
     const costFooter = buildCostFooter(SHOW_COST_FOOTER, result.usage, footerModel);
 
@@ -977,7 +978,8 @@ export function createBot(): Bot {
   bot.command('newchat', async (ctx) => {
     if (await replyIfLocked(ctx)) return;
     const chatIdStr = ctx.chat!.id.toString();
-    const oldSessionId = getSession(chatIdStr, AGENT_ID);
+    const activeProvider = getActiveProviderName();
+    const oldSessionId = getSession(chatIdStr, AGENT_ID, activeProvider);
 
     // Auto-commit session summary to hive mind (async, don't block the user)
     if (oldSessionId) {
@@ -1750,11 +1752,11 @@ async function processDashboardMessage(
   setProcessing(chatIdStr, true);
 
   try {
-    const sessionId = getSession(chatIdStr, AGENT_ID);
+    const activeProvider = getActiveProviderName();
+    const sessionId = getSession(chatIdStr, AGENT_ID, activeProvider);
 
     const { contextText: memCtx, surfacedMemoryIds: dashSurfacedIds, surfacedMemorySummaries: dashSummaries } = await buildMemoryContext(chatIdStr, text, AGENT_ID);
     const dashParts: string[] = [];
-    if (agentSystemPrompt && !sessionId) dashParts.push(`[Agent role — follow these instructions]\n${agentSystemPrompt}\n[End agent role]`);
     if (memCtx) dashParts.push(memCtx);
 
     const recentDashTasks = getRecentTaskOutputs(AGENT_ID, 30);
@@ -1789,6 +1791,8 @@ async function processDashboardMessage(
       abortCtrl,
       undefined, // no streaming for dashboard
       agentMcpAllowlist,
+      undefined,
+      !sessionId ? agentSystemPrompt : undefined,
     );
 
     clearTimeout(dashTimeout);
@@ -1804,7 +1808,7 @@ async function processDashboardMessage(
     }
 
     if (result.newSessionId) {
-      setSession(chatIdStr, result.newSessionId, AGENT_ID);
+      setSession(chatIdStr, result.newSessionId, AGENT_ID, activeProvider);
     }
 
     const rawResponse = result.text?.trim() || 'Done.';

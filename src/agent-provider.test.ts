@@ -71,6 +71,45 @@ describe('agent provider configuration', () => {
     expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({ message: 'hi', model: 'gpt-5.5' }));
   });
 
+  it('injects the provider-neutral agent definition at the runtime boundary', async () => {
+    const runAgentMock = vi.fn(async () => ({
+      text: 'codex ok',
+      newSessionId: '019de35d-7e16-7d43-94ba-e2f40388be5c',
+      usage: null,
+    }));
+
+    vi.resetModules();
+    vi.doMock('./config.js', () => ({
+      LLM_PROVIDER: 'codex',
+      CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
+      CODEX_SONNET_MODEL: 'gpt-5.4',
+      CODEX_OPUS_MODEL: 'gpt-5.5',
+    }));
+    vi.doMock('./llm-provider.js', async (importOriginal) => {
+      const original = await importOriginal<typeof import('./llm-provider.js')>();
+      return {
+        ...original,
+        getLlmProvider: vi.fn(() => ({
+          name: 'codex',
+          runAgent: runAgentMock,
+        })),
+      };
+    });
+    vi.doMock('./logger.js', () => ({
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { runAgent } = await import('./agent.js');
+    await runAgent('ship it', undefined, () => {}, undefined, undefined, undefined, undefined, undefined, undefined, 'You are Sage.');
+
+    expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('[ClaudeClaw runtime contract]'),
+    }));
+    expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('[Agent role - follow these instructions]\nYou are Sage.\n[End agent role]\n\nship it'),
+    }));
+  });
+
   it('rejects unsupported LLM_PROVIDER through runAgent', async () => {
     vi.resetModules();
     vi.doUnmock('./llm-provider.js');

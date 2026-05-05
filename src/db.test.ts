@@ -46,6 +46,18 @@ describe('database', () => {
       expect(getSession('chat1')).toBe('sess-2');
     });
 
+    it('isolates sessions by provider', () => {
+      setSession('chat1', 'claude-sess', 'main', 'claude');
+      setSession('chat1', 'codex-sess', 'main', 'codex');
+
+      expect(getSession('chat1', 'main', 'claude')).toBe('claude-sess');
+      expect(getSession('chat1', 'main', 'codex')).toBe('codex-sess');
+
+      clearSession('chat1', 'main', 'codex');
+      expect(getSession('chat1', 'main', 'claude')).toBe('claude-sess');
+      expect(getSession('chat1', 'main', 'codex')).toBeUndefined();
+    });
+
     it('clearSession removes the session', () => {
       setSession('chat1', 'sess-abc');
       clearSession('chat1');

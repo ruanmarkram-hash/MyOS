@@ -47,6 +47,11 @@ export interface AgentResult {
 }
 
 export interface RunAgentOptions {
+  /**
+   * Fully assembled provider prompt. The `runAgent` wrapper owns injecting
+   * ClaudeClaw's provider-neutral agent definition before this reaches a
+   * concrete provider.
+   */
   message: string;
   sessionId: string | undefined;
   onTyping: () => void;

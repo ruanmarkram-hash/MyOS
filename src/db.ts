@@ -85,9 +85,10 @@ function createSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS sessions (
       chat_id    TEXT NOT NULL,
       agent_id   TEXT NOT NULL DEFAULT 'main',
+      provider   TEXT NOT NULL DEFAULT 'claude',
       session_id TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      PRIMARY KEY (chat_id, agent_id)
+      PRIMARY KEY (chat_id, agent_id, provider)
     );
 
     CREATE TABLE IF NOT EXISTS memories (
@@ -525,22 +526,29 @@ function runMigrations(database: Database.Database): void {
     database.exec(`ALTER TABLE token_usage ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 0`);
   }
 
-  // Multi-agent: migrate sessions table to composite primary key (chat_id, agent_id)
-  // Check if PK is composite by looking at pk column count in pragma
+  // Multi-agent and multi-provider: sessions are isolated by chat, agent,
+  // and provider. This lets the operator switch between Claude, Codex, and future
+  // local providers without feeding one provider another provider's resume id.
   const sessionCols = database.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string; pk: number }>;
+  const hasSessionAgentId = sessionCols.some((c) => c.name === 'agent_id');
+  const hasSessionProvider = sessionCols.some((c) => c.name === 'provider');
   const pkCount = sessionCols.filter((c) => c.pk > 0).length;
-  if (pkCount < 2) {
-    // Need to recreate table with composite PK
+  if (!hasSessionAgentId || !hasSessionProvider || pkCount < 3) {
+    const agentExpr = hasSessionAgentId ? `COALESCE(agent_id, 'main')` : `'main'`;
+    const providerExpr = hasSessionProvider
+      ? `COALESCE(provider, CASE WHEN session_id LIKE '019%' THEN 'codex' ELSE 'claude' END)`
+      : `CASE WHEN session_id LIKE '019%' THEN 'codex' ELSE 'claude' END`;
     database.exec(`
       CREATE TABLE sessions_new (
         chat_id    TEXT NOT NULL,
         agent_id   TEXT NOT NULL DEFAULT 'main',
+        provider   TEXT NOT NULL DEFAULT 'claude',
         session_id TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        PRIMARY KEY (chat_id, agent_id)
+        PRIMARY KEY (chat_id, agent_id, provider)
       );
-      INSERT OR IGNORE INTO sessions_new (chat_id, agent_id, session_id, updated_at)
-        SELECT chat_id, COALESCE(agent_id, 'main'), session_id, updated_at FROM sessions;
+      INSERT OR IGNORE INTO sessions_new (chat_id, agent_id, provider, session_id, updated_at)
+        SELECT chat_id, ${agentExpr}, ${providerExpr}, session_id, updated_at FROM sessions;
       DROP TABLE sessions;
       ALTER TABLE sessions_new RENAME TO sessions;
     `);
@@ -863,20 +871,24 @@ export function _testDbHandle(): Database.Database {
   return db;
 }
 
-export function getSession(chatId: string, agentId = 'main'): string | undefined {
+export function getSession(chatId: string, agentId = 'main', provider = 'claude'): string | undefined {
   const row = db
-    .prepare('SELECT session_id FROM sessions WHERE chat_id = ? AND agent_id = ?')
-    .get(chatId, agentId) as { session_id: string } | undefined;
+    .prepare('SELECT session_id FROM sessions WHERE chat_id = ? AND agent_id = ? AND provider = ?')
+    .get(chatId, agentId, provider) as { session_id: string } | undefined;
   return row?.session_id;
 }
 
-export function setSession(chatId: string, sessionId: string, agentId = 'main'): void {
+export function setSession(chatId: string, sessionId: string, agentId = 'main', provider = 'claude'): void {
   db.prepare(
-    'INSERT OR REPLACE INTO sessions (chat_id, agent_id, session_id, updated_at) VALUES (?, ?, ?, ?)',
-  ).run(chatId, agentId, sessionId, new Date().toISOString());
+    'INSERT OR REPLACE INTO sessions (chat_id, agent_id, provider, session_id, updated_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(chatId, agentId, provider, sessionId, new Date().toISOString());
 }
 
-export function clearSession(chatId: string, agentId = 'main'): void {
+export function clearSession(chatId: string, agentId = 'main', provider?: string): void {
+  if (provider) {
+    db.prepare('DELETE FROM sessions WHERE chat_id = ? AND agent_id = ? AND provider = ?').run(chatId, agentId, provider);
+    return;
+  }
   db.prepare('DELETE FROM sessions WHERE chat_id = ? AND agent_id = ?').run(chatId, agentId);
 }
 
