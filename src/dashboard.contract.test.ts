@@ -141,8 +141,60 @@ describe('GET /api/brain/status', () => {
         chatId: expect.any(String),
         totalMemories: expect.any(Number),
       }),
+      mutationsEnabled: expect.any(Boolean),
       notes: expect.any(String),
     });
+  });
+});
+
+describe('GET /api/brain/search', () => {
+  it('rejects a missing query before contacting OpenBrain', async () => {
+    const res = await get('/api/brain/search');
+    expect(res.status).toBe(400);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({ ok: false, error: expect.stringContaining('query') });
+  });
+});
+
+describe('POST /api/brain/capture', () => {
+  it('respects DASHBOARD_MUTATIONS_ENABLED=false before contacting OpenBrain', async () => {
+    const prev = process.env.DASHBOARD_MUTATIONS_ENABLED;
+    process.env.DASHBOARD_MUTATIONS_ENABLED = 'false';
+    try {
+      const res = await app.request('/api/brain/capture' + Q, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'contract test thought' }),
+      });
+      expect(res.status).toBe(423);
+      const body = await jsonOf(res);
+      expect(body).toMatchObject({ ok: false, error: expect.any(String) });
+    } finally {
+      if (prev === undefined) delete process.env.DASHBOARD_MUTATIONS_ENABLED;
+      else process.env.DASHBOARD_MUTATIONS_ENABLED = prev;
+    }
+  });
+
+  it('rejects malformed JSON bodies with 400, not 500', async () => {
+    const res = await app.request('/api/brain/capture' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(null),
+    });
+    expect(res.status).toBe(400);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({ ok: false, error: expect.stringContaining('content') });
+  });
+
+  it('rejects non-string capture content with 400, not 500', async () => {
+    const res = await app.request('/api/brain/capture' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 123 }),
+    });
+    expect(res.status).toBe(400);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({ ok: false, error: expect.stringContaining('content') });
   });
 });
 

@@ -89,6 +89,8 @@ import {
 } from './llm-provider.js';
 import { resolveModelForProvider } from './model-router.js';
 import { buildAgentRuntimePrompt } from './agent-runtime.js';
+import { captureThought, searchThoughts } from './brain/client.js';
+import { parseSearchText } from './brain/adapter.js';
 
 const MAIN_AGENT_MODEL = 'claude-opus-4-7';
 const DASHBOARD_AUTH_COOKIE = 'claudeclaw_dashboard';
@@ -147,6 +149,10 @@ function writeEnvValue(key: string, value: string): void {
   }
 
   fs.writeFileSync(envPath, lines.join('\n'), { encoding: 'utf-8', mode: 0o600 });
+}
+
+function openBrainConfigured(): boolean {
+  return BRAIN === 'ob1' && !!OB1_SUPABASE_URL && !!MCP_ACCESS_KEY && !!OB1_BRAIN_FUNCTION;
 }
 
 function currentProvider(): LlmProviderName {
@@ -1242,11 +1248,12 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       backend: BRAIN,
       openBrain: {
         enabled: BRAIN === 'ob1',
-        configured: !!OB1_SUPABASE_URL && !!MCP_ACCESS_KEY && !!OB1_BRAIN_FUNCTION,
+        configured: openBrainConfigured(),
         functionName: OB1_BRAIN_FUNCTION,
         supabaseConfigured: !!OB1_SUPABASE_URL,
         accessKeyConfigured: !!MCP_ACCESS_KEY,
       },
+      mutationsEnabled: killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true),
       sqlite: {
         enabled: true,
         chatId,
@@ -1258,6 +1265,56 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         ? 'OpenBrain is the active capture/retrieval backend. SQLite remains visible for local history and fallback.'
         : 'SQLite is the active memory backend. OpenBrain/OB1 is configured by BRAIN=ob1 plus OB1_SUPABASE_URL and MCP_ACCESS_KEY.',
     });
+  });
+
+  app.get('/api/brain/search', async (c) => {
+    const query = (c.req.query('query') || c.req.query('q') || '').trim();
+    if (!query) return c.json({ ok: false, error: 'query required', results: [], raw: '' }, 400);
+    if (!openBrainConfigured()) {
+      return c.json({
+        ok: false,
+        error: 'OpenBrain search is not configured. Set BRAIN=ob1, OB1_SUPABASE_URL, MCP_ACCESS_KEY, and OB1_BRAIN_FUNCTION.',
+        results: [],
+        raw: '',
+      }, 400);
+    }
+
+    const parsedLimit = parseInt(c.req.query('limit') || '8', 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(20, parsedLimit)) : 8;
+    const parsedThreshold = parseFloat(c.req.query('threshold') || '0.5');
+    const threshold = Number.isFinite(parsedThreshold) ? Math.max(0, Math.min(1, parsedThreshold)) : 0.5;
+
+    const raw = await searchThoughts({ query, limit, threshold });
+    return c.json({
+      ok: true,
+      query,
+      limit,
+      threshold,
+      results: parseSearchText(raw),
+      raw,
+    });
+  });
+
+  app.post('/api/brain/capture', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled by DASHBOARD_MUTATIONS_ENABLED=false' }, 423);
+    }
+    if (!openBrainConfigured()) {
+      return c.json({
+        ok: false,
+        error: 'OpenBrain capture is not configured. Set BRAIN=ob1, OB1_SUPABASE_URL, MCP_ACCESS_KEY, and OB1_BRAIN_FUNCTION.',
+      }, 400);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const content = body && typeof body === 'object' && typeof (body as { content?: unknown }).content === 'string'
+      ? (body as { content: string }).content.trim()
+      : '';
+    if (!content) return c.json({ ok: false, error: 'content required' }, 400);
+    if (content.length > 12_000) return c.json({ ok: false, error: 'content too long, max 12000 characters' }, 400);
+
+    const result = await captureThought({ content });
+    return c.json(result);
   });
 
   // System health

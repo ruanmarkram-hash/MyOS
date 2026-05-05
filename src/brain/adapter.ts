@@ -6,7 +6,7 @@ export function ob1Available(): boolean {
   return BRAIN === 'ob1' && !!OB1_SUPABASE_URL && !!MCP_ACCESS_KEY && !!OB1_BRAIN_FUNCTION;
 }
 
-interface Ob1ParsedResult {
+export interface Ob1ParsedResult {
   match: string;
   date: string;
   type: string;
@@ -30,7 +30,7 @@ interface Ob1ParsedResult {
  *
  *   --- Result 2 ...
  */
-function parseSearchText(text: string): Ob1ParsedResult[] {
+export function parseSearchText(text: string): Ob1ParsedResult[] {
   const results: Ob1ParsedResult[] = [];
   const blocks = text.split(/^--- Result \d+ \(([^)]+)\) ---$/gm);
   for (let i = 1; i < blocks.length; i += 2) {
