@@ -91,6 +91,28 @@ import { resolveModelForProvider } from './model-router.js';
 import { buildAgentRuntimePrompt } from './agent-runtime.js';
 
 const MAIN_AGENT_MODEL = 'claude-opus-4-7';
+const DASHBOARD_AUTH_COOKIE = 'claudeclaw_dashboard';
+
+function dashboardCookieValue(): string {
+  return crypto.createHash('sha256').update(DASHBOARD_TOKEN).digest('hex');
+}
+
+function parseCookieHeader(header: string | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of (header || '').split(';')) {
+    const [rawKey, ...rest] = part.trim().split('=');
+    if (!rawKey || rest.length === 0) continue;
+    out[rawKey] = decodeURIComponent(rest.join('='));
+  }
+  return out;
+}
+
+function setDashboardAuthCookie(c: any): void {
+  c.header(
+    'Set-Cookie',
+    `${DASHBOARD_AUTH_COOKIE}=${dashboardCookieValue()}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
+  );
+}
 
 function currentProvider(): LlmProviderName {
   return normalizeLlmProvider(LLM_PROVIDER);
@@ -208,9 +230,9 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
   // Token auth middleware. V2 static bundle assets (immutable, hashed, no
   // secrets) bypass the gate so the React app can boot without the token
-  // appearing on every <script>/<link> URL. The HTML entry point itself
-  // still requires the token, so unauthenticated callers can't even
-  // discover the asset paths.
+  // appearing on every <script>/<link> URL. A successful tokenized request
+  // also sets an HttpOnly cookie so SPA deep links and manual refreshes keep
+  // working without exposing the token in the address bar forever.
   app.use('*', async (c, next) => {
     const reqPath = new URL(c.req.url).pathname;
     // Codex HIGH (A.3 review): decode the path BEFORE classifying as an
@@ -239,9 +261,13 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       return;
     }
     const token = c.req.query('token');
-    if (!DASHBOARD_TOKEN || !token || token !== DASHBOARD_TOKEN) {
+    const cookies = parseCookieHeader(c.req.header('cookie'));
+    const cookieOk = cookies[DASHBOARD_AUTH_COOKIE] === dashboardCookieValue();
+    const tokenOk = !!DASHBOARD_TOKEN && !!token && token === DASHBOARD_TOKEN;
+    if (!DASHBOARD_TOKEN || (!tokenOk && !cookieOk)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
+    if (tokenOk) setDashboardAuthCookie(c);
     await next();
   });
 

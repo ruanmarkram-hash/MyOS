@@ -62,6 +62,19 @@ describe('auth gate', () => {
     expect(res.status).toBe(200);
   });
 
+  it('sets an auth cookie after a valid token request', async () => {
+    const res = await get('/api/health');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).toContain('claudeclaw_dashboard=');
+  });
+
+  it('accepts GET with dashboard auth cookie and no token', async () => {
+    const first = await get('/api/health');
+    const cookie = first.headers.get('set-cookie')?.split(';')[0] || '';
+    const res = await app.request('/api/health', { headers: { cookie } });
+    expect(res.status).toBe(200);
+  });
+
   it('responds 204 to OPTIONS preflight without token check', async () => {
     const res = await app.request('/api/health', { method: 'OPTIONS' });
     expect(res.status).toBe(204);
