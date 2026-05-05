@@ -92,8 +92,9 @@ export function ReviewInbox() {
 
   async function emailExport(item: ReviewItem) {
     await mutate(item, 'Emailing...', async () => {
-      const result = await apiPost<{ to: string; exported: { format: string } }>(`/api/review/tasks/${item.id}/email`, { format: 'docx' });
-      setMessage((prev) => ({ ...prev, [item.id]: `Sent ${result.exported.format} to ${result.to}` }));
+      const result = await apiPost<{ from?: string; to: string; exported: { format: string } }>(`/api/review/tasks/${item.id}/email`, { format: 'docx' });
+      const from = result.from ? ` from ${result.from}` : '';
+      setMessage((prev) => ({ ...prev, [item.id]: `Sent ${result.exported.format}${from} to ${result.to}` }));
     }, false);
   }
 

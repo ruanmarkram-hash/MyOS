@@ -21,21 +21,31 @@ import argparse
 import base64
 import requests
 from pathlib import Path
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).parent))
 from msgraph_auth import MSGraphAuth
 
 
+def forbidden_from_emails():
+    raw = os.environ.get("MSGRAPH_FORBIDDEN_FROM_EMAILS", "")
+    return {addr.strip().lower() for addr in raw.split(",") if addr.strip()}
+
+
 class GraphEmailSender:
     """Send emails via Microsoft Graph API."""
 
-    GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0/me/sendMail"
+    GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
     def __init__(self):
         self.auth = MSGraphAuth()
 
     def send(self, to, subject, body, from_email="sage@sonke.com.au", attachments=None, html=False):
         """Send email via Graph API."""
+        if from_email and from_email.strip().lower() in forbidden_from_emails():
+            print(f"Refusing to send from forbidden sender: {from_email}", file=sys.stderr)
+            return False
+
         try:
             token = self.auth.get_access_token()
         except Exception as e:
@@ -83,9 +93,14 @@ class GraphEmailSender:
         }
 
         try:
-            resp = requests.post(self.GRAPH_ENDPOINT, headers=headers, json=payload, timeout=10)
+            endpoint = (
+                f"{self.GRAPH_BASE}/users/{quote(from_email)}/sendMail"
+                if from_email else f"{self.GRAPH_BASE}/me/sendMail"
+            )
+            resp = requests.post(endpoint, headers=headers, json=payload, timeout=10)
             if resp.status_code == 202:
-                print(f"Email sent to {to}")
+                from_note = f" from {from_email}" if from_email else ""
+                print(f"Email sent{from_note} to {to}")
                 return True
             else:
                 print(f"Send failed ({resp.status_code}): {resp.text}", file=sys.stderr)

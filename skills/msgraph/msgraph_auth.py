@@ -38,6 +38,7 @@ class MSGraphAuth:
     AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
     SCOPES = [
         "https://graph.microsoft.com/Mail.Send",
+        "https://graph.microsoft.com/Mail.Send.Shared",
         "https://graph.microsoft.com/Mail.ReadWrite"
     ]
 

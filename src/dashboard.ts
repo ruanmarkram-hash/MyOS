@@ -257,6 +257,17 @@ export function configuredReviewExportEmail(
   return runtimeEnv.REVIEW_EXPORT_EMAIL || fileEnv.REVIEW_EXPORT_EMAIL || null;
 }
 
+export function configuredReviewExportFromEmail(
+  runtimeEnv: Record<string, string | undefined> = process.env,
+  fileEnv: Record<string, string> = readEnvFile(['REVIEW_EXPORT_FROM_EMAIL']),
+): string | null {
+  return runtimeEnv.REVIEW_EXPORT_FROM_EMAIL || fileEnv.REVIEW_EXPORT_FROM_EMAIL || null;
+}
+
+function emailEquals(a: string | null | undefined, b: string | null | undefined): boolean {
+  return !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 function reviewFileHref(filePath: string): string {
   return `/api/review/file?path=${encodeURIComponent(filePath)}`;
 }
@@ -528,8 +539,14 @@ async function createMissionTaskExport(task: MissionTask, format: 'docx' | 'html
   return { path: htmlPath, format: 'html' };
 }
 
-async function sendMissionTaskExportEmail(task: MissionTask, to: string, attachmentPath: string): Promise<void> {
-  const graphEnv = readEnvFile(['GRAPH_CLIENT_ID', 'GRAPH_TENANT_ID', 'GRAPH_CLIENT_SECRET', 'GRAPH_REFRESH_TOKEN']);
+async function sendMissionTaskExportEmail(task: MissionTask, to: string, from: string, attachmentPath: string): Promise<void> {
+  const graphEnv = readEnvFile([
+    'GRAPH_CLIENT_ID',
+    'GRAPH_TENANT_ID',
+    'GRAPH_CLIENT_SECRET',
+    'GRAPH_REFRESH_TOKEN',
+    'MSGRAPH_FORBIDDEN_FROM_EMAILS',
+  ]);
   const bodyPath = attachmentPath.replace(/\.[^.]+$/, '.email.html');
   const body = `<p>Attached is the exported deliverable from Mission Control.</p>
 <p><strong>${escapeHtml(task.title)}</strong><br>
@@ -540,6 +557,7 @@ Mission ${escapeHtml(task.id)} · ${escapeHtml(task.assigned_agent || 'unassigne
   await safeExecFileAsync('python3', [
     MSGRAPH_SEND_SCRIPT,
     '--to', to,
+    '--from', from,
     '--subject', `Mission deliverable: ${task.title}`,
     '--body-file', bodyPath,
     '--html',
@@ -1832,7 +1850,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       items,
       total: history.total,
       openTotal: items.length,
-      exportEmailConfigured: !!configuredReviewExportEmail(),
+      exportEmailConfigured: !!configuredReviewExportEmail() && !!configuredReviewExportFromEmail(),
     });
   });
 
@@ -1944,18 +1962,24 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
     const ownerEmail = configuredReviewExportEmail();
     if (!ownerEmail) return c.json({ ok: false, error: 'No review export email configured. Set REVIEW_EXPORT_EMAIL.' }, 400);
+    const fromEmail = configuredReviewExportFromEmail();
+    if (!fromEmail) return c.json({ ok: false, error: 'No review export sender configured. Set REVIEW_EXPORT_FROM_EMAIL to a service/shared mailbox.' }, 400);
+    if (emailEquals(fromEmail, ownerEmail)) {
+      return c.json({ ok: false, error: 'Review exports cannot send from the same mailbox they are sent to. Configure REVIEW_EXPORT_FROM_EMAIL to a service/shared mailbox.' }, 400);
+    }
 
     let body: { format?: 'docx' | 'html' } = {};
     try { body = await c.req.json(); } catch { body = {}; }
     const exported = await createMissionTaskExport(task, body.format === 'html' ? 'html' : 'docx');
     try {
-      await sendMissionTaskExportEmail(task, ownerEmail, exported.path);
+      await sendMissionTaskExportEmail(task, ownerEmail, fromEmail, exported.path);
     } catch (err: any) {
       return c.json({
         ok: false,
         error: safeEmailExportError(err),
         exported,
         to: maskEmail(ownerEmail),
+        from: maskEmail(fromEmail),
       }, 502);
     }
 
@@ -1965,6 +1989,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       exported,
       emailed: true,
       to: maskEmail(ownerEmail),
+      from: maskEmail(fromEmail),
     });
   });
 

@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, getMissionReview, getMissionTask, updateTaskAfterRun } from './db.js';
-import { buildDashboardApp, configuredReviewExportEmail } from './dashboard.js';
+import { buildDashboardApp, configuredReviewExportEmail, configuredReviewExportFromEmail } from './dashboard.js';
 import type { Hono } from 'hono';
 
 const TOKEN = 'test-contract-token';
@@ -692,6 +692,46 @@ describe('POST /api/review/tasks/:id/email', () => {
       { REVIEW_EXPORT_EMAIL: 'work@example.com' },
       { REVIEW_EXPORT_EMAIL: 'file@example.com' },
     )).toBe('work@example.com');
+  });
+
+  it('uses only the dedicated review export sender', () => {
+    expect(configuredReviewExportFromEmail(
+      { REVIEW_EXPORT_FROM_EMAIL: undefined },
+      {
+        OWNER_EMAIL: 'owner@example.com',
+        GRAPH_USER_EMAIL: 'graph@example.com',
+      },
+    )).toBeNull();
+
+    expect(configuredReviewExportFromEmail(
+      { REVIEW_EXPORT_FROM_EMAIL: 'sage@example.com' },
+      { REVIEW_EXPORT_FROM_EMAIL: 'file@example.com' },
+    )).toBe('sage@example.com');
+  });
+
+  it('refuses to send review exports from the recipient mailbox', async () => {
+    createMissionTask('m-review-same-mailbox', 'Same mailbox deliverable', 'produce output', 'mason', 'dashboard', 6);
+    completeMissionTask('m-review-same-mailbox', 'Ready for review.', 'completed');
+
+    const prevTo = process.env.REVIEW_EXPORT_EMAIL;
+    const prevFrom = process.env.REVIEW_EXPORT_FROM_EMAIL;
+    process.env.REVIEW_EXPORT_EMAIL = 'work@example.com';
+    process.env.REVIEW_EXPORT_FROM_EMAIL = 'work@example.com';
+    try {
+      const res = await app.request('/api/review/tasks/m-review-same-mailbox/email' + Q, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ format: 'docx' }),
+      });
+      expect(res.status).toBe(400);
+      const body = await jsonOf(res);
+      expect(body.error).toContain('cannot send from the same mailbox');
+    } finally {
+      if (prevTo === undefined) delete process.env.REVIEW_EXPORT_EMAIL;
+      else process.env.REVIEW_EXPORT_EMAIL = prevTo;
+      if (prevFrom === undefined) delete process.env.REVIEW_EXPORT_FROM_EMAIL;
+      else process.env.REVIEW_EXPORT_FROM_EMAIL = prevFrom;
+    }
   });
 
   it('respects DASHBOARD_MUTATIONS_ENABLED=false before exporting or sending', async () => {
