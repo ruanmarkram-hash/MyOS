@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'preact/hooks';
-import { Plus, Power, RotateCcw, Trash2, Copy, Check } from 'lucide-preact';
+import { Plus, Power, RotateCcw, Trash2, Copy, Check, Activity } from 'lucide-preact';
 import { PageHeader } from '@/components/PageHeader';
 import { Pill, StatusDot } from '@/components/Pill';
 import { PageState } from '@/components/PageState';
@@ -19,6 +19,7 @@ interface Agent {
   model: string;
   provider: 'claude' | 'codex';
   configuredProvider: string;
+  providerSource: 'global' | 'explicit' | 'default';
   providerError: string | null;
   configuredModel: string;
   resolvedModel: string;
@@ -197,7 +198,31 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
     } finally { setBusy(null); }
   }
 
+  async function smokeProvider() {
+    setBusy('smoke');
+    try {
+      const res = await apiPost<{ ok: boolean; provider: string; resolvedModel: string; error?: string }>('/api/provider/smoke', {
+        provider: agent.provider,
+        model: agent.configuredModel,
+      });
+      if (!res.ok) throw new Error(res.error || 'Provider smoke failed');
+      alert(`${agent.name || agent.id} provider smoke passed: ${res.provider} / ${res.resolvedModel}`);
+    } catch (err: any) {
+      alert('Provider smoke failed: ' + (err?.body?.error || err?.message || err));
+    } finally { setBusy(null); }
+  }
+
   const isMain = agent.id === 'main';
+  const providerSourceLabel = agent.providerSource === 'global'
+    ? 'main global'
+    : agent.providerSource === 'explicit'
+      ? 'explicit'
+      : 'default claude';
+  const providerSourceTone = agent.providerSource === 'explicit'
+    ? 'accent'
+    : agent.providerSource === 'global'
+      ? 'medium'
+      : 'neutral';
 
   return (
     <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 hover:border-[var(--color-border-strong)] transition-colors">
@@ -239,6 +264,7 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
           <option value="claude">claude</option>
           <option value="codex">codex</option>
         </select>
+        <Pill tone={providerSourceTone}>{providerSourceLabel}</Pill>
         {agent.configuredProvider !== agent.provider && <Pill tone="medium">configured {agent.configuredProvider}</Pill>}
         {agent.running ? <Pill tone="done">running</Pill> : <Pill tone="cancelled">offline</Pill>}
       </div>
@@ -300,6 +326,15 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
           title={isMain ? 'Gracefully restart Sage' : 'Restart'}
         >
           <RotateCcw size={11} class={busy === 'restart' ? 'animate-spin' : ''} />
+        </button>
+        <button
+          type="button"
+          onClick={smokeProvider}
+          disabled={busy !== null}
+          class="inline-flex items-center justify-center px-2 py-1.5 rounded text-[11px] bg-[var(--color-elevated)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] border border-[var(--color-border)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Smoke-test this agent's configured provider and model"
+        >
+          <Activity size={11} class={busy === 'smoke' ? 'animate-pulse' : ''} />
         </button>
         <button
           type="button"

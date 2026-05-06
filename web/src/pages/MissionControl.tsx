@@ -419,7 +419,7 @@ function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; age
           {TERMINAL.includes(task.status) && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); navigate('/review'); }}
+              onClick={(e) => { e.stopPropagation(); navigate(`/review?task=${encodeURIComponent(task.id)}`); }}
               class="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
               title="Review deliverable"
             >

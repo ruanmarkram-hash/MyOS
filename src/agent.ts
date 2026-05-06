@@ -1,4 +1,4 @@
-import { LLM_PROVIDER, agentProviderOverride } from './config.js';
+import { AGENT_ID, LLM_PROVIDER, agentProviderOverride } from './config.js';
 import { AgentError } from './errors.js';
 import { buildAgentRuntimePrompt } from './agent-runtime.js';
 import { getLlmProvider } from './llm-provider.js';
@@ -30,7 +30,12 @@ function sessionIdForProvider(
 }
 
 export function getActiveProviderName(): LlmProviderName {
-  return getLlmProvider(agentProviderOverride || LLM_PROVIDER).name;
+  return getLlmProvider(configuredProviderName()).name;
+}
+
+function configuredProviderName(): string {
+  if (agentProviderOverride) return agentProviderOverride;
+  return AGENT_ID === 'main' ? LLM_PROVIDER : 'claude';
 }
 
 /**
@@ -53,7 +58,7 @@ export async function runAgent(
   systemPrompt?: string,
   maxTurns?: number,
 ): Promise<AgentResult> {
-  const provider = getLlmProvider(agentProviderOverride || LLM_PROVIDER);
+  const provider = getLlmProvider(configuredProviderName());
   const providerModel = resolveModelForProvider(provider.name, model);
   const providerMessage = buildAgentRuntimePrompt(message, systemPrompt, {
     provider: provider.name,
@@ -104,7 +109,7 @@ export async function runAgentWithRetry(
   maxTurns?: number,
 ): Promise<AgentResult> {
   let lastError: AgentError | undefined;
-  const provider = getLlmProvider(agentProviderOverride || LLM_PROVIDER);
+  const provider = getLlmProvider(configuredProviderName());
   const resolvedFallbackModels = resolveFallbackModelsForProvider(provider.name, fallbackModels);
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {

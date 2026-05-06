@@ -13,7 +13,7 @@
 // Env vars are set by `src/test-env-setup.ts` (vitest setupFiles) so they
 // land BEFORE config.ts evaluates at import time.
 
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, getMissionManifest, getMissionReview, getMissionTask, saveStructuredMemory, updateTaskAfterRun } from './db.js';
@@ -1003,6 +1003,30 @@ describe('GET /api/review/inbox', () => {
       kind: 'needs_action',
       review: expect.objectContaining({ status: 'needs_triage' }),
     });
+  });
+
+  it('prioritises actionable failures so recent sorted history cannot hide them', async () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    try {
+      nowSpy.mockReturnValue(1_800_000_000_000);
+      createMissionTask('m-hidden-failure', 'Hidden failure', 'fail before routine noise', 'mason', 'main', 8);
+      completeMissionTask('m-hidden-failure', null, 'failed', 'Actionable failure that still needs triage.');
+
+      for (let i = 0; i < 60; i += 1) {
+        nowSpy.mockReturnValue(1_800_000_001_000 + i * 1000);
+        createMissionTask(`m-sorted-${i}`, `Sorted completion ${i}`, 'user-requested status check', 'warden', 'main', 1);
+        completeMissionTask(`m-sorted-${i}`, 'Completed cleanly. No deliverable and no human action required.', 'completed');
+      }
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    const res = await get('/api/review/inbox?limit=10');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.items.map((entry: any) => entry.id)).toContain('m-hidden-failure');
+    expect(body.items.find((entry: any) => entry.id === 'm-hidden-failure')).toMatchObject({ kind: 'needs_action' });
+    expect(body.total).toBeGreaterThan(10);
   });
 
   it('approves review items so they leave the default inbox', async () => {

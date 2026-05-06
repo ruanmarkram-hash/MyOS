@@ -17,6 +17,7 @@ describe('agent provider configuration', () => {
 
     vi.resetModules();
     vi.doMock('./config.js', () => ({
+      AGENT_ID: 'main',
       get LLM_PROVIDER() {
         return activeProvider;
       },
@@ -76,6 +77,7 @@ describe('agent provider configuration', () => {
 
     vi.resetModules();
     vi.doMock('./config.js', () => ({
+      AGENT_ID: 'main',
       LLM_PROVIDER: 'claude',
       CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
       CODEX_SONNET_MODEL: 'gpt-5.4',
@@ -111,6 +113,7 @@ describe('agent provider configuration', () => {
 
     vi.resetModules();
     vi.doMock('./config.js', () => ({
+      AGENT_ID: 'main',
       LLM_PROVIDER: 'codex',
       CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
       CODEX_SONNET_MODEL: 'gpt-5.4',
@@ -144,6 +147,83 @@ describe('agent provider configuration', () => {
     }));
   });
 
+  it('defaults specialist agents to Claude unless agent.yaml explicitly overrides provider', async () => {
+    const getLlmProviderMock = vi.fn((provider: string) => ({
+      name: provider,
+      runAgent: vi.fn(async () => ({
+        text: provider + ' ok',
+        newSessionId: provider === 'codex'
+          ? '019de35d-7e16-7d43-94ba-e2f40388be5c'
+          : '3fbb8b12-b4cc-41ae-bf46-db2ad900eb6a',
+        usage: null,
+      })),
+    }));
+
+    vi.resetModules();
+    vi.doMock('./config.js', () => ({
+      AGENT_ID: 'warden',
+      LLM_PROVIDER: 'codex',
+      CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
+      CODEX_SONNET_MODEL: 'gpt-5.4',
+      CODEX_OPUS_MODEL: 'gpt-5.5',
+      agentProviderOverride: undefined,
+    }));
+    vi.doMock('./llm-provider.js', async (importOriginal) => {
+      const original = await importOriginal<typeof import('./llm-provider.js')>();
+      return {
+        ...original,
+        getLlmProvider: getLlmProviderMock,
+      };
+    });
+    vi.doMock('./logger.js', () => ({
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { runAgent, getActiveProviderName } = await import('./agent.js');
+    await runAgent('hi', undefined, () => {});
+
+    expect(getActiveProviderName()).toBe('claude');
+    expect(getLlmProviderMock).toHaveBeenCalledWith('claude');
+    expect(getLlmProviderMock).not.toHaveBeenCalledWith('codex');
+  });
+
+  it('honours explicit specialist provider overrides', async () => {
+    const getLlmProviderMock = vi.fn((provider: string) => ({
+      name: provider,
+      runAgent: vi.fn(async () => ({
+        text: provider + ' ok',
+        newSessionId: '019de35d-7e16-7d43-94ba-e2f40388be5c',
+        usage: null,
+      })),
+    }));
+
+    vi.resetModules();
+    vi.doMock('./config.js', () => ({
+      AGENT_ID: 'warden',
+      LLM_PROVIDER: 'claude',
+      CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
+      CODEX_SONNET_MODEL: 'gpt-5.4',
+      CODEX_OPUS_MODEL: 'gpt-5.5',
+      agentProviderOverride: 'codex',
+    }));
+    vi.doMock('./llm-provider.js', async (importOriginal) => {
+      const original = await importOriginal<typeof import('./llm-provider.js')>();
+      return {
+        ...original,
+        getLlmProvider: getLlmProviderMock,
+      };
+    });
+    vi.doMock('./logger.js', () => ({
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { runAgent, getActiveProviderName } = await import('./agent.js');
+    await runAgent('hi', undefined, () => {});
+
+    expect(getActiveProviderName()).toBe('codex');
+    expect(getLlmProviderMock).toHaveBeenCalledWith('codex');
+  });
+
   it('injects the provider-neutral agent definition at the runtime boundary', async () => {
     const runAgentMock = vi.fn(async () => ({
       text: 'codex ok',
@@ -153,6 +233,7 @@ describe('agent provider configuration', () => {
 
     vi.resetModules();
     vi.doMock('./config.js', () => ({
+      AGENT_ID: 'main',
       LLM_PROVIDER: 'codex',
       CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
       CODEX_SONNET_MODEL: 'gpt-5.4',
@@ -199,6 +280,7 @@ describe('agent provider configuration', () => {
 
     vi.resetModules();
     vi.doMock('./config.js', () => ({
+      AGENT_ID: 'main',
       LLM_PROVIDER: 'codex',
       CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
       CODEX_SONNET_MODEL: 'gpt-5.4',
@@ -236,6 +318,7 @@ describe('agent provider configuration', () => {
     vi.resetModules();
     vi.doUnmock('./llm-provider.js');
     vi.doMock('./config.js', () => ({
+      AGENT_ID: 'main',
       LLM_PROVIDER: 'openai',
       CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
       CODEX_SONNET_MODEL: 'gpt-5.4',

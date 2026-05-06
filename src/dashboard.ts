@@ -181,6 +181,11 @@ function configuredProviderValue(): string {
   return process.env.LLM_PROVIDER || readEnvFile(['LLM_PROVIDER']).LLM_PROVIDER || LLM_PROVIDER;
 }
 
+function providerSourceForAgent(agentId: string, config?: Pick<AgentConfig, 'provider'> | null): 'global' | 'explicit' | 'default' {
+  if (agentId === 'main') return 'global';
+  return config?.provider ? 'explicit' : 'default';
+}
+
 function configuredProviderForAgent(agentId: string, config?: Pick<AgentConfig, 'provider'> | null): string {
   // The global LLM_PROVIDER belongs to Sage/main only. Specialist agents
   // must opt into a non-Claude provider in their own agent.yaml; otherwise a
@@ -188,15 +193,17 @@ function configuredProviderForAgent(agentId: string, config?: Pick<AgentConfig, 
   return agentId === 'main' ? configuredProviderValue() : (config?.provider || 'claude');
 }
 
-function providerStatusForAgent(agentId: string, config?: Pick<AgentConfig, 'provider'> | null): { provider: LlmProviderName; configuredProvider: string; providerError: string | null } {
+function providerStatusForAgent(agentId: string, config?: Pick<AgentConfig, 'provider'> | null): { provider: LlmProviderName; configuredProvider: string; providerSource: 'global' | 'explicit' | 'default'; providerError: string | null } {
   const configuredProvider = configuredProviderForAgent(agentId, config);
+  const providerSource = providerSourceForAgent(agentId, config);
   try {
     const activeProvider = agentId === 'main' ? normalizeLlmProvider(LLM_PROVIDER) : normalizeLlmProvider(configuredProvider);
-    return { provider: activeProvider, configuredProvider, providerError: null };
+    return { provider: activeProvider, configuredProvider, providerSource, providerError: null };
   } catch (err: any) {
     return {
       provider: 'claude',
       configuredProvider,
+      providerSource,
       providerError: err?.recovery?.userMessage || err?.message || 'Unsupported LLM provider',
     };
   }
@@ -3165,9 +3172,16 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
   app.get('/api/review/inbox', (c) => {
     const limit = Math.max(1, Math.min(100, parseInt(c.req.query('limit') || '50', 10) || 50));
-    const history = getMissionTaskHistory(limit, 0);
+    const requestedTaskId = c.req.query('task') || '';
     const missions = getMissionTasks();
-    const items = history.tasks
+    const terminalMissions = missions
+      .filter((task) => TERMINAL_MISSION_STATUSES.has(task.status))
+      .sort((a, b) => {
+        const bTime = b.completed_at || b.created_at || 0;
+        const aTime = a.completed_at || a.created_at || 0;
+        return bTime - aTime;
+      });
+    const openItems = terminalMissions
       .map((task) => {
         const review = effectiveMissionReview(task, missions);
         if (!review || !shouldShowReview(review)) return null;
@@ -3177,12 +3191,29 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         if (isStaleSortedItem(task, item.kind)) return null;
         return item;
       })
-      .filter(Boolean);
+      .filter((item): item is ReturnType<typeof buildReviewItem> => item !== null)
+      .sort((a, b) => {
+        if (a.kind !== b.kind) return a.kind === 'needs_action' ? -1 : 1;
+        const bTime = b.completedAt || b.createdAt || 0;
+        const aTime = a.completedAt || a.createdAt || 0;
+        return bTime - aTime;
+      });
+    const items = openItems.slice(0, limit);
+    if (requestedTaskId && !items.some((item) => item.id === requestedTaskId)) {
+      const requestedTask = terminalMissions.find((task) => task.id === requestedTaskId);
+      if (requestedTask) {
+        const review = effectiveMissionReview(requestedTask, missions);
+        if (review && shouldShowReview(review)) {
+          const requestedItem = buildReviewItem(requestedTask, review, missions);
+          items.push(requestedItem);
+        }
+      }
+    }
     return c.json({
       updatedAt: new Date().toISOString(),
       items,
-      total: history.total,
-      openTotal: items.length,
+      total: terminalMissions.length,
+      openTotal: openItems.length,
       exportEmailConfigured: !!configuredReviewExportEmail() && !!configuredReviewExportFromEmail(),
     });
   });
@@ -4436,7 +4467,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const agents = agentIds.map((id) => {
       try {
         const config = loadAgentConfig(id);
-        const { provider, configuredProvider, providerError } = providerStatusForAgent(id, config);
+        const { provider, configuredProvider, providerSource, providerError } = providerStatusForAgent(id, config);
         // Check if agent process is alive via PID file
         const pidFile = path.join(STORE_DIR, `agent-${id}.pid`);
         let running = false;
@@ -4457,6 +4488,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           model: runtime.configuredModel,
           provider: runtime.provider,
           configuredProvider,
+          providerSource,
           providerError,
           configuredModel: runtime.configuredModel,
           resolvedModel: runtime.resolvedModel,
@@ -4468,7 +4500,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           todayCost: stats.todayCost,
         };
       } catch {
-        const { provider, configuredProvider, providerError } = providerStatusForAgent(id, null);
+        const { provider, configuredProvider, providerSource, providerError } = providerStatusForAgent(id, null);
         return {
           id,
           name: id,
@@ -4476,6 +4508,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           model: 'unknown',
           provider,
           configuredProvider,
+          providerSource,
           providerError,
           configuredModel: 'unknown',
           resolvedModel: 'unknown',
@@ -4511,6 +4544,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         model: mainRuntime.configuredModel,
         provider: mainRuntime.provider,
         configuredProvider: mainProviderStatus.configuredProvider,
+        providerSource: mainProviderStatus.providerSource,
         providerError: mainProviderStatus.providerError,
         configuredModel: mainRuntime.configuredModel,
         resolvedModel: mainRuntime.resolvedModel,

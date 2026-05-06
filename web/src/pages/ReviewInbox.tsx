@@ -71,7 +71,11 @@ const REVIEW_LABEL: Record<ReviewState['status'], string> = {
 
 export function ReviewInbox() {
   const [location] = useLocation();
-  const inbox = useFetch<ReviewInboxPayload>('/api/review/inbox?limit=100', 15_000);
+  const taskId = new URL(window.location.href).searchParams.get('task') || '';
+  const inboxPath = taskId
+    ? `/api/review/inbox?limit=100&task=${encodeURIComponent(taskId)}`
+    : '/api/review/inbox?limit=100';
+  const inbox = useFetch<ReviewInboxPayload>(inboxPath, 15_000);
   const agents = useFetch<{ agents: Agent[] }>('/api/agents', 60_000);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [instructions, setInstructions] = useState<Record<string, string>>({});
@@ -89,11 +93,11 @@ export function ReviewInbox() {
   const grouped = groupItems(actionItems);
 
   useEffect(() => {
-    const taskId = new URL(window.location.href).searchParams.get('task');
     if (!taskId) return;
     setExpanded((prev) => ({ ...prev, [taskId]: true }));
+    if (sortedItems.some((item) => item.id === taskId)) setSortedOpen(true);
     window.setTimeout(() => document.getElementById(`review-${taskId}`)?.scrollIntoView({ block: 'center' }), 50);
-  }, [location, inbox.data?.updatedAt]);
+  }, [location, inbox.data?.updatedAt, sortedItems.length]);
 
   async function mutate(item: ReviewItem, label: string, fn: () => Promise<unknown>, refresh = true) {
     setBusy((prev) => ({ ...prev, [item.id]: label }));
@@ -270,8 +274,10 @@ export function ReviewInbox() {
                     <SortedCard
                       key={item.id}
                       item={item}
+                      expanded={!!expanded[item.id]}
                       busy={busy[item.id]}
                       message={message[item.id]}
+                      onToggle={() => setExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
                       onApprove={() => void approve(item)}
                       onArchive={() => void archive(item)}
                     />
@@ -405,30 +411,34 @@ function ReviewCard({
 
 function SortedCard({
   item,
+  expanded,
   busy,
   message,
+  onToggle,
   onApprove,
   onArchive,
 }: {
   item: ReviewItem;
+  expanded: boolean;
   busy?: string;
   message?: string;
+  onToggle: () => void;
   onApprove: () => void;
   onArchive: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   return (
     <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+      <div id={`review-${item.id}`} class="sr-only" />
       <div class="flex items-center gap-2">
         <Pill tone="accent">Sorted ✓</Pill>
         <Pill tone={item.status as any}>{item.status}</Pill>
         {item.agentId && <Pill tone="neutral">@{item.agentId}</Pill>}
         <span class="ml-auto text-[10px] text-[var(--color-text-faint)]">{formatRelativeTime(item.completedAt || item.createdAt)}</span>
       </div>
-      <button type="button" onClick={() => setOpen(!open)} class="block w-full text-left mt-2">
+      <button type="button" onClick={onToggle} class="block w-full text-left mt-2">
         <div class="text-[14px] font-medium text-[var(--color-text)]">{item.title}</div>
-        <div class={'text-[12px] text-[var(--color-text-muted)] mt-1 leading-relaxed whitespace-pre-wrap ' + (open ? '' : 'line-clamp-2')}>
-          {open ? (item.result || item.error || item.summary) : item.summary}
+        <div class={'text-[12px] text-[var(--color-text-muted)] mt-1 leading-relaxed whitespace-pre-wrap ' + (expanded ? '' : 'line-clamp-2')}>
+          {expanded ? (item.result || item.error || item.summary) : item.summary}
         </div>
       </button>
       <div class="mt-3 flex flex-wrap gap-2">
