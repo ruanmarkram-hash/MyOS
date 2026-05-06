@@ -1,4 +1,4 @@
-import { BRAIN, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION, OB1_SUPABASE_URL } from '../config.js';
+import { BRAIN, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION, OB1_GRAPH_FUNCTION, OB1_SUPABASE_URL } from '../config.js';
 import { logger } from '../logger.js';
 
 export interface BrainThought {
@@ -29,10 +29,10 @@ function nextId(): number {
   return rpcId;
 }
 
-function endpoint(): string {
+function endpoint(functionName = OB1_BRAIN_FUNCTION): string {
   if (!OB1_SUPABASE_URL) throw new Error('OB1_SUPABASE_URL not configured');
   if (!MCP_ACCESS_KEY) throw new Error('MCP_ACCESS_KEY not configured');
-  return `${OB1_SUPABASE_URL.replace(/\/+$/, '')}/functions/v1/${OB1_BRAIN_FUNCTION}`;
+  return `${OB1_SUPABASE_URL.replace(/\/+$/, '')}/functions/v1/${functionName}`;
 }
 
 function parseResponse(raw: string): unknown {
@@ -48,16 +48,22 @@ function parseResponse(raw: string): unknown {
   throw new Error(`brain: unparseable response: ${trimmed.slice(0, 200)}`);
 }
 
-async function rpc(method: string, params: Record<string, unknown>, timeoutMs = 20_000): Promise<unknown> {
+async function rpc(
+  method: string,
+  params: Record<string, unknown>,
+  timeoutMs = 20_000,
+  functionName = OB1_BRAIN_FUNCTION,
+): Promise<unknown> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await fetch(endpoint(), {
+    const r = await fetch(endpoint(functionName), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json, text/event-stream',
         'x-brain-key': MCP_ACCESS_KEY,
+        'x-access-key': MCP_ACCESS_KEY,
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: nextId(), method, params }),
       signal: ctrl.signal,
@@ -98,6 +104,48 @@ export async function searchThoughts(args: SearchArgs): Promise<string> {
   return extractText(result);
 }
 
+function parseJsonToolText<T>(text: string): T {
+  const trimmed = text.trim();
+  if (!trimmed) throw new Error('brain graph: empty tool response');
+  return JSON.parse(trimmed) as T;
+}
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  node_type: string;
+  properties?: Record<string, unknown>;
+  thought_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface GraphEdgeType {
+  relationship_type: string;
+  count: number;
+}
+
+async function callGraphTool<T>(name: string, args: Record<string, unknown>): Promise<T> {
+  const result = await rpc('tools/call', { name, arguments: args }, 20_000, OB1_GRAPH_FUNCTION);
+  return parseJsonToolText<T>(extractText(result));
+}
+
+export async function searchGraphNodes(args: {
+  query?: string;
+  node_type?: string;
+  limit?: number;
+}): Promise<{ success: boolean; count: number; nodes: GraphNode[]; error?: string }> {
+  return callGraphTool('search_nodes', {
+    query: args.query,
+    node_type: args.node_type,
+    limit: args.limit ?? 40,
+  });
+}
+
+export async function listGraphEdgeTypes(): Promise<{ success: boolean; edge_types?: GraphEdgeType[]; types?: GraphEdgeType[]; error?: string }> {
+  return callGraphTool('list_edge_types', {});
+}
+
 export async function pingBrain(): Promise<boolean> {
   try {
     const r = await fetch(endpoint(), {
@@ -121,6 +169,34 @@ export async function pingBrain(): Promise<boolean> {
     return r.ok;
   } catch (err) {
     logger.warn({ err }, 'brain ping failed');
+    return false;
+  }
+}
+
+export async function pingGraph(): Promise<boolean> {
+  try {
+    const r = await fetch(endpoint(OB1_GRAPH_FUNCTION), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        'x-brain-key': MCP_ACCESS_KEY,
+        'x-access-key': MCP_ACCESS_KEY,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: nextId(),
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'claudeclaw', version: '1.0' },
+        },
+      }),
+    });
+    return r.ok;
+  } catch (err) {
+    logger.warn({ err }, 'brain graph ping failed');
     return false;
   }
 }

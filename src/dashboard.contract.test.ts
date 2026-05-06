@@ -183,6 +183,32 @@ describe('GET /api/brain/search', () => {
   });
 });
 
+describe('GET /api/brain/graph', () => {
+  it('reports graph status without requiring a deployed graph function', async () => {
+    const res = await get('/api/brain/graph/status');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      ok: expect.any(Boolean),
+      configured: expect.any(Boolean),
+      ready: expect.any(Boolean),
+      functionName: expect.any(String),
+      edgeTypes: expect.any(Array),
+    });
+  });
+
+  it('returns an empty graph payload when OB-Graph is not configured', async () => {
+    const res = await get('/api/brain/graph/nodes');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      configured: expect.any(Boolean),
+      nodes: expect.any(Array),
+      count: expect.any(Number),
+    });
+  });
+});
+
 describe('POST /api/brain/capture', () => {
   it('respects DASHBOARD_MUTATIONS_ENABLED=false before contacting OpenBrain', async () => {
     const prev = process.env.DASHBOARD_MUTATIONS_ENABLED;

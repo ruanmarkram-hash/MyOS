@@ -50,6 +50,7 @@ const envConfig = readEnvFile([
   'OB1_SUPABASE_URL',
   'MCP_ACCESS_KEY',
   'OB1_BRAIN_FUNCTION',
+  'OB1_GRAPH_FUNCTION',
   'MISSION_CONTROL_V2',
 ]);
 
@@ -235,6 +236,8 @@ export const MCP_ACCESS_KEY =
 // Edge function name. Default matches Phase 2 deployment.
 export const OB1_BRAIN_FUNCTION =
   process.env.OB1_BRAIN_FUNCTION || envConfig.OB1_BRAIN_FUNCTION || 'brain-mcp';
+export const OB1_GRAPH_FUNCTION =
+  process.env.OB1_GRAPH_FUNCTION || envConfig.OB1_GRAPH_FUNCTION || 'ob-graph-mcp';
 
 // Streaming strategy for progressive Telegram updates.
 // 'global-throttle' (default): edits a placeholder message with streamed text,

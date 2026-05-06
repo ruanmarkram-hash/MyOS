@@ -18,6 +18,8 @@ interface BrainStatus {
     ready: boolean;
     missing: string[];
     functionName: string;
+    graphFunctionName: string;
+    graphConfigured: boolean;
     supabaseConfigured: boolean;
     accessKeyConfigured: boolean;
   };
@@ -84,6 +86,26 @@ interface CaptureResponse {
   error?: string;
 }
 
+interface BrainGraphNode {
+  id: string;
+  label: string;
+  node_type: string;
+  properties?: Record<string, unknown>;
+  thought_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface BrainGraphResponse {
+  ok: boolean;
+  configured: boolean;
+  ready: boolean;
+  functionName: string;
+  nodes: BrainGraphNode[];
+  count: number;
+  error?: string;
+}
+
 const TOPIC_COLORS = ['#8b8af0', '#10b981', '#f59e0b', '#5eb6ff', '#f472b6', '#a78bfa', '#ef4444'];
 const UNREADABLE_BRAIN_HIT = 'OpenBrain returned this hit without readable thought content.';
 
@@ -124,6 +146,7 @@ export function Brain() {
     `/api/memories/list?chatId=${encodeURIComponent(chatId)}&sort=importance&limit=120&offset=0`,
     30_000,
   );
+  const graph = useFetch<BrainGraphResponse>('/api/brain/graph/nodes?limit=60', 30_000);
 
   const memoryRows = memories.data?.memories ?? [];
   const clusters = useMemo(() => buildTopicClusters(memoryRows), [memoryRows]);
@@ -160,7 +183,7 @@ export function Brain() {
           {tab === 'overview' && <Overview status={status.data} total={memories.data?.total ?? 0} clusters={clusters} refresh={() => { status.refresh(); memories.refresh(); }} />}
           {tab === 'search' && <BrainSearch configured={status.data.openBrain.configured} />}
           {tab === 'capture' && <BrainCapture configured={status.data.openBrain.configured} mutationsEnabled={status.data.mutationsEnabled} />}
-          {tab === 'graph' && <BrainGraph memories={memoryRows} clusters={clusters} />}
+          {tab === 'graph' && <BrainGraph memories={memoryRows} clusters={clusters} graph={graph.data} />}
         </div>
       )}
     </div>
@@ -384,13 +407,32 @@ interface TopicCluster {
   memories: Memory[];
 }
 
-function BrainGraph({ memories, clusters }: { memories: Memory[]; clusters: TopicCluster[] }) {
+function BrainGraph({ memories, clusters, graph }: { memories: Memory[]; clusters: TopicCluster[]; graph: BrainGraphResponse | null }) {
+  if (graph?.configured && graph.nodes.length > 0) {
+    return <OpenBrainGraph graph={graph} localMemories={memories} />;
+  }
+
   if (memories.length === 0) {
-    return <PageState empty emptyTitle="No local memories yet" emptyDescription="The graph draws from the local SQLite memory mirror." />;
+    return (
+      <PageState
+        empty
+        emptyTitle={graph?.configured ? 'No OpenBrain graph nodes yet' : 'OB-Graph not deployed yet'}
+        emptyDescription={graph?.configured ? 'OpenBrain graph is reachable, but no graph nodes were returned.' : 'Deploy the OB-Graph schema and edge function to turn this from a local topic map into real graph traversal.'}
+      />
+    );
   }
 
   return (
-    <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4 min-h-[560px]">
+    <div class="space-y-3">
+      <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-3">
+        <div class="text-[11px] text-[var(--color-text-muted)]">
+          {graph?.configured
+            ? `OB-Graph function ${graph.functionName} is configured but not returning graph nodes yet. Showing the local memory topic map.`
+            : `OB-Graph is not deployed yet. Showing the local memory topic map until ${graph?.functionName || 'ob-graph-mcp'} is available.`}
+        </div>
+        {graph?.error && <div class="mt-1 text-[11px] text-[var(--color-status-failed)]">{graph.error}</div>}
+      </div>
+      <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4 min-h-[560px]">
       <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 overflow-hidden">
         <div class="relative h-[520px] rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
           <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -431,6 +473,75 @@ function BrainGraph({ memories, clusters }: { memories: Memory[]; clusters: Topi
           ))}
         </div>
       </div>
+      </div>
+    </div>
+  );
+}
+
+function OpenBrainGraph({ graph, localMemories }: { graph: BrainGraphResponse; localMemories: Memory[] }) {
+  const nodes = graph.nodes.slice(0, 36);
+  return (
+    <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-4 min-h-[560px]">
+      <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 overflow-hidden">
+        <div class="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">OpenBrain Graph</div>
+            <div class="text-[12px] text-[var(--color-text-muted)]">{graph.count} nodes from {graph.functionName}</div>
+          </div>
+          <Pill tone={graph.ready ? 'done' : 'medium'}>{graph.ready ? 'ready' : 'degraded'}</Pill>
+        </div>
+        <div class="relative h-[500px] rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
+          {nodes.map((node, index) => (
+            <GraphNodeBubble
+              key={node.id}
+              node={node}
+              index={index}
+              total={nodes.length}
+              color={TOPIC_COLORS[index % TOPIC_COLORS.length]}
+            />
+          ))}
+        </div>
+      </div>
+      <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 overflow-y-auto max-h-[552px]">
+        <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-3">Graph nodes</div>
+        <div class="space-y-3">
+          {nodes.slice(0, 18).map((node) => (
+            <div key={node.id} class="border-b border-[var(--color-border)] pb-3 last:border-b-0">
+              <div class="flex items-center gap-2 min-w-0">
+                <Pill>{node.node_type || 'entity'}</Pill>
+                <div class="text-[12px] text-[var(--color-text)] truncate">{node.label}</div>
+              </div>
+              <div class="mt-1 text-[10px] text-[var(--color-text-faint)] font-mono truncate">{node.thought_id ? `thought ${node.thought_id}` : node.id}</div>
+            </div>
+          ))}
+        </div>
+        <div class="mt-4 pt-3 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+          Local mirror still has {localMemories.length} memories for fallback search and outage resilience.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GraphNodeBubble({ node, index, total, color }: { node: BrainGraphNode; index: number; total: number; color: string }) {
+  const { x, y } = clusterPoint(index, Math.max(1, total));
+  const size = node.node_type === 'project' ? 112 : node.node_type === 'person' ? 92 : 76;
+  return (
+    <div
+      class="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border flex flex-col items-center justify-center text-center px-2"
+      style={{
+        left: x + '%',
+        top: y + '%',
+        width: size + 'px',
+        height: size + 'px',
+        color,
+        borderColor: 'color-mix(in srgb, currentColor 60%, transparent)',
+        backgroundColor: 'color-mix(in srgb, currentColor 13%, transparent)',
+      }}
+      title={`${node.label} (${node.node_type})`}
+    >
+      <span class="text-[11px] text-[var(--color-text)] leading-tight max-w-[90px] truncate">{node.label}</span>
+      <span class="text-[10px] font-mono text-[var(--color-text-faint)]">{node.node_type}</span>
     </div>
   );
 }

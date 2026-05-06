@@ -5,7 +5,7 @@ import { serve } from '@hono/node-server';
 
 import fs from 'fs';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel, LLM_PROVIDER, BRAIN, OB1_SUPABASE_URL, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel, LLM_PROVIDER, BRAIN, OB1_SUPABASE_URL, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION, OB1_GRAPH_FUNCTION } from './config.js';
 import crypto from 'crypto';
 import {
   getAllScheduledTasks,
@@ -111,7 +111,7 @@ import {
 } from './llm-provider.js';
 import { resolveModelForProvider } from './model-router.js';
 import { buildAgentRuntimePrompt } from './agent-runtime.js';
-import { captureThought, searchThoughts } from './brain/client.js';
+import { captureThought, listGraphEdgeTypes, searchGraphNodes, searchThoughts } from './brain/client.js';
 import { parseSearchText } from './brain/adapter.js';
 import { checkStale, RUNTIME_BUILD_META, RUNTIME_STARTED_AT, shortSha } from './build-meta.js';
 
@@ -945,6 +945,10 @@ function openBrainConfigured(): boolean {
   return BRAIN === 'ob1' && !!OB1_SUPABASE_URL && !!MCP_ACCESS_KEY && !!OB1_BRAIN_FUNCTION;
 }
 
+function openBrainGraphConfigured(): boolean {
+  return openBrainConfigured() && !!OB1_GRAPH_FUNCTION;
+}
+
 function openBrainConfigState() {
   const missing = [
     BRAIN === 'ob1' ? '' : 'BRAIN=ob1',
@@ -956,6 +960,8 @@ function openBrainConfigState() {
     active: BRAIN === 'ob1',
     configured: missing.length === 0,
     ready: BRAIN === 'ob1' && missing.length === 0,
+    graphFunctionName: OB1_GRAPH_FUNCTION,
+    graphConfigured: missing.length === 0 && !!OB1_GRAPH_FUNCTION,
     missing,
   };
 }
@@ -3075,6 +3081,8 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         ready: config.ready,
         missing: config.missing,
         functionName: OB1_BRAIN_FUNCTION,
+        graphFunctionName: config.graphFunctionName,
+        graphConfigured: config.graphConfigured,
         supabaseConfigured: !!OB1_SUPABASE_URL,
         accessKeyConfigured: !!MCP_ACCESS_KEY,
       },
@@ -3169,6 +3177,82 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       pending: candidates.length,
       candidates: candidates.slice(0, 20),
     });
+  });
+
+  app.get('/api/brain/graph/status', async (c) => {
+    const configured = openBrainGraphConfigured();
+    if (!configured) {
+      return c.json({
+        ok: true,
+        configured: false,
+        ready: false,
+        functionName: OB1_GRAPH_FUNCTION,
+        missing: openBrainConfigState().missing.concat(OB1_GRAPH_FUNCTION ? [] : ['OB1_GRAPH_FUNCTION']),
+        edgeTypes: [],
+      });
+    }
+
+    try {
+      const edgeTypeResult = await listGraphEdgeTypes();
+      return c.json({
+        ok: true,
+        configured: true,
+        ready: edgeTypeResult.success !== false,
+        functionName: OB1_GRAPH_FUNCTION,
+        edgeTypes: edgeTypeResult.edge_types || edgeTypeResult.types || [],
+      });
+    } catch (err: any) {
+      return c.json({
+        ok: false,
+        configured: true,
+        ready: false,
+        functionName: OB1_GRAPH_FUNCTION,
+        edgeTypes: [],
+        error: err?.message || String(err),
+      }, 200);
+    }
+  });
+
+  app.get('/api/brain/graph/nodes', async (c) => {
+    const query = (c.req.query('query') || c.req.query('q') || '').trim();
+    const nodeType = (c.req.query('type') || '').trim();
+    const parsedLimit = parseInt(c.req.query('limit') || '40', 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(100, parsedLimit)) : 40;
+
+    if (!openBrainGraphConfigured()) {
+      return c.json({
+        ok: true,
+        configured: false,
+        ready: false,
+        functionName: OB1_GRAPH_FUNCTION,
+        nodes: [],
+        count: 0,
+        error: 'OB-Graph is not deployed/configured yet.',
+      });
+    }
+
+    try {
+      const result = await searchGraphNodes({ query: query || undefined, node_type: nodeType || undefined, limit });
+      return c.json({
+        ok: result.success !== false,
+        configured: true,
+        ready: result.success !== false,
+        functionName: OB1_GRAPH_FUNCTION,
+        nodes: result.nodes || [],
+        count: result.count ?? result.nodes?.length ?? 0,
+        error: result.error,
+      });
+    } catch (err: any) {
+      return c.json({
+        ok: false,
+        configured: true,
+        ready: false,
+        functionName: OB1_GRAPH_FUNCTION,
+        nodes: [],
+        count: 0,
+        error: err?.message || String(err),
+      }, 200);
+    }
   });
 
   app.post('/api/brain/ingest', async (c) => {
