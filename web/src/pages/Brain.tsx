@@ -96,12 +96,30 @@ interface BrainGraphNode {
   updated_at?: string;
 }
 
+interface BrainGraphNeighbor {
+  direction?: string;
+  relationship_type: string;
+  weight?: number;
+  edge_properties?: Record<string, unknown>;
+  neighbor?: BrainGraphNode;
+}
+
 interface BrainGraphResponse {
   ok: boolean;
   configured: boolean;
   ready: boolean;
   functionName: string;
   nodes: BrainGraphNode[];
+  count: number;
+  error?: string;
+}
+
+interface BrainGraphNeighborsResponse {
+  ok: boolean;
+  configured: boolean;
+  ready: boolean;
+  functionName: string;
+  neighbors: BrainGraphNeighbor[];
   count: number;
   error?: string;
 }
@@ -408,8 +426,25 @@ interface TopicCluster {
 }
 
 function BrainGraph({ memories, clusters, graph }: { memories: Memory[]; clusters: TopicCluster[]; graph: BrainGraphResponse | null }) {
+  const [ingesting, setIngesting] = useState(false);
+  const [ingestNote, setIngestNote] = useState<string | null>(null);
+
+  async function ingestGraph() {
+    if (ingesting) return;
+    setIngesting(true);
+    setIngestNote(null);
+    try {
+      const result = await apiPost<{ nodesCreated: number; edgesCreated: number; edgesSkipped: number; errors?: string[] }>('/api/brain/graph/ingest');
+      setIngestNote(`${result.nodesCreated} nodes created · ${result.edgesCreated} edges created · ${result.edgesSkipped} existing/skipped`);
+    } catch (err: any) {
+      setIngestNote(err?.body?.error || err?.message || String(err));
+    } finally {
+      setIngesting(false);
+    }
+  }
+
   if (graph?.configured && graph.nodes.length > 0) {
-    return <OpenBrainGraph graph={graph} localMemories={memories} />;
+    return <OpenBrainGraph graph={graph} localMemories={memories} ingestGraph={ingestGraph} ingesting={ingesting} ingestNote={ingestNote} />;
   }
 
   if (memories.length === 0) {
@@ -425,10 +460,26 @@ function BrainGraph({ memories, clusters, graph }: { memories: Memory[]; cluster
   return (
     <div class="space-y-3">
       <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-3">
-        <div class="text-[11px] text-[var(--color-text-muted)]">
-          {graph?.configured
-            ? `OB-Graph function ${graph.functionName} is configured but not returning graph nodes yet. Showing the local memory topic map.`
-            : `OB-Graph is not deployed yet. Showing the local memory topic map until ${graph?.functionName || 'ob-graph-mcp'} is available.`}
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="text-[11px] text-[var(--color-text-muted)]">
+              {graph?.configured
+                ? `OB-Graph function ${graph.functionName} is configured but not returning graph nodes yet. Showing the local memory topic map.`
+                : `OB-Graph is not deployed yet. Showing the local memory topic map until ${graph?.functionName || 'ob-graph-mcp'} is available.`}
+            </div>
+            {ingestNote && <div class="mt-1 text-[11px] text-[var(--color-text-muted)]">{ingestNote}</div>}
+          </div>
+          {graph?.configured && (
+            <button
+              type="button"
+              onClick={ingestGraph}
+              disabled={ingesting}
+              class="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+            >
+              <RefreshCcw size={14} />
+              {ingesting ? 'Ingesting' : 'Ingest OS graph'}
+            </button>
+          )}
         </div>
         {graph?.error && <div class="mt-1 text-[11px] text-[var(--color-status-failed)]">{graph.error}</div>}
       </div>
@@ -478,7 +529,24 @@ function BrainGraph({ memories, clusters, graph }: { memories: Memory[]; cluster
   );
 }
 
-function OpenBrainGraph({ graph, localMemories }: { graph: BrainGraphResponse; localMemories: Memory[] }) {
+function OpenBrainGraph({
+  graph,
+  localMemories,
+  ingestGraph,
+  ingesting,
+  ingestNote,
+}: {
+  graph: BrainGraphResponse;
+  localMemories: Memory[];
+  ingestGraph: () => void;
+  ingesting: boolean;
+  ingestNote: string | null;
+}) {
+  const [selected, setSelected] = useState<BrainGraphNode | null>(graph.nodes[0] || null);
+  const neighbors = useFetch<BrainGraphNeighborsResponse>(
+    selected ? `/api/brain/graph/nodes/${encodeURIComponent(selected.id)}/neighbors` : null,
+    30_000,
+  );
   const nodes = graph.nodes.slice(0, 36);
   return (
     <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-4 min-h-[560px]">
@@ -488,8 +556,20 @@ function OpenBrainGraph({ graph, localMemories }: { graph: BrainGraphResponse; l
             <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">OpenBrain Graph</div>
             <div class="text-[12px] text-[var(--color-text-muted)]">{graph.count} nodes from {graph.functionName}</div>
           </div>
-          <Pill tone={graph.ready ? 'done' : 'medium'}>{graph.ready ? 'ready' : 'degraded'}</Pill>
+          <div class="flex items-center gap-2">
+            <Pill tone={graph.ready ? 'done' : 'medium'}>{graph.ready ? 'ready' : 'degraded'}</Pill>
+            <button
+              type="button"
+              onClick={ingestGraph}
+              disabled={ingesting}
+              class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] bg-[var(--color-elevated)] text-[var(--color-text)] border border-[var(--color-border)] hover:border-[var(--color-accent)] transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+            >
+              <RefreshCcw size={13} />
+              {ingesting ? 'Ingesting' : 'Ingest'}
+            </button>
+          </div>
         </div>
+        {ingestNote && <div class="mb-3 text-[11px] text-[var(--color-text-muted)]">{ingestNote}</div>}
         <div class="relative h-[500px] rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
           {nodes.map((node, index) => (
             <GraphNodeBubble
@@ -498,23 +578,56 @@ function OpenBrainGraph({ graph, localMemories }: { graph: BrainGraphResponse; l
               index={index}
               total={nodes.length}
               color={TOPIC_COLORS[index % TOPIC_COLORS.length]}
+              selected={selected?.id === node.id}
+              onClick={() => setSelected(node)}
             />
           ))}
         </div>
       </div>
       <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 overflow-y-auto max-h-[552px]">
-        <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-3">Graph nodes</div>
-        <div class="space-y-3">
-          {nodes.slice(0, 18).map((node) => (
-            <div key={node.id} class="border-b border-[var(--color-border)] pb-3 last:border-b-0">
+        <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-3">Selected node</div>
+        {selected ? (
+          <>
+            <div class="border-b border-[var(--color-border)] pb-3">
               <div class="flex items-center gap-2 min-w-0">
-                <Pill>{node.node_type || 'entity'}</Pill>
-                <div class="text-[12px] text-[var(--color-text)] truncate">{node.label}</div>
+                <Pill>{selected.node_type || 'entity'}</Pill>
+                <div class="text-[13px] text-[var(--color-text)] truncate">{selected.label}</div>
               </div>
-              <div class="mt-1 text-[10px] text-[var(--color-text-faint)] font-mono truncate">{node.thought_id ? `thought ${node.thought_id}` : node.id}</div>
+              <div class="mt-2 text-[10px] text-[var(--color-text-faint)] font-mono break-all">{selected.id}</div>
+              {selected.properties && (
+                <div class="mt-3 space-y-1">
+                  {Object.entries(selected.properties).slice(0, 8).map(([key, value]) => (
+                    <div key={key} class="flex items-start justify-between gap-3 text-[11px]">
+                      <span class="text-[var(--color-text-faint)]">{key}</span>
+                      <span class="text-[var(--color-text-muted)] text-right break-all">{String(value)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          ))}
-        </div>
+            <div class="mt-4">
+              <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-2">Relationships</div>
+              {neighbors.error && <div class="text-[11px] text-[var(--color-status-failed)]">{neighbors.error}</div>}
+              {neighbors.loading && !neighbors.data && <div class="text-[11px] text-[var(--color-text-muted)]">Loading relationships</div>}
+              <div class="space-y-2">
+                {(neighbors.data?.neighbors || []).slice(0, 16).map((edge, index) => (
+                  <div key={`${edge.relationship_type}-${index}`} class="bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md p-2">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="text-[11px] text-[var(--color-text)]">{edge.relationship_type}</span>
+                      {edge.direction && <span class="text-[10px] text-[var(--color-text-faint)]">{edge.direction}</span>}
+                    </div>
+                    <div class="mt-1 text-[11px] text-[var(--color-text-muted)] truncate">{edge.neighbor?.label || 'Unknown node'}</div>
+                  </div>
+                ))}
+              </div>
+              {neighbors.data && neighbors.data.neighbors.length === 0 && (
+                <div class="text-[11px] text-[var(--color-text-muted)]">No relationships returned for this node yet.</div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div class="text-[11px] text-[var(--color-text-muted)]">Select a graph node.</div>
+        )}
         <div class="mt-4 pt-3 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] leading-relaxed">
           Local mirror still has {localMemories.length} memories for fallback search and outage resilience.
         </div>
@@ -523,20 +636,38 @@ function OpenBrainGraph({ graph, localMemories }: { graph: BrainGraphResponse; l
   );
 }
 
-function GraphNodeBubble({ node, index, total, color }: { node: BrainGraphNode; index: number; total: number; color: string }) {
+function GraphNodeBubble({
+  node,
+  index,
+  total,
+  color,
+  selected,
+  onClick,
+}: {
+  node: BrainGraphNode;
+  index: number;
+  total: number;
+  color: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
   const { x, y } = clusterPoint(index, Math.max(1, total));
   const size = node.node_type === 'project' ? 112 : node.node_type === 'person' ? 92 : 76;
   return (
     <div
-      class="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border flex flex-col items-center justify-center text-center px-2"
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); }}
+      class="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border flex flex-col items-center justify-center text-center px-2 cursor-pointer transition-transform hover:scale-105"
       style={{
         left: x + '%',
         top: y + '%',
         width: size + 'px',
         height: size + 'px',
         color,
-        borderColor: 'color-mix(in srgb, currentColor 60%, transparent)',
-        backgroundColor: 'color-mix(in srgb, currentColor 13%, transparent)',
+        borderColor: selected ? 'var(--color-accent)' : 'color-mix(in srgb, currentColor 60%, transparent)',
+        backgroundColor: selected ? 'color-mix(in srgb, var(--color-accent) 22%, transparent)' : 'color-mix(in srgb, currentColor 13%, transparent)',
       }}
       title={`${node.label} (${node.node_type})`}
     >

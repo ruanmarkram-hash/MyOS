@@ -111,7 +111,7 @@ import {
 } from './llm-provider.js';
 import { resolveModelForProvider } from './model-router.js';
 import { buildAgentRuntimePrompt } from './agent-runtime.js';
-import { captureThought, listGraphEdgeTypes, searchGraphNodes, searchThoughts } from './brain/client.js';
+import { captureThought, createGraphEdge, createGraphNode, getGraphNeighbors, listGraphEdgeTypes, searchGraphNodes, searchThoughts, type GraphNode } from './brain/client.js';
 import { parseSearchText } from './brain/adapter.js';
 import { checkStale, RUNTIME_BUILD_META, RUNTIME_STARTED_AT, shortSha } from './build-meta.js';
 
@@ -1015,7 +1015,7 @@ function collectBrainIngestionCandidates(chatId: string) {
   const missionCandidates: Array<{ source: string; summary: string; content: string; topics: string[]; confidence: number }> = [];
   const briefCandidates: Array<{ source: string; summary: string; content: string; topics: string[]; confidence: number }> = [];
   const decisionCandidates: Array<{ source: string; summary: string; content: string; topics: string[]; confidence: number }> = [];
-  for (const task of getMissionTaskHistory(80, 0).tasks) {
+  for (const task of getMissionTaskHistory(8, 0).tasks) {
     const manifest = getMissionManifest(task);
     if (manifest.route === 'done' && !manifest.summary) continue;
     missionCandidates.push({
@@ -1080,6 +1080,243 @@ function collectBrainIngestionCandidates(chatId: string) {
   ]
     .filter((candidate) => !memoryExistsBySourceAndSummary(chatId, candidate.source, candidate.summary))
     .slice(0, 50);
+}
+
+type GraphCandidateNode = {
+  key: string;
+  label: string;
+  type: string;
+  properties: Record<string, unknown>;
+};
+
+type GraphCandidateEdge = {
+  sourceKey: string;
+  targetKey: string;
+  relationship: string;
+  weight: number;
+  properties: Record<string, unknown>;
+};
+
+function addGraphNode(nodes: Map<string, GraphCandidateNode>, node: GraphCandidateNode): void {
+  if (!nodes.has(node.key)) nodes.set(node.key, node);
+}
+
+function missionGraphRoute(task: MissionTask): string {
+  try {
+    return getMissionManifest(task).route;
+  } catch {
+    return task.status;
+  }
+}
+
+function collectOpenBrainGraphCandidates(): { nodes: GraphCandidateNode[]; edges: GraphCandidateEdge[] } {
+  const nodes = new Map<string, GraphCandidateNode>();
+  const edges: GraphCandidateEdge[] = [];
+
+  addGraphNode(nodes, {
+    key: 'system:claudeclaw',
+    label: 'ClaudeClaw OS',
+    type: 'system',
+    properties: { source: 'mission-control', stableKey: 'system:claudeclaw' },
+  });
+  addGraphNode(nodes, {
+    key: 'workflow:review-inbox',
+    label: 'Review Inbox',
+    type: 'workflow',
+    properties: { source: 'mission-control', stableKey: 'workflow:review-inbox' },
+  });
+  addGraphNode(nodes, {
+    key: 'workflow:needs-attention',
+    label: 'Needs Attention',
+    type: 'workflow',
+    properties: { source: 'mission-control', stableKey: 'workflow:needs-attention' },
+  });
+
+  for (const task of getMissionTaskHistory(80, 0).tasks) {
+    const missionKey = `mission:${task.id}`;
+    const agentKey = `agent:${task.assigned_agent || 'unassigned'}`;
+    const route = missionGraphRoute(task);
+    addGraphNode(nodes, {
+      key: missionKey,
+      label: `Mission: ${task.title}`,
+      type: 'mission',
+      properties: {
+        source: 'mission-control',
+        stableKey: missionKey,
+        missionId: task.id,
+        status: task.status,
+        route,
+        priority: task.priority,
+        createdAt: task.created_at,
+        completedAt: task.completed_at,
+      },
+    });
+    addGraphNode(nodes, {
+      key: agentKey,
+      label: task.assigned_agent ? `Agent: ${task.assigned_agent}` : 'Agent: unassigned',
+      type: 'agent',
+      properties: { source: 'mission-control', stableKey: agentKey, agentId: task.assigned_agent || 'unassigned' },
+    });
+    edges.push({
+      sourceKey: 'system:claudeclaw',
+      targetKey: missionKey,
+      relationship: 'runs_mission',
+      weight: 0.9,
+      properties: { source: 'mission-control', missionId: task.id },
+    });
+    edges.push({
+      sourceKey: missionKey,
+      targetKey: agentKey,
+      relationship: 'assigned_to',
+      weight: 1,
+      properties: { source: 'mission-control', missionId: task.id },
+    });
+
+    const manifest = getMissionManifest(task);
+    if (manifest.route === 'needs_review' || manifest.route === 'needs_triage') {
+      edges.push({
+        sourceKey: missionKey,
+        targetKey: 'workflow:review-inbox',
+        relationship: 'requires_review_in',
+        weight: 0.95,
+        properties: { source: 'mission-control', missionId: task.id, route: manifest.route },
+      });
+    }
+    if (task.status === 'failed' || task.status === 'partial') {
+      edges.push({
+        sourceKey: missionKey,
+        targetKey: 'workflow:needs-attention',
+        relationship: 'surfaces_attention_in',
+        weight: 0.9,
+        properties: { source: 'mission-control', missionId: task.id, status: task.status },
+      });
+    }
+    for (const deliverable of manifest.deliverables.slice(0, 6)) {
+      const target = deliverable.target || deliverable.label;
+      const deliverableKey = `deliverable:${crypto.createHash('sha1').update(target).digest('hex').slice(0, 16)}`;
+      addGraphNode(nodes, {
+        key: deliverableKey,
+        label: `Deliverable: ${path.basename(target) || deliverable.label}`,
+        type: 'deliverable',
+        properties: {
+          source: 'mission-control',
+          stableKey: deliverableKey,
+          missionId: task.id,
+          kind: deliverable.kind,
+          target,
+          label: deliverable.label,
+        },
+      });
+      edges.push({
+        sourceKey: missionKey,
+        targetKey: deliverableKey,
+        relationship: 'produced_deliverable',
+        weight: 1,
+        properties: { source: 'mission-control', missionId: task.id, kind: deliverable.kind },
+      });
+    }
+  }
+
+  for (const item of listOpenAttentionItems(6)) {
+    const attentionKey = `attention:${item.id}`;
+    addGraphNode(nodes, {
+      key: attentionKey,
+      label: `Attention: ${item.title}`,
+      type: 'attention',
+      properties: {
+        source: 'mission-control',
+        stableKey: attentionKey,
+        attentionId: item.id,
+        sourceKind: item.source_kind,
+        sourceId: item.source_id,
+        severity: item.severity,
+        status: item.status,
+      },
+    });
+    edges.push({
+      sourceKey: attentionKey,
+      targetKey: 'workflow:needs-attention',
+      relationship: 'visible_in',
+      weight: 0.95,
+      properties: { source: 'mission-control', attentionId: item.id },
+    });
+    if (item.linked_mission_id) {
+      const missionKey = `mission:${item.linked_mission_id}`;
+      edges.push({
+        sourceKey: attentionKey,
+        targetKey: missionKey,
+        relationship: 'follows_from_mission',
+        weight: 0.9,
+        properties: { source: 'mission-control', attentionId: item.id, missionId: item.linked_mission_id },
+      });
+    }
+  }
+
+  return { nodes: [...nodes.values()], edges };
+}
+
+async function ensureGraphNode(node: GraphCandidateNode): Promise<{ node: GraphNode; created: boolean }> {
+  const existing = await searchGraphNodes({ query: node.label, node_type: node.type, limit: 25 });
+  const exact = (existing.nodes || []).find((candidate) =>
+    candidate.label === node.label
+    && candidate.node_type === node.type
+    && (candidate.properties as any)?.stableKey === node.key,
+  );
+  if (exact) return { node: exact, created: false };
+  const created = await createGraphNode({
+    label: node.label,
+    node_type: node.type,
+    properties: node.properties,
+  });
+  return { node: created.node, created: true };
+}
+
+async function ingestOpenBrainGraph(): Promise<{ nodesCreated: number; edgesCreated: number; edgesSkipped: number; errors: string[] }> {
+  const candidates = collectOpenBrainGraphCandidates();
+  const resolved = new Map<string, GraphNode>();
+  let nodesCreated = 0;
+  let edgesCreated = 0;
+  let edgesSkipped = 0;
+  const errors: string[] = [];
+
+  for (const node of candidates.nodes.slice(0, 32)) {
+    try {
+      const result = await ensureGraphNode(node);
+      resolved.set(node.key, result.node);
+      if (result.created) nodesCreated++;
+    } catch (err: any) {
+      errors.push(`node ${node.label}: ${err?.message || String(err)}`);
+      if (errors.length >= 5) return { nodesCreated, edgesCreated, edgesSkipped, errors };
+    }
+  }
+
+  for (const edge of candidates.edges.slice(0, 48)) {
+    const source = resolved.get(edge.sourceKey);
+    const target = resolved.get(edge.targetKey);
+    if (!source || !target) {
+      edgesSkipped++;
+      continue;
+    }
+    try {
+      await createGraphEdge({
+        source_node_id: source.id,
+        target_node_id: target.id,
+        relationship_type: edge.relationship,
+        weight: edge.weight,
+        properties: edge.properties,
+      });
+      edgesCreated++;
+    } catch (err: any) {
+      if (/duplicate key value|unique_edge/i.test(err?.message || String(err))) {
+        edgesSkipped++;
+        continue;
+      }
+      errors.push(`edge ${edge.relationship}: ${err?.message || String(err)}`);
+      if (errors.length >= 5) break;
+    }
+  }
+
+  return { nodesCreated, edgesCreated, edgesSkipped, errors };
 }
 
 function currentProvider(): LlmProviderName {
@@ -3253,6 +3490,69 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         error: err?.message || String(err),
       }, 200);
     }
+  });
+
+  app.get('/api/brain/graph/nodes/:id/neighbors', async (c) => {
+    const nodeId = c.req.param('id');
+    if (!nodeId) return c.json({ ok: false, error: 'node id required', neighbors: [] }, 400);
+    if (!openBrainGraphConfigured()) {
+      return c.json({
+        ok: true,
+        configured: false,
+        ready: false,
+        functionName: OB1_GRAPH_FUNCTION,
+        neighbors: [],
+        count: 0,
+        error: 'OB-Graph is not deployed/configured yet.',
+      });
+    }
+
+    try {
+      const result = await getGraphNeighbors({ node_id: nodeId, direction: 'both' });
+      return c.json({
+        ok: result.success !== false,
+        configured: true,
+        ready: result.success !== false,
+        functionName: OB1_GRAPH_FUNCTION,
+        neighbors: result.neighbors || result.results || [],
+        count: result.count ?? (result.neighbors || result.results || []).length,
+        error: result.error,
+      });
+    } catch (err: any) {
+      return c.json({
+        ok: false,
+        configured: true,
+        ready: false,
+        functionName: OB1_GRAPH_FUNCTION,
+        neighbors: [],
+        count: 0,
+        error: err?.message || String(err),
+      }, 200);
+    }
+  });
+
+  app.post('/api/brain/graph/ingest', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled by DASHBOARD_MUTATIONS_ENABLED=false' }, 423);
+    }
+    if (!openBrainGraphConfigured()) {
+      return c.json({
+        ok: false,
+        configured: false,
+        ready: false,
+        functionName: OB1_GRAPH_FUNCTION,
+        error: 'OB-Graph is not deployed/configured yet.',
+      }, 400);
+    }
+
+    const result = await ingestOpenBrainGraph();
+    return c.json({
+      ok: result.errors.length === 0,
+      configured: true,
+      ready: true,
+      functionName: OB1_GRAPH_FUNCTION,
+      ...result,
+    }, result.errors.length === 0 ? 200 : 207);
   });
 
   app.post('/api/brain/ingest', async (c) => {

@@ -125,6 +125,17 @@ export interface GraphEdgeType {
   count: number;
 }
 
+export interface GraphEdge {
+  id?: string;
+  edge_id?: string;
+  relationship_type: string;
+  weight?: number;
+  properties?: Record<string, unknown>;
+  edge_properties?: Record<string, unknown>;
+  direction?: string;
+  neighbor?: GraphNode;
+}
+
 async function callGraphTool<T>(name: string, args: Record<string, unknown>): Promise<T> {
   const result = await rpc('tools/call', { name, arguments: args }, 20_000, OB1_GRAPH_FUNCTION);
   return parseJsonToolText<T>(extractText(result));
@@ -144,6 +155,48 @@ export async function searchGraphNodes(args: {
 
 export async function listGraphEdgeTypes(): Promise<{ success: boolean; edge_types?: GraphEdgeType[]; types?: GraphEdgeType[]; error?: string }> {
   return callGraphTool('list_edge_types', {});
+}
+
+export async function createGraphNode(args: {
+  label: string;
+  node_type?: string;
+  properties?: Record<string, unknown>;
+  thought_id?: string;
+}): Promise<{ success: boolean; node: GraphNode; error?: string }> {
+  return callGraphTool('create_node', {
+    label: args.label,
+    node_type: args.node_type,
+    properties: JSON.stringify(args.properties ?? {}),
+    thought_id: args.thought_id,
+  });
+}
+
+export async function createGraphEdge(args: {
+  source_node_id: string;
+  target_node_id: string;
+  relationship_type: string;
+  weight?: number;
+  properties?: Record<string, unknown>;
+}): Promise<{ success: boolean; edge?: GraphEdge; error?: string }> {
+  return callGraphTool('create_edge', {
+    source_node_id: args.source_node_id,
+    target_node_id: args.target_node_id,
+    relationship_type: args.relationship_type,
+    weight: args.weight ?? 1,
+    properties: JSON.stringify(args.properties ?? {}),
+  });
+}
+
+export async function getGraphNeighbors(args: {
+  node_id: string;
+  relationship_type?: string;
+  direction?: 'outgoing' | 'incoming' | 'both';
+}): Promise<{ success: boolean; count: number; neighbors?: GraphEdge[]; results?: GraphEdge[]; error?: string }> {
+  return callGraphTool('get_neighbors', {
+    node_id: args.node_id,
+    relationship_type: args.relationship_type,
+    direction: args.direction ?? 'both',
+  });
 }
 
 export async function pingBrain(): Promise<boolean> {
