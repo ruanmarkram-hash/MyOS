@@ -1,4 +1,4 @@
-import { Archive, Check, Download, ExternalLink, FileText, Mail, RefreshCcw, RotateCcw, Send } from 'lucide-preact';
+import { Archive, Check, ChevronDown, ChevronRight, Download, ExternalLink, FileText, Mail, RefreshCcw, RotateCcw, Send } from 'lucide-preact';
 import { useState } from 'preact/hooks';
 import { PageHeader } from '@/components/PageHeader';
 import { PageState } from '@/components/PageState';
@@ -70,6 +70,9 @@ export function ReviewInbox() {
   const [selectedAgent, setSelectedAgent] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<Record<string, string>>({});
+  const [sortedOpen, setSortedOpen] = useState(false);
+  const [sortedClearing, setSortedClearing] = useState(false);
+  const [sortedMessage, setSortedMessage] = useState('');
 
   const agentList = agents.data?.agents ?? [];
   const allItems = inbox.data?.items ?? [];
@@ -108,6 +111,21 @@ export function ReviewInbox() {
 
   async function archive(item: ReviewItem) {
     await mutate(item, 'Archiving...', () => apiPost(`/api/review/tasks/${item.id}/archive`));
+  }
+
+  async function clearAllSorted() {
+    if (sortedClearing || sortedItems.length === 0) return;
+    setSortedClearing(true);
+    setSortedMessage('');
+    try {
+      const result = await apiPost<{ archived: number }>('/api/review/sorted/clear');
+      setSortedMessage(`Cleared ${result.archived} sorted item${result.archived === 1 ? '' : 's'}.`);
+      inbox.refresh();
+    } catch (err: any) {
+      setSortedMessage(err?.body?.error || err?.message || String(err));
+    } finally {
+      setSortedClearing(false);
+    }
   }
 
   async function sendFollowup(item: ReviewItem, mode: 'retry' | 'followup') {
@@ -182,18 +200,6 @@ export function ReviewInbox() {
             {(item) => <WaitingCard item={item} onArchive={() => void archive(item)} busy={busy[item.id]} />}
           </ReviewSection>
 
-          <ReviewSection title="Sorted ✓ (you asked, it landed)" items={sortedItems}>
-            {(item) => (
-              <SortedCard
-                item={item}
-                busy={busy[item.id]}
-                message={message[item.id]}
-                onApprove={() => void approve(item)}
-                onArchive={() => void archive(item)}
-              />
-            )}
-          </ReviewSection>
-
           <ReviewSection title="Deliverables ready" items={grouped.needs_review ?? []}>
             {(item) => (
               <ReviewCard
@@ -215,6 +221,49 @@ export function ReviewInbox() {
               />
             )}
           </ReviewSection>
+
+          {sortedItems.length > 0 && (
+            <section class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg">
+              <div class="flex items-center gap-2 px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setSortedOpen(!sortedOpen)}
+                  class="flex items-center gap-2 flex-1 min-w-0 text-left"
+                >
+                  {sortedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <span class="text-[12px] text-[var(--color-text-muted)]">
+                    ✓ {sortedItems.length} sorted (no action needed)
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void clearAllSorted()}
+                  disabled={sortedClearing}
+                  class="review-btn shrink-0"
+                  title="Archive all sorted items"
+                >
+                  <Archive size={12} /> {sortedClearing ? 'Clearing...' : 'Clear all'}
+                </button>
+              </div>
+              {sortedMessage && (
+                <div class="px-4 pb-2 text-[10.5px] text-[var(--color-text-faint)]">{sortedMessage}</div>
+              )}
+              {sortedOpen && (
+                <div class="border-t border-[var(--color-border)] p-3 space-y-2">
+                  {sortedItems.map((item) => (
+                    <SortedCard
+                      key={item.id}
+                      item={item}
+                      busy={busy[item.id]}
+                      message={message[item.id]}
+                      onApprove={() => void approve(item)}
+                      onArchive={() => void archive(item)}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
         </div>
       )}
     </div>

@@ -370,6 +370,17 @@ function extractMissionDeliverables(task: MissionTask): ReviewDeliverable[] {
 
 const OPEN_REVIEW_STATUSES = new Set<MissionReviewStatus>(['needs_review', 'needs_triage', 'waiting_followup', 'snoozed']);
 
+// Sorted (Category B) items are FYI only — they age out after 7 days so the
+// inbox doesn't accumulate stale heads-up notifications.
+const SORTED_DECAY_SECONDS = 7 * 24 * 60 * 60;
+
+function isStaleSortedItem(task: MissionTask, kind: 'needs_action' | 'sorted'): boolean {
+  if (kind !== 'sorted') return false;
+  const ts = task.completed_at || task.created_at || 0;
+  if (!ts) return false;
+  return (Math.floor(Date.now() / 1000) - ts) > SORTED_DECAY_SECONDS;
+}
+
 function reviewTaskText(task: MissionTask): string {
   return `${task.title}\n${task.prompt}\n${task.result || ''}\n${task.error || ''}`;
 }
@@ -2243,7 +2254,12 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const items = history.tasks
       .map((task) => {
         const review = effectiveMissionReview(task, missions);
-        return review && shouldShowReview(review) ? buildReviewItem(task, review, missions) : null;
+        if (!review || !shouldShowReview(review)) return null;
+        const item = buildReviewItem(task, review, missions);
+        // Auto-decay sorted (Category B) items older than 7 days — they're
+        // FYI heads-ups, not action items, so let them fall off automatically.
+        if (isStaleSortedItem(task, item.kind)) return null;
+        return item;
       })
       .filter(Boolean);
     return c.json({
@@ -2264,6 +2280,25 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     if (!task) return c.json({ ok: false, error: 'Not found' }, 404);
     const review = updateMissionReviewState(id, 'archived', 'ignored');
     return c.json({ ok: true, review });
+  });
+
+  // Bulk-archive every currently-surfaced sorted (Category B) item in one tap.
+  // Used by the "Clear all" button on the FYI accordion.
+  app.post('/api/review/sorted/clear', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+    const history = getMissionTaskHistory(100, 0);
+    const missions = getMissionTasks();
+    const archivedIds: string[] = [];
+    for (const task of history.tasks) {
+      const review = effectiveMissionReview(task, missions);
+      if (!review || !shouldShowReview(review)) continue;
+      if (reviewItemKind(task, missions) !== 'sorted') continue;
+      updateMissionReviewState(task.id, 'archived', 'ignored');
+      archivedIds.push(task.id);
+    }
+    return c.json({ ok: true, archived: archivedIds.length, ids: archivedIds });
   });
 
   app.post('/api/review/tasks/:id/approve', async (c) => {
