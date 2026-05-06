@@ -388,6 +388,51 @@ describe('GET /api/home dashboard endpoints', () => {
     });
   });
 
+  it('promotes auth and unavailable failures from briefs into durable attention items', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-auth', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-auth',
+      now + 86400,
+      [
+        '**Microsoft Graph auth expired**',
+        'Calendar, email, and tasks unavailable. The MS app consent lapsed. Need to re-auth the Sage-Cos app.',
+      ].join('\n'),
+      'success',
+    );
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    const details = body.items.map((item: any) => item.detail);
+    expect(details).toContain('Microsoft Graph auth expired');
+    expect(details).toContain('Calendar, email, and tasks unavailable. The MS app consent lapsed. Need to re-auth the Sage-Cos app.');
+    expect(body.items.filter((item: any) => item.source === 'brief').every((item: any) => item.id.startsWith('attention:'))).toBe(true);
+  });
+
+  it('uses the script filename as the title for failed command schedules', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask(
+      'schedule-command-title',
+      'Execute exactly: python3 ~/workspace/operations/engine-room/skills/msgraph/route_remittances.py',
+      '*/30 * * * *',
+      now + 3600,
+      'main',
+    );
+    updateTaskAfterRun('schedule-command-title', now + 86400, 'Shell command exit 1', 'failed');
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'schedule:schedule-command-title:last-status',
+        title: 'route remittances',
+        source: 'schedule',
+      }),
+    ]));
+  });
+
   it('resolves a mission attention item by updating the source mission', async () => {
     createMissionTask('m-home-resolve', 'Resolve from Home', 'queued work', 'comms', 'dashboard', 7);
 

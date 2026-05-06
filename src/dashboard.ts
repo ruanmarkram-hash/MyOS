@@ -635,9 +635,9 @@ const TERMINAL_MISSION_STATUSES = new Set(['completed', 'failed', 'partial', 'ca
 function scheduleTitle(prompt: string): string {
   const firstLine = prompt.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || prompt.trim();
   const beforeMode = firstLine.split('--- SILENT MODE:')[0].trim();
-  const execute = beforeMode.match(/Execute exactly:\s*([^—.-]+)/i);
+  const execute = beforeMode.match(/Execute exactly:\s*(.+)$/i);
   if (execute?.[1]) return compactCommandTitle(execute[1]);
-  const run = beforeMode.match(/Run:\s*([^—.-]+)/i);
+  const run = beforeMode.match(/Run:\s*(.+)$/i);
   if (run?.[1]) return compactCommandTitle(run[1]);
   return beforeMode.length > 180 ? beforeMode.slice(0, 177) + '...' : beforeMode;
 }
@@ -684,7 +684,7 @@ function extractAttentionItems(text: string, limit = 4): string[] {
     if (!cleaned || /^OK$/i.test(cleaned)) continue;
     if (/^(action needed|blocked on you|open threads|stale|breakdown|notes|projects|compliance|calendar|inbox|today|tomorrow top 3):?$/i.test(cleaned)) continue;
     if (/^(items blocked\/awaiting|total unread|after triage|skipped):/i.test(cleaned)) continue;
-    if (!/urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|risk|review|approve|follow.?up|due|tomorrow top|open threads/i.test(cleaned)) continue;
+    if (!/urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|risk|review|approve|follow.?up|due|tomorrow top|open threads|auth|expired|lapsed|consent|unavailable|re-auth|permission/i.test(cleaned)) continue;
     const key = cleaned.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
