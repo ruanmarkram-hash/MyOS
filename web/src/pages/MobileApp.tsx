@@ -170,7 +170,7 @@ function AttentionList({ items }: { items: AttentionItem[] }) {
   return (
     <div class="divide-y divide-[var(--color-border)]">
       {items.map((item) => (
-        <a key={item.id} href={item.href || '/v2/review'} class="block px-3 py-3">
+        <a key={item.id} href={mobileHref(item.href, '/review')} class="block px-3 py-3">
           <div class="flex items-center gap-2">
             <Pill tone={item.severity === 'high' ? 'failed' : item.severity === 'medium' ? 'medium' : 'neutral'}>{item.severity}</Pill>
             <span class="ml-auto text-[10px] text-[var(--color-text-faint)]">{formatRelativeTime(item.createdAt)}</span>
@@ -181,6 +181,15 @@ function AttentionList({ items }: { items: AttentionItem[] }) {
       ))}
     </div>
   );
+}
+
+function mobileHref(href: string | undefined | null, fallback: string): string {
+  const target = href || fallback;
+  if (/^(https?:|mailto:|tel:)/i.test(target)) return target;
+  if (target.startsWith('/v2/') || target === '/v2') return target;
+  if (target.startsWith('/api/') || target.startsWith('/warroom')) return target;
+  if (target.startsWith('/')) return `/v2${target}`;
+  return target;
 }
 
 function MissionList({ tasks, agents, onChange }: { tasks: MissionTask[]; agents: Agent[]; onChange: () => void }) {

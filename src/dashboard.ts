@@ -2346,6 +2346,32 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     return c.html(getDashboardHtml(DASHBOARD_TOKEN, chatId, WARROOM_ENABLED, process.env.MAIN_AGENT_DISPLAY_NAME || 'Main'));
   }
 
+  const v2RootRoutes = [
+    '/home',
+    '/review',
+    '/mission',
+    '/scheduled',
+    '/agents',
+    '/chat',
+    '/runtime',
+    '/reliability',
+    '/brain',
+    '/memories',
+    '/hive',
+    '/usage',
+    '/audit',
+    '/voices',
+    '/files',
+    '/settings',
+    '/mobile',
+  ];
+
+  function serveRootV2Route(c: any): Response {
+    if (MISSION_CONTROL_V2) return serveV2(c, '/index.html');
+    const url = new URL(c.req.url);
+    return c.redirect(`/v2${url.pathname}${url.search}`, 302);
+  }
+
   if (MISSION_CONTROL_V2) {
     // v2 owns root. Legacy reachable at /legacy for cutover comparison.
     app.get('/', (c) => serveV2(c, '/index.html'));
@@ -2364,6 +2390,10 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       if (direct) return serveV2(c, sub);
       return serveV2(c, '/index.html');
     });
+  }
+
+  for (const route of v2RootRoutes) {
+    app.get(route, serveRootV2Route);
   }
 
   // Static asset routes are always mounted (the v2 bundle uses absolute
