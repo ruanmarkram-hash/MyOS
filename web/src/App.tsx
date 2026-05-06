@@ -19,6 +19,7 @@ import { Voices } from '@/pages/Voices';
 import { Chat } from '@/pages/Chat';
 import { WarRoom } from '@/pages/WarRoom';
 import { Files } from '@/pages/Files';
+import { MobileApp } from '@/pages/MobileApp';
 import { DEFAULT_ROUTE } from '@/lib/routes';
 
 export function App() {
@@ -28,36 +29,41 @@ export function App() {
 
   return (
     <Router base={routeBase}>
-      <div class="app-shell flex h-screen bg-[var(--color-bg)] text-[var(--color-text)]">
-        <Sidebar />
-        <main class="app-main flex-1 min-w-0 overflow-hidden">
-          <Switch>
-            <Route path="/home"><HomeDashboard /></Route>
-            <Route path="/review"><ReviewInbox /></Route>
-            <Route path="/mission"><MissionControl /></Route>
-            <Route path="/scheduled"><Scheduled /></Route>
-            <Route path="/agents"><Agents /></Route>
-            <Route path="/chat"><Chat /></Route>
-            <Route path="/runtime"><RuntimeStack /></Route>
-            <Route path="/reliability"><Reliability /></Route>
-            <Route path="/brain"><Brain /></Route>
-            <Route path="/memories"><Memories /></Route>
-            <Route path="/hive"><HiveMind /></Route>
-            <Route path="/usage"><Usage /></Route>
-            <Route path="/audit"><Audit /></Route>
-            <Route path="/warroom"><WarRoom /></Route>
-            <Route path="/voices"><Voices /></Route>
-            <Route path="/files"><Files /></Route>
-            <Route path="/settings"><Settings /></Route>
+      <Switch>
+        <Route path="/mobile"><MobileApp /></Route>
+        <Route>
+          <div class="app-shell flex h-screen bg-[var(--color-bg)] text-[var(--color-text)]">
+            <Sidebar />
+            <main class="app-main flex-1 min-w-0 overflow-hidden">
+              <Switch>
+                <Route path="/home"><HomeDashboard /></Route>
+                <Route path="/review"><ReviewInbox /></Route>
+                <Route path="/mission"><MissionControl /></Route>
+                <Route path="/scheduled"><Scheduled /></Route>
+                <Route path="/agents"><Agents /></Route>
+                <Route path="/chat"><Chat /></Route>
+                <Route path="/runtime"><RuntimeStack /></Route>
+                <Route path="/reliability"><Reliability /></Route>
+                <Route path="/brain"><Brain /></Route>
+                <Route path="/memories"><Memories /></Route>
+                <Route path="/hive"><HiveMind /></Route>
+                <Route path="/usage"><Usage /></Route>
+                <Route path="/audit"><Audit /></Route>
+                <Route path="/warroom"><WarRoom /></Route>
+                <Route path="/voices"><Voices /></Route>
+                <Route path="/files"><Files /></Route>
+                <Route path="/settings"><Settings /></Route>
 
-            <Route path="/"><Redirect to={DEFAULT_ROUTE} /></Route>
-            <Route>
-              <Placeholder title="Not found" description="This page does not exist. Use ⌘K to jump somewhere." />
-            </Route>
-          </Switch>
-        </main>
-        <CommandPalette />
-      </div>
+                <Route path="/"><Redirect to={DEFAULT_ROUTE} /></Route>
+                <Route>
+                  <Placeholder title="Not found" description="This page does not exist. Use ⌘K to jump somewhere." />
+                </Route>
+              </Switch>
+            </main>
+            <CommandPalette />
+          </div>
+        </Route>
+      </Switch>
     </Router>
   );
 }
