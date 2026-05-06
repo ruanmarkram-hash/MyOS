@@ -36,6 +36,7 @@ warroom/.venv/
 
 # Generated outputs — personal diagrams, not for sharing
 outputs/
+models/
 
 # macOS
 .DS_Store

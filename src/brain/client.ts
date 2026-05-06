@@ -1,4 +1,6 @@
 import { BRAIN, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION, OB1_GRAPH_FUNCTION, OB1_SUPABASE_SERVICE_KEY, OB1_SUPABASE_URL } from '../config.js';
+import { EMBEDDING_PROVIDER } from '../config.js';
+import { embedText, getEmbeddingModelName } from '../embeddings.js';
 import { logger } from '../logger.js';
 
 export interface BrainThought {
@@ -148,11 +150,13 @@ function extractText(result: unknown): string {
 }
 
 export async function captureThought(args: CaptureArgs): Promise<CaptureResult> {
+  if (EMBEDDING_PROVIDER === 'llamacpp') return captureThoughtWithLocalEmbedding(args);
   const result = await rpc('tools/call', { name: 'capture_thought', arguments: args });
   return { ok: true, confirmation: extractText(result) };
 }
 
 export async function searchThoughts(args: SearchArgs): Promise<string> {
+  if (EMBEDDING_PROVIDER === 'llamacpp') return searchThoughtsWithLocalEmbedding(args);
   const result = await rpc('tools/call', {
     name: 'search_thoughts',
     arguments: {
@@ -162,6 +166,80 @@ export async function searchThoughts(args: SearchArgs): Promise<string> {
     },
   });
   return extractText(result);
+}
+
+async function captureThoughtWithLocalEmbedding(args: CaptureArgs): Promise<CaptureResult> {
+  const content = args.content.trim();
+  if (!content) throw new Error('content required');
+  const embedding = await embedText(content);
+  const metadata = {
+    source: 'hq-local-bge',
+    embedding_model: getEmbeddingModelName(),
+    type: 'observation',
+    topics: ['local-capture'],
+  };
+  const upsert = await fetch(restEndpoint('rpc/upsert_thought'), {
+    method: 'POST',
+    headers: serviceHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({
+      p_content: content,
+      p_payload: { metadata },
+    }),
+  });
+  const upsertText = await upsert.text();
+  if (!upsert.ok) throw new Error(`OpenBrain local capture upsert HTTP ${upsert.status}: ${upsertText.slice(0, 300)}`);
+  const upsertBody = JSON.parse(upsertText) as { id?: string };
+  if (!upsertBody.id) throw new Error('OpenBrain local capture did not return a thought id.');
+  const patch = await fetch(restEndpoint(`thoughts?id=eq.${encodeURIComponent(upsertBody.id)}`), {
+    method: 'PATCH',
+    headers: serviceHeaders({ 'content-type': 'application/json', prefer: 'return=minimal' }),
+    body: JSON.stringify({
+      embedding,
+      metadata,
+    }),
+  });
+  const patchText = await patch.text();
+  if (!patch.ok) throw new Error(`OpenBrain local capture embedding HTTP ${patch.status}: ${patchText.slice(0, 300)}`);
+  return { ok: true, confirmation: `Captured with ${getEmbeddingModelName()} as ${upsertBody.id}` };
+}
+
+async function searchThoughtsWithLocalEmbedding(args: SearchArgs): Promise<string> {
+  const query = args.query.trim();
+  if (!query) throw new Error('query required');
+  const queryEmbedding = await embedText(query);
+  const limit = Math.max(1, Math.min(args.limit ?? 5, 50));
+  const threshold = args.threshold ?? 0.5;
+  const res = await fetch(restEndpoint('rpc/match_thoughts'), {
+    method: 'POST',
+    headers: serviceHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({
+      query_embedding: queryEmbedding,
+      match_threshold: threshold,
+      match_count: limit,
+      filter: {},
+    }),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`OpenBrain local search HTTP ${res.status}: ${text.slice(0, 300)}`);
+  const rows = JSON.parse(text) as Array<{
+    content: string;
+    metadata?: Record<string, unknown>;
+    similarity: number;
+    created_at: string;
+  }>;
+  if (rows.length === 0) return `No thoughts found matching "${query}".`;
+  return rows.map((row, index) => {
+    const metadata = row.metadata || {};
+    const lines = [
+      `--- Result ${index + 1} (${(row.similarity * 100).toFixed(1)}% match) ---`,
+      `Captured: ${new Date(row.created_at).toLocaleDateString()}`,
+      `Type: ${metadata.type || 'unknown'}`,
+    ];
+    if (Array.isArray(metadata.topics) && metadata.topics.length) lines.push(`Topics: ${metadata.topics.join(', ')}`);
+    if (Array.isArray(metadata.people) && metadata.people.length) lines.push(`People: ${metadata.people.join(', ')}`);
+    lines.push('', row.content);
+    return lines.join('\n');
+  }).join('\n\n');
 }
 
 export async function listOpenBrainThoughts(args: {

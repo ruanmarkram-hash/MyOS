@@ -54,6 +54,11 @@ const envConfig = readEnvFile([
   'OB1_SUPABASE_SERVICE_ROLE_KEY',
   'OB1_BRAIN_FUNCTION',
   'OB1_GRAPH_FUNCTION',
+  'EMBEDDING_PROVIDER',
+  'EMBEDDING_MODEL',
+  'LLAMACPP_EMBEDDING_URL',
+  'LLAMACPP_EMBEDDING_MODEL',
+  'LOCAL_EMBEDDING_MODEL_PATH',
   'MISSION_CONTROL_V2',
 ]);
 
@@ -214,6 +219,20 @@ export const DB_ENCRYPTION_KEY =
 // Google API key for Gemini (memory extraction + consolidation)
 export const GOOGLE_API_KEY =
   process.env.GOOGLE_API_KEY || envConfig.GOOGLE_API_KEY || '';
+
+// Embeddings. Gemini remains the default cloud provider. llama.cpp is
+// available through its OpenAI-compatible /v1/embeddings endpoint.
+export type EmbeddingProvider = 'gemini' | 'llamacpp';
+export const EMBEDDING_PROVIDER =
+  ((process.env.EMBEDDING_PROVIDER || envConfig.EMBEDDING_PROVIDER || 'gemini').toLowerCase() as EmbeddingProvider);
+export const EMBEDDING_MODEL =
+  process.env.EMBEDDING_MODEL || envConfig.EMBEDDING_MODEL || 'gemini-embedding-001';
+export const LLAMACPP_EMBEDDING_URL =
+  process.env.LLAMACPP_EMBEDDING_URL || envConfig.LLAMACPP_EMBEDDING_URL || 'http://127.0.0.1:8081/v1/embeddings';
+export const LLAMACPP_EMBEDDING_MODEL =
+  process.env.LLAMACPP_EMBEDDING_MODEL || envConfig.LLAMACPP_EMBEDDING_MODEL || 'bge-m3';
+export const LOCAL_EMBEDDING_MODEL_PATH =
+  process.env.LOCAL_EMBEDDING_MODEL_PATH || envConfig.LOCAL_EMBEDDING_MODEL_PATH || '';
 
 // LLM provider for agent execution. Claude remains the production default.
 export const LLM_PROVIDER =

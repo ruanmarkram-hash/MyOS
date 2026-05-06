@@ -5,7 +5,7 @@ import { serve } from '@hono/node-server';
 
 import fs from 'fs';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel, LLM_PROVIDER, BRAIN, OB1_SUPABASE_URL, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION, OB1_GRAPH_FUNCTION } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel, LLM_PROVIDER, BRAIN, OB1_SUPABASE_URL, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION, OB1_GRAPH_FUNCTION, EMBEDDING_PROVIDER, LLAMACPP_EMBEDDING_URL, LLAMACPP_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODEL_PATH, CODEX_HAIKU_MODEL, CODEX_SONNET_MODEL, CODEX_OPUS_MODEL } from './config.js';
 import crypto from 'crypto';
 import {
   getAllScheduledTasks,
@@ -2104,6 +2104,26 @@ function providerRuntime(provider: LlmProviderName, model: string | undefined, s
   };
 }
 
+const CLAUDE_DASHBOARD_MODELS = ['claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
+
+function validModelsForProvider(provider: LlmProviderName): string[] {
+  if (provider === 'codex') {
+    return Array.from(new Set([
+      CODEX_OPUS_MODEL,
+      CODEX_SONNET_MODEL,
+      CODEX_HAIKU_MODEL,
+      'gpt-5.5',
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5.4-nano',
+      'gpt-5.3-codex',
+      'gpt-5.3-codex-spark',
+      'gpt-5.2',
+    ]));
+  }
+  return CLAUDE_DASHBOARD_MODELS;
+}
+
 async function classifyTaskAgent(prompt: string): Promise<string | null> {
   try {
     const agentIds = listAgentIds();
@@ -4047,9 +4067,9 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           id: 'local-model-readiness',
           name: 'Local model readiness',
           category: 'LLM',
-          status: process.env.LOCAL_LLM_BASE_URL || process.env.OLLAMA_HOST ? 'limited' : 'disabled',
-          active: process.env.LOCAL_LLM_BASE_URL || process.env.OLLAMA_HOST ? 'endpoint configured' : 'not configured',
-          configured: process.env.LOCAL_LLM_MODEL || 'no local model selected',
+          status: process.env.LOCAL_LLM_BASE_URL || EMBEDDING_PROVIDER === 'llamacpp' ? 'limited' : 'disabled',
+          active: EMBEDDING_PROVIDER === 'llamacpp' ? 'local embeddings configured' : process.env.LOCAL_LLM_BASE_URL ? 'LLM endpoint configured' : 'not configured',
+          configured: EMBEDDING_PROVIDER === 'llamacpp' ? LLAMACPP_EMBEDDING_MODEL : process.env.LOCAL_LLM_MODEL || 'no local model selected',
           implementations: ['OpenAI-compatible local API', 'Ollama-compatible API'],
           contract: [
             'provider adapter must implement runAgent(options)',
@@ -4059,14 +4079,19 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           ],
           signals: {
             localBaseUrlConfigured: !!process.env.LOCAL_LLM_BASE_URL,
-            ollamaHostConfigured: !!process.env.OLLAMA_HOST,
             localModelConfigured: !!process.env.LOCAL_LLM_MODEL,
+            embeddingProvider: EMBEDDING_PROVIDER,
+            llamaCppEmbeddingUrl: LLAMACPP_EMBEDDING_URL,
+            llamaCppEmbeddingModel: LLAMACPP_EMBEDDING_MODEL,
+            localEmbeddingModelPathConfigured: !!LOCAL_EMBEDDING_MODEL_PATH,
             adapterImplemented: false,
           },
           actions: {},
-          error: process.env.LOCAL_LLM_BASE_URL || process.env.OLLAMA_HOST
+          error: process.env.LOCAL_LLM_BASE_URL
             ? 'Local endpoint is configured, but the local LLM provider adapter has not landed yet.'
-            : 'Set LOCAL_LLM_BASE_URL or OLLAMA_HOST, then land a local provider adapter before routing agents locally.',
+            : EMBEDDING_PROVIDER === 'llamacpp'
+              ? 'Local embeddings are wired through llama.cpp. Local chat routing still needs a separate provider adapter.'
+              : 'Set LOCAL_LLM_BASE_URL for local chat, or EMBEDDING_PROVIDER=llamacpp for local embeddings.',
         },
         {
           id: 'memory-backend',
@@ -4531,7 +4556,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const model = body?.model?.trim();
     if (!model) return c.json({ error: 'model required' }, 400);
 
-    const validModels = ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
+    const validModels = validModelsForProvider('claude');
     if (!validModels.includes(model)) return c.json({ error: `Invalid model` }, 400);
 
     const agentIds = listAgentIds();
@@ -4549,8 +4574,15 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const model = body?.model?.trim();
     if (!model) return c.json({ error: 'model required' }, 400);
 
-    const validModels = ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
-    if (!validModels.includes(model)) return c.json({ error: `Invalid model. Valid: ${validModels.join(', ')}` }, 400);
+    let provider: LlmProviderName;
+    try {
+      if (agentId === 'main') provider = currentProviderStatus().provider;
+      else provider = providerStatusForAgent(agentId, loadAgentConfig(agentId)).provider;
+    } catch {
+      provider = 'claude';
+    }
+    const validModels = validModelsForProvider(provider);
+    if (!validModels.includes(model)) return c.json({ error: `Invalid model for ${provider}. Valid: ${validModels.join(', ')}` }, 400);
 
     try {
       if (agentId === 'main') {

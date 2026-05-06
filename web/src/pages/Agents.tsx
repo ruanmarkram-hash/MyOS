@@ -223,7 +223,12 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
       )}
 
       <div class="flex items-center gap-2 mb-3 flex-wrap">
-        <ModelPicker value={agent.model} onSelect={setModel} disabled={busy === 'model'} />
+        <ModelPicker
+          value={agent.provider === 'codex' ? agent.resolvedModel : agent.model}
+          provider={agent.provider}
+          onSelect={setModel}
+          disabled={busy === 'model'}
+        />
         <select
           value={agent.provider}
           onChange={(event) => void setProvider((event.currentTarget.value as 'claude' | 'codex'))}

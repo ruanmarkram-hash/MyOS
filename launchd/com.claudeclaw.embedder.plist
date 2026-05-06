@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.claudeclaw.embedder</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/llama-server</string>
+    <string>-m</string>
+    <string>__PROJECT_DIR__/models/bge-m3-q4_k_m.gguf</string>
+    <string>--embedding</string>
+    <string>--pooling</string>
+    <string>cls</string>
+    <string>--batch-size</string>
+    <string>8192</string>
+    <string>--ubatch-size</string>
+    <string>8192</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>8081</string>
+    <string>--alias</string>
+    <string>bge-m3</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_DIR__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/claudeclaw-embedder.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/claudeclaw-embedder.err</string>
+</dict>
+</plist>

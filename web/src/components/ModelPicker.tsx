@@ -1,11 +1,21 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { ChevronDown, Check } from 'lucide-preact';
 
-const MODELS = [
+const CLAUDE_MODELS = [
   { id: 'claude-opus-4-6', label: 'Opus 4.6' },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
   { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
+];
+
+const CODEX_MODELS = [
+  { id: 'gpt-5.5', label: 'GPT 5.5' },
+  { id: 'gpt-5.4', label: 'GPT 5.4' },
+  { id: 'gpt-5.4-mini', label: 'GPT 5.4 Mini' },
+  { id: 'gpt-5.4-nano', label: 'GPT 5.4 Nano' },
+  { id: 'gpt-5.3-codex', label: 'GPT 5.3 Codex' },
+  { id: 'gpt-5.3-codex-spark', label: 'GPT 5.3 Codex Spark' },
+  { id: 'gpt-5.2', label: 'GPT 5.2' },
 ];
 
 interface Props {
@@ -13,12 +23,14 @@ interface Props {
   onSelect: (model: string) => void;
   disabled?: boolean;
   size?: 'sm' | 'md';
+  provider?: 'claude' | 'codex';
 }
 
-export function ModelPicker({ value, onSelect, disabled, size = 'sm' }: Props) {
+export function ModelPicker({ value, onSelect, disabled, size = 'sm', provider = 'claude' }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const current = MODELS.find((m) => m.id === value);
+  const models = provider === 'codex' ? CODEX_MODELS : CLAUDE_MODELS;
+  const current = models.find((m) => m.id === value);
 
   useEffect(() => {
     if (!open) return;
@@ -58,7 +70,7 @@ export function ModelPicker({ value, onSelect, disabled, size = 'sm' }: Props) {
           class="absolute top-full left-0 mt-1 z-30 bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg shadow-2xl overflow-hidden min-w-[140px]"
           onClick={(e) => e.stopPropagation()}
         >
-          {MODELS.map((m) => (
+          {models.map((m) => (
             <button
               key={m.id}
               type="button"
