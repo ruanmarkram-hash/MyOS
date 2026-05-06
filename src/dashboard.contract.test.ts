@@ -786,6 +786,146 @@ describe('GET /api/review/inbox', () => {
     expect(body.items.map((item: any) => item.id)).not.toContain('m-review-approve');
   });
 
+  // ── Three-category surfacing rules (2026-05-06) ───────────────────────
+  // A: needs Ruan's action  →  kind='needs_action'
+  // B: he asked, it landed  →  kind='sorted'
+  // C: agent-to-agent       →  hidden
+  it('Category A: surfaces a completed mason mission whose result asks for Ruan to send', async () => {
+    createMissionTask('m-cat-a-mason', 'Draft outreach email', 'write email', 'mason', 'main', 5);
+    completeMissionTask('m-cat-a-mason', 'Draft ready. Awaiting your review before sending.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=50');
+    const body = await jsonOf(res);
+    const item = body.items.find((entry: any) => entry.id === 'm-cat-a-mason');
+    expect(item).toBeTruthy();
+    expect(item.kind).toBe('needs_action');
+  });
+
+  it('Category A: surfaces a completed warden mission with manual-action wording', async () => {
+    createMissionTask('m-cat-a-warden', 'Reauth Microsoft Graph', 'fix auth', 'warden', 'main', 8);
+    completeMissionTask('m-cat-a-warden', 'Manual step required: please grant permission via the consent URL.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=50');
+    const body = await jsonOf(res);
+    const item = body.items.find((entry: any) => entry.id === 'm-cat-a-warden');
+    expect(item).toBeTruthy();
+    expect(item.kind).toBe('needs_action');
+  });
+
+  it('Category B: surfaces a Ruan-asked completion (created_by=main) as sorted ✓', async () => {
+    createMissionTask('m-cat-b-direct', 'Fix the dashboard bug Ruan flagged', 'fix bug', 'mason', 'main', 5);
+    completeMissionTask('m-cat-b-direct', 'Done. Bug fixed and tests passed.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=50');
+    const body = await jsonOf(res);
+    const item = body.items.find((entry: any) => entry.id === 'm-cat-b-direct');
+    expect(item).toBeTruthy();
+    expect(item.kind).toBe('sorted');
+  });
+
+  it('Category B: surfaces a Home-attention follow-up completion as sorted ✓', async () => {
+    createMissionTask(
+      'm-cat-b-home',
+      'Fix Reminders CalDAV',
+      'Needs Attention item from Home dashboard.\nSource: brief:morning\nTitle: Fix Reminders CalDAV',
+      'warden',
+      'dashboard',
+      8,
+    );
+    completeMissionTask('m-cat-b-home', 'Done. CalDAV reauth completed.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=50');
+    const body = await jsonOf(res);
+    const item = body.items.find((entry: any) => entry.id === 'm-cat-b-home');
+    expect(item).toBeTruthy();
+    expect(item.kind).toBe('sorted');
+  });
+
+  it('Category B: lineage trace — child completion of a Ruan-originated parent is sorted ✓', async () => {
+    createMissionTask('m-parent-ruan', 'Original ask from Ruan', 'do thing', 'mason', 'main', 5);
+    createMissionTask(
+      'm-cat-b-child',
+      'Follow up: Original ask from Ruan',
+      'Source mission: m-parent-ruan\nReassigned with extra notes.',
+      'mason',
+      'review-inbox',
+      5,
+    );
+    completeMissionTask('m-cat-b-child', 'Done.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=50');
+    const body = await jsonOf(res);
+    const item = body.items.find((entry: any) => entry.id === 'm-cat-b-child');
+    expect(item).toBeTruthy();
+    expect(item.kind).toBe('sorted');
+  });
+
+  it('Category C: hides routine agent-to-agent completion with no Ruan-facing breadcrumb', async () => {
+    createMissionTask('m-cat-c-internal', 'Refactor internal helper', 'do code work', 'mason', 'mason', 4);
+    completeMissionTask('m-cat-c-internal', 'Refactor done. Tests green.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=50');
+    const body = await jsonOf(res);
+    expect(body.items.map((entry: any) => entry.id)).not.toContain('m-cat-c-internal');
+  });
+
+  it('Category C: hides scheduled-task no-op heartbeat completions', async () => {
+    createMissionTask('m-cat-c-heartbeat', 'Cron heartbeat', 'tick', 'main', 'scheduler', 1);
+    completeMissionTask('m-cat-c-heartbeat', 'OK. No issues detected.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=50');
+    const body = await jsonOf(res);
+    expect(body.items.map((entry: any) => entry.id)).not.toContain('m-cat-c-heartbeat');
+  });
+
+  it('does NOT exclude mason or warden completions with deliverable wording (regression: agent-blocklist removed)', async () => {
+    createMissionTask('m-mason-deliverable', 'Build review pack for compliance', 'work', 'mason', 'main', 5);
+    completeMissionTask('m-mason-deliverable', 'Review pack prepared at /tmp/pack.pdf for review.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=50');
+    const body = await jsonOf(res);
+    const ids = body.items.map((entry: any) => entry.id);
+    expect(ids).toContain('m-mason-deliverable');
+  });
+
+  it('completedMissionHasFollowUp only suppresses when the follow-up is still active', async () => {
+    createMissionTask('m-parent-fu', 'Fix reminders', 'fix', 'warden', 'main', 8);
+    completeMissionTask('m-parent-fu', 'Manual step required: grant permission.', 'completed');
+    createMissionTask(
+      'm-followup-done',
+      'Follow up: Fix reminders',
+      'Source mission: m-parent-fu',
+      'mason',
+      'dashboard',
+      6,
+    );
+    completeMissionTask('m-followup-done', 'Follow-up done.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=50');
+    const body = await jsonOf(res);
+    // Parent must remain visible because the follow-up is no longer active.
+    expect(body.items.map((entry: any) => entry.id)).toContain('m-parent-fu');
+  });
+
+  it('completedMissionHasFollowUp suppresses parent when follow-up is queued/running', async () => {
+    createMissionTask('m-parent-active', 'Send compliance pack', 'send', 'charter', 'main', 8);
+    completeMissionTask('m-parent-active', 'Awaiting your review before sending.', 'completed');
+    createMissionTask(
+      'm-followup-active',
+      'Follow up: Send compliance pack',
+      'Source mission: m-parent-active',
+      'charter',
+      'dashboard',
+      6,
+    );
+    // leave m-followup-active in 'queued' state
+
+    const res = await get('/api/review/inbox?limit=50');
+    const body = await jsonOf(res);
+    // Parent suppressed because an active follow-up is in flight.
+    expect(body.items.map((entry: any) => entry.id)).not.toContain('m-parent-active');
+  });
+
   it('removes failed missions from Home attention after a follow-up is created', async () => {
     createMissionTask('m-home-failed-review', 'Mason failed task', 'original prompt', 'mason', 'dashboard', 6);
     completeMissionTask('m-home-failed-review', null, 'failed', 'boom');

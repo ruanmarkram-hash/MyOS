@@ -40,6 +40,7 @@ interface ReviewItem {
   summary: string;
   result: string | null;
   error: string | null;
+  kind: 'needs_action' | 'sorted';
   deliverables: Deliverable[];
   review: ReviewState;
 }
@@ -71,7 +72,10 @@ export function ReviewInbox() {
   const [message, setMessage] = useState<Record<string, string>>({});
 
   const agentList = agents.data?.agents ?? [];
-  const grouped = groupItems(inbox.data?.items ?? []);
+  const allItems = inbox.data?.items ?? [];
+  const actionItems = allItems.filter((item) => item.kind !== 'sorted');
+  const sortedItems = allItems.filter((item) => item.kind === 'sorted');
+  const grouped = groupItems(actionItems);
 
   async function mutate(item: ReviewItem, label: string, fn: () => Promise<unknown>, refresh = true) {
     setBusy((prev) => ({ ...prev, [item.id]: label }));
@@ -139,10 +143,11 @@ export function ReviewInbox() {
 
       {inbox.data && (
         <div class="flex-1 overflow-y-auto p-6 space-y-4">
-          <div class="grid grid-cols-3 gap-3">
-            <Metric label="Open decisions" value={String(inbox.data.openTotal)} />
+          <div class="grid grid-cols-4 gap-3">
+            <Metric label="Needs your action" value={String(actionItems.length)} />
             <Metric label="Needs triage" value={String((grouped.needs_triage ?? []).length)} />
             <Metric label="Waiting follow-up" value={String((grouped.waiting_followup ?? []).length)} />
+            <Metric label="Sorted ✓" value={String(sortedItems.length)} />
           </div>
 
           {inbox.data.items.length === 0 && (
@@ -175,6 +180,18 @@ export function ReviewInbox() {
 
           <ReviewSection title="Waiting follow-up" items={grouped.waiting_followup ?? []}>
             {(item) => <WaitingCard item={item} onArchive={() => void archive(item)} busy={busy[item.id]} />}
+          </ReviewSection>
+
+          <ReviewSection title="Sorted ✓ (you asked, it landed)" items={sortedItems}>
+            {(item) => (
+              <SortedCard
+                item={item}
+                busy={busy[item.id]}
+                message={message[item.id]}
+                onApprove={() => void approve(item)}
+                onArchive={() => void archive(item)}
+              />
+            )}
           </ReviewSection>
 
           <ReviewSection title="Deliverables ready" items={grouped.needs_review ?? []}>
@@ -301,6 +318,50 @@ function ReviewCard({
         </div>
       </div>
 
+      {(busy || message) && (
+        <div class="mt-2 text-[10.5px] text-[var(--color-text-faint)]">{busy || message}</div>
+      )}
+    </div>
+  );
+}
+
+function SortedCard({
+  item,
+  busy,
+  message,
+  onApprove,
+  onArchive,
+}: {
+  item: ReviewItem;
+  busy?: string;
+  message?: string;
+  onApprove: () => void;
+  onArchive: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+      <div class="flex items-center gap-2">
+        <Pill tone="accent">Sorted ✓</Pill>
+        <Pill tone={item.status as any}>{item.status}</Pill>
+        {item.agentId && <Pill tone="neutral">@{item.agentId}</Pill>}
+        <span class="ml-auto text-[10px] text-[var(--color-text-faint)]">{formatRelativeTime(item.completedAt || item.createdAt)}</span>
+      </div>
+      <button type="button" onClick={() => setOpen(!open)} class="block w-full text-left mt-2">
+        <div class="text-[14px] font-medium text-[var(--color-text)]">{item.title}</div>
+        <div class={'text-[12px] text-[var(--color-text-muted)] mt-1 leading-relaxed whitespace-pre-wrap ' + (open ? '' : 'line-clamp-2')}>
+          {open ? (item.result || item.error || item.summary) : item.summary}
+        </div>
+      </button>
+      <div class="mt-3 flex flex-wrap gap-2">
+        {item.deliverables.map((deliverable) => <DeliverableAction key={deliverable.id} deliverable={deliverable} />)}
+        <button type="button" onClick={onApprove} disabled={!!busy} class="review-btn">
+          <Check size={12} /> Mark seen
+        </button>
+        <button type="button" onClick={onArchive} disabled={!!busy} class="review-btn">
+          <Archive size={12} /> Archive
+        </button>
+      </div>
       {(busy || message) && (
         <div class="mt-2 text-[10.5px] text-[var(--color-text-faint)]">{busy || message}</div>
       )}

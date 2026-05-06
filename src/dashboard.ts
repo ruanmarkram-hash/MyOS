@@ -387,15 +387,108 @@ function isReviewSpawnedTask(task: MissionTask): boolean {
   return task.created_by === 'review-inbox' || /^(retry|follow up):/i.test(task.title);
 }
 
+// Category A — anything that needs Ruan's hands or judgement.
+// Broadened per 2026-05-06 spec: "anything with a deliverable that was asked
+// for, or developed and needs my review, or is waiting for me to send".
+// Keep the regex permissive; Category C (auto-hide) is handled by the
+// completedMissionHasFollowUp suppression and lineage gate, not by being
+// picky here.
+const HUMAN_ACTION_PATTERN = new RegExp([
+  // Direct asks for action / decision
+  'needs? (?:your|ruan)',
+  'requires? (?:your|ruan|approval|review|sign[- ]?off|input|decision|attention|confirmation|authori[sz]ation)',
+  'awaiting (?:you|your|ruan|review|approval|sign[- ]?off|decision|confirmation|input|response)',
+  'waiting (?:on|for) (?:you|ruan|your)',
+  'blocked (?:on|by) (?:you|ruan)',
+  'pending (?:your|ruan|approval|review|sign[- ]?off|decision|confirmation)',
+  // Verbs Ruan must perform
+  'please (?:review|send|sign|approve|confirm|decide|choose|grant|authori[sz]e|check|provide)',
+  'ready (?:for you|to send|to sign|for review|for approval|for your review|for ruan)',
+  '(?:^|\\s|: )(?:review|send|sign|approve|decide|grant|authori[sz]e|choose|confirm)\\s+(?:and|the|this|these|attached|draft|email|message|document|deliverable|pack|file|response|invoice|reply)',
+  // Sign-off / approval framings
+  'sign[- ]?off (?:required|needed|please)',
+  'approval (?:required|needed|please)',
+  'action required',
+  'action needed',
+  'manual (?:step|action|fix|refresh|intervention)',
+  'requires? manual',
+  // Auth + credential rotation patterns (Warden territory)
+  'full disk access',
+  'app[- ]?specific password',
+  'credentials?\\b.*(?:refresh|rotate|expired|invalid)',
+  'password refresh',
+  'grant permission',
+  // "Your X" patterns
+  'your (?:input|decision|approval|review|sign[- ]?off|attention|confirmation|authori[sz]ation|hands?|call)',
+  // Ready-for-Ruan-to-send patterns
+  'ready to (?:send|sign|email|publish|share|deliver|submit)',
+  'draft (?:ready|prepared|complete|done)',
+  // Deliverable-handoff phrasing
+  'deliverable (?:ready|prepared|landed|attached|for review)',
+  'handoff (?:ready|prepared|for review)',
+  'review pack',
+  'what you need to do',
+  // Restart / system hand
+  'send /restart',
+].join('|'), 'i');
+
 function containsHumanActionSignal(task: MissionTask): boolean {
-  return /(ruan|manual|needs? your|waiting on you|approval required|requires approval|requires your review|awaiting your review|awaiting ruan review|ruan review|sign.?off|full disk access|app-specific password|credentials?|password refresh|grant permission|what you need to do|send \/restart)/i
+  return HUMAN_ACTION_PATTERN.test(reviewOutcomeText(task));
+}
+
+// Intent-based deliverable detector. No agent exclusion — a mason or warden
+// completion that produced a deliverable Ruan needs to review still counts.
+// (2026-05-06: removed the hard mason/warden exclusion that was filtering
+// 32/34 completions out of the inbox.)
+function isNonDevDeliverable(task: MissionTask): boolean {
+  return /(deliverable|handoff|review pack|prepared|draft (?:ready|complete|done)?|response (?:ready|drafted|prepared)|audit|compliance|support plan|restrictive practice|charter|inquiry)/i
     .test(reviewOutcomeText(task));
 }
 
-function isNonDevDeliverable(task: MissionTask): boolean {
-  if (task.assigned_agent === 'mason' || task.assigned_agent === 'warden') return false;
-  return /(deliverable|handoff|review pack|prepared|draft|response|audit|compliance|support plan|restrictive practice|charter|inquiry)/i
-    .test(reviewOutcomeText(task));
+// Category B — "you asked for this and it's sorted" framing.
+//
+// True when the mission's lineage traces back to a Ruan-facing surface:
+//   - mission-cli invocation by Sage (created_by='main') — Ruan asked Sage on Telegram
+//   - dashboard Home/Needs-Attention assignment (created_by='dashboard')
+//   - review-inbox follow-up (created_by='review-inbox')
+//   - prompt explicitly cites a morning-brief / Warden / Home-attention origin
+//   - parent mission (via "Source mission:" / "Parent mission:" reference) was Ruan-originated
+//
+// Internal agent-to-agent chatter (created_by=<specialist>, no Ruan-facing
+// breadcrumb in the prompt) returns false.
+// `created_by` values that *prove* a Ruan-facing origin. 'dashboard' is
+// excluded because it's the generic default for any mission_cli call from
+// the dashboard surface, including internal cron + agent-to-agent traffic;
+// dashboard-originated Home/Needs-Attention follow-ups are detected via the
+// explicit prompt breadcrumbs in RUAN_ORIGIN_PROMPT_HINTS instead.
+const RUAN_FACING_CREATORS = new Set(['main', 'review-inbox', 'telegram', 'cli']);
+const RUAN_ORIGIN_PROMPT_HINTS = /(needs attention item from home dashboard|scheduled needs attention follow-up|action needed|morning brief|warden alert|warden report|imessage|whatsapp|telegram message|slack message|asked by ruan|requested by ruan|from ruan)/i;
+
+function parentMissionIdFromPrompt(prompt: string): string | null {
+  const m = prompt.match(/(?:Source mission|Parent mission):\s*([A-Za-z0-9_-]+)/i);
+  return m ? m[1] : null;
+}
+
+function originatedFromUser(task: MissionTask, missions: MissionTask[], depth = 0): boolean {
+  if (depth > 4) return false;
+  if (RUAN_FACING_CREATORS.has(task.created_by)) return true;
+  if (RUAN_ORIGIN_PROMPT_HINTS.test(task.prompt)) return true;
+  const parentId = parentMissionIdFromPrompt(task.prompt);
+  if (parentId) {
+    const parent = missions.find((m) => m.id === parentId);
+    if (parent) return originatedFromUser(parent, missions, depth + 1);
+  }
+  return false;
+}
+
+// True when this completed mission deserves a "sorted ✓" heads-up rather
+// than an action prompt. Distinct from Category A — these don't need Ruan
+// to do anything, but he asked for them so he wants to know they landed.
+function isSortedCompletion(task: MissionTask, missions: MissionTask[]): boolean {
+  if (task.status !== 'completed') return false;
+  if (containsHumanActionSignal(task)) return false; // Category A wins
+  if (isNonDevDeliverable(task)) return false;       // Category A wins
+  return originatedFromUser(task, missions);
 }
 
 function isRecentActionableFailure(task: MissionTask): boolean {
@@ -411,14 +504,12 @@ function defaultReviewStatusForTask(task: MissionTask, missions: MissionTask[]):
   }
   if (task.status === 'completed') {
     if (completedMissionHasFollowUp(task, missions)) return null;
-    if (task.assigned_agent === 'mason') {
-      if (isReviewSpawnedTask(task) && extractMissionDeliverables(task).some((deliverable) => deliverable.kind !== 'text' || /what you need to do|manual|full disk access/i.test(reviewTaskText(task)))) {
-        return 'needs_review';
-      }
-      return null;
-    }
+    // Category A: anything that needs Ruan's hands or a deliverable he asked for.
     if (containsHumanActionSignal(task)) return 'needs_review';
     if (isNonDevDeliverable(task)) return 'needs_review';
+    // Category B: Ruan-originated lineage — surface as a "sorted ✓" heads-up.
+    if (isSortedCompletion(task, missions)) return 'needs_review';
+    // Category C: routine internal chatter — auto-hide.
     return null;
   }
   return null;
@@ -472,7 +563,19 @@ function shouldShowReview(review: MissionReview): boolean {
   return true;
 }
 
-function buildReviewItem(task: MissionTask, review: MissionReview) {
+// `kind` distinguishes Category A (action) from Category B (sorted heads-up)
+// so the frontend can render them in separate groups.
+function reviewItemKind(task: MissionTask, missions: MissionTask[]): 'needs_action' | 'sorted' {
+  if (task.status === 'failed' || task.status === 'partial') return 'needs_action';
+  if (task.status === 'completed') {
+    if (containsHumanActionSignal(task)) return 'needs_action';
+    if (isNonDevDeliverable(task)) return 'needs_action';
+    if (isSortedCompletion(task, missions)) return 'sorted';
+  }
+  return 'needs_action';
+}
+
+function buildReviewItem(task: MissionTask, review: MissionReview, missions: MissionTask[]) {
   const text = task.result || task.error || '';
   return {
     id: task.id,
@@ -485,6 +588,7 @@ function buildReviewItem(task: MissionTask, review: MissionReview) {
     summary: text.replace(/\s+/g, ' ').trim().slice(0, 260),
     result: task.result,
     error: task.error,
+    kind: reviewItemKind(task, missions),
     deliverables: extractMissionDeliverables(task),
     review: {
       status: review.review_status,
@@ -855,10 +959,16 @@ function canonicalFollowUpIds(missions: MissionTask[]): Set<string> {
   return new Set([...bySource.values()].map((mission) => mission.id));
 }
 
+// Only suppress the parent when an ACTIVE follow-up exists. If the follow-up
+// itself is already completed/failed/partial, the parent must remain visible
+// so Ruan can review the result. (2026-05-06: this used to suppress
+// regardless of follow-up status, which hid completions Ruan asked for.)
+const ACTIVE_FOLLOWUP_STATUSES = new Set(['queued', 'running', 'assigned']);
+
 function completedMissionHasFollowUp(mission: MissionTask, missions: MissionTask[]): boolean {
   const titleKey = `title:${normalizedAttentionTitle(mission.title)}`;
   return missions.some((candidate) => {
-    if (candidate.status === 'cancelled') return false;
+    if (!ACTIVE_FOLLOWUP_STATUSES.has(candidate.status)) return false;
     const source = missionFollowUpSourceKey(candidate);
     return source === mission.id || source === titleKey;
   });
@@ -2133,7 +2243,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const items = history.tasks
       .map((task) => {
         const review = effectiveMissionReview(task, missions);
-        return review && shouldShowReview(review) ? buildReviewItem(task, review) : null;
+        return review && shouldShowReview(review) ? buildReviewItem(task, review, missions) : null;
       })
       .filter(Boolean);
     return c.json({
