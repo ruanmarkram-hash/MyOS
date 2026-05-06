@@ -25,9 +25,10 @@ export function Chat() {
   // Load conversation history when active agent changes.
   useEffect(() => {
     setLoading(true);
+    const chatQuery = chatId ? `chatId=${encodeURIComponent(chatId)}&` : '';
     const path = activeAgent === 'all'
-      ? `/api/chat/history?chatId=${encodeURIComponent(chatId)}&limit=50`
-      : `/api/agents/${activeAgent}/conversation?chatId=${encodeURIComponent(chatId)}&limit=50`;
+      ? `/api/chat/history?${chatQuery}limit=50`
+      : `/api/agents/${activeAgent}/conversation?${chatQuery}limit=50`;
     apiGet<{ turns: Turn[] }>(path)
       .then((d) => setTurns(d.turns || []))
       .catch((e) => setError(e?.message || String(e)))

@@ -3544,10 +3544,10 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
   // Chat history (paginated)
   app.get('/api/chat/history', (c) => {
-    const chatId = c.req.query('chatId') || '';
-    if (!chatId) return c.json({ error: 'chatId required' }, 400);
+    const chatId = dashboardChatId(c);
     const limit = parseInt(c.req.query('limit') || '40', 10);
     const beforeId = c.req.query('beforeId');
+    if (!chatId) return c.json({ turns: [] });
     const turns = getConversationPage(chatId, limit, beforeId ? parseInt(beforeId, 10) : undefined);
     return c.json({ turns });
   });
