@@ -179,6 +179,19 @@ export function RuntimeStack() {
             </div>
           </div>
 
+          <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+            <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Task routing policy</div>
+            <div class="mt-1 text-[12px] text-[var(--color-text-muted)]">
+              Current routing is agent-level. Task-level routing is represented as a policy layer here so the OS can later choose provider/local model per job without changing the mission loop.
+            </div>
+            <div class="grid gap-2 mt-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 190px), 1fr))' }}>
+              <RoutingPolicy label="Chief of staff / orchestration" provider={data.runtime.activeProvider} model={compact(data.runtime.resolvedModel)} />
+              <RoutingPolicy label="Dev and code review" provider={agentProvider(data, 'mason') || 'codex-ready'} model={agentModel(data, 'mason') || 'agent route'} />
+              <RoutingPolicy label="Compliance / regulated text" provider={agentProvider(data, 'charter') || data.runtime.activeProvider} model={agentModel(data, 'charter') || 'agent route'} />
+              <RoutingPolicy label="Brain search / embeddings" provider={componentActive(data.components, 'memory-backend')} model={componentActive(data.components, 'local-model-readiness')} />
+            </div>
+          </div>
+
           <div class="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))' }}>
             {data.components.map((component) => (
               <ComponentCard key={component.id} component={component} />
@@ -186,6 +199,31 @@ export function RuntimeStack() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function agentProvider(data: RuntimeStackPayload, agentId: string): string | null {
+  return data.agentRoutes.find((route) => route.agentId === agentId)?.provider ?? null;
+}
+
+function agentModel(data: RuntimeStackPayload, agentId: string): string | null {
+  const model = data.agentRoutes.find((route) => route.agentId === agentId)?.model;
+  return model ? compact(model) : null;
+}
+
+function componentActive(components: RuntimeComponent[], id: string): string {
+  return components.find((component) => component.id === id)?.active || 'not configured';
+}
+
+function RoutingPolicy({ label, provider, model }: { label: string; provider: string; model: string }) {
+  return (
+    <div class="rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-3 py-2">
+      <div class="text-[11px] text-[var(--color-text)]">{label}</div>
+      <div class="mt-1 flex items-center gap-1.5">
+        <Pill tone={provider.includes('not configured') ? 'medium' : 'neutral'}>{provider}</Pill>
+        <span class="min-w-0 truncate text-[10.5px] text-[var(--color-text-muted)]" title={model}>{model}</span>
+      </div>
     </div>
   );
 }

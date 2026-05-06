@@ -39,6 +39,7 @@ interface ReviewItem {
   createdAt: number;
   completedAt: number | null;
   summary: string;
+  why: string;
   result: string | null;
   error: string | null;
   kind: 'needs_action' | 'sorted';
@@ -180,8 +181,8 @@ export function ReviewInbox() {
       {inbox.loading && !inbox.data && <PageState loading />}
 
       {inbox.data && (
-        <div class="flex-1 overflow-y-auto p-6 space-y-4">
-          <div class="grid grid-cols-4 gap-3">
+        <div class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+          <div class="grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3">
             <Metric label="Needs your action" value={String(actionItems.length)} />
             <Metric label="Needs triage" value={String((grouped.needs_triage ?? []).length)} />
             <Metric label="Waiting follow-up" value={String((grouped.waiting_followup ?? []).length)} />
@@ -357,6 +358,10 @@ function ReviewCard({
               ))}
             </div>
           )}
+          <div class="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-2.5 py-2">
+            <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Why this is here</div>
+            <div class="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{item.why}</div>
+          </div>
         </button>
       </div>
 
@@ -440,6 +445,7 @@ function SortedCard({
         <div class={'text-[12px] text-[var(--color-text-muted)] mt-1 leading-relaxed whitespace-pre-wrap ' + (expanded ? '' : 'line-clamp-2')}>
           {expanded ? (item.result || item.error || item.summary) : item.summary}
         </div>
+        <div class="mt-2 text-[11px] text-[var(--color-text-faint)]">{item.why}</div>
       </button>
       <div class="mt-3 flex flex-wrap gap-2">
         {item.deliverables.map((deliverable) => <DeliverableAction key={deliverable.id} deliverable={deliverable} />)}

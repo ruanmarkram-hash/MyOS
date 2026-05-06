@@ -173,6 +173,14 @@ input, textarea, select {
     min-width: 0;
     justify-content: center;
   }
+
+  .brain-thought-table {
+    min-width: 680px;
+  }
+
+  .brain-graph-panel {
+    min-height: 420px;
+  }
 }
 
 @media (max-width: 520px) {

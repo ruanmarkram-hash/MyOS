@@ -676,8 +676,8 @@ function ThoughtRows({ thoughts }: { thoughts: OpenBrainThought[] }) {
   const selectedId = selected || thoughts[0]?.id || null;
   return (
     <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4">
-      <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg overflow-hidden">
-        <table class="w-full text-[12px]">
+      <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg overflow-x-auto">
+        <table class="brain-thought-table w-full text-[12px]">
           <thead>
             <tr class="border-b border-[var(--color-border)] text-[var(--color-text-faint)] uppercase tracking-wider text-[10px]">
               <th class="text-left px-4 py-3 font-medium">Content</th>
@@ -733,6 +733,8 @@ function ThoughtDetail({ id, onSelect }: { id: string | null; onSelect?: (id: st
   const thought = detail.data.thought;
   const topics = Array.isArray(thought.metadata?.topics) ? thought.metadata.topics.map(String) : [];
   const people = Array.isArray(thought.metadata?.people) ? thought.metadata.people.map(String) : [];
+  const source = thought.source_type || String(thought.metadata?.source || thought.metadata?.source_url || thought.metadata?.url || 'unknown');
+  const confidence = thought.metadata?.confidence ?? thought.metadata?.confidence_rating ?? thought.quality_score ?? thought.importance ?? null;
   return (
     <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 max-h-[620px] overflow-y-auto">
       <div class="flex items-center gap-2 mb-3">
@@ -742,6 +744,8 @@ function ThoughtDetail({ id, onSelect }: { id: string | null; onSelect?: (id: st
       </div>
       <div class="text-[13px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap">{readableBrainHit(thought.content)}</div>
       <div class="grid grid-cols-2 gap-3 mt-4 text-[11px]">
+        <Stat label="Source" value={source} />
+        <Stat label="Confidence" value={confidence == null ? '-' : String(confidence)} />
         <Stat label="Importance" value={String(thought.importance ?? '-')} />
         <Stat label="Quality" value={String(thought.quality_score ?? '-')} />
         <Stat label="Created" value={new Date(thought.created_at).toLocaleString()} />
@@ -1055,7 +1059,7 @@ function WholeOpenBrainGraph({
             <span>{activeKindCount}/{WHOLE_GRAPH_FILTER_KINDS.length} layers on</span>
           </div>
         </div>
-        <div class="relative h-[640px] overflow-hidden bg-[#0b0c0f]">
+        <div class="brain-graph-panel relative h-[640px] overflow-hidden bg-[#0b0c0f]">
           <svg class="absolute inset-0 w-full h-full" viewBox="0 0 1200 760" role="img" aria-label="OpenBrain database graph">
             <defs>
               <radialGradient id="ob-node-glow" cx="50%" cy="45%" r="60%">

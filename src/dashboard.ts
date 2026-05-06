@@ -682,13 +682,16 @@ function isSortedCompletion(task: MissionTask, missions: MissionTask[]): boolean
 
 function isRecentActionableFailure(task: MissionTask): boolean {
   if (task.status !== 'failed' && task.status !== 'partial') return false;
-  return true;
+  return missionAgeHours(task) <= 24 * 14;
 }
 
 function defaultReviewStatusForTask(task: MissionTask, missions: MissionTask[]): MissionReviewStatus | null {
   const manifest = getMissionManifest(task);
   if (task.status === 'failed' || task.status === 'partial') {
-    return manifest.route === 'needs_triage' && isRecentActionableFailure(task) ? 'needs_triage' : null;
+    // Failures and partials are never routine history. They are the loop
+    // breakages Ruan needs surfaced so he can retry, redirect, or archive.
+    // Keep ancient internal agent noise out unless the lineage is Ruan-facing.
+    return (isRecentActionableFailure(task) || originatedFromUser(task, missions)) ? 'needs_triage' : null;
   }
   if (task.status === 'completed') {
     if (completedMissionHasFollowUp(task, missions)) return null;
@@ -766,6 +769,19 @@ function reviewItemKind(task: MissionTask, missions: MissionTask[]): 'needs_acti
   return 'needs_action';
 }
 
+function reviewWhyText(task: MissionTask, review: MissionReview, missions: MissionTask[]): string {
+  const manifest = getMissionManifest(task);
+  if (task.status === 'failed') return 'Mission failed, so it needs triage before the loop can close.';
+  if (task.status === 'partial') return 'Mission landed partial work, so it needs review or follow-up.';
+  if (review.review_status === 'waiting_followup') return 'A follow-up mission was dispatched and this parent is waiting for that result.';
+  if (manifest.route === 'needs_triage') return 'The mission manifest explicitly routed this item to triage.';
+  if (manifest.route === 'needs_review') return 'The mission manifest explicitly routed this item for review.';
+  if (containsHumanActionSignal(task)) return 'The result contains a human-action signal such as approval, review, sending, signing, or a manual step.';
+  if (isNonDevDeliverable(task)) return 'The mission produced a deliverable or handoff that should be checked before closure.';
+  if (isSortedCompletion(task, missions)) return 'This is a Ruan-originated completion. It is shown as sorted so you can see it landed, then archive it.';
+  return 'This item has an open review state.';
+}
+
 function buildReviewItem(task: MissionTask, review: MissionReview, missions: MissionTask[]) {
   const text = task.result || task.error || '';
   const manifest = getMissionManifest(task);
@@ -778,6 +794,7 @@ function buildReviewItem(task: MissionTask, review: MissionReview, missions: Mis
     createdAt: task.created_at,
     completedAt: task.completed_at,
     summary: text.replace(/\s+/g, ' ').trim().slice(0, 260),
+    why: reviewWhyText(task, review, missions),
     result: task.result,
     error: task.error,
     kind: reviewItemKind(task, missions),
@@ -1629,6 +1646,7 @@ function isMeaningfulBriefResult(result: string | null): result is string {
 }
 
 function isNonActionBriefLine(cleaned: string): boolean {
+  if (/:\s*$/.test(cleaned)) return true;
   if (/^(action needed|blocked on you|open threads|stale|breakdown|notes|projects|compliance|calendar|inbox|today|tomorrow top 3):?$/i.test(cleaned)) return true;
   if (/^(items blocked\/awaiting|total unread|after triage|skipped):/i.test(cleaned)) return true;
   if (/^(urgent|overdue|blocked|awaiting|needs|actions?|risks?|review|follow.?up|open threads|auth|permissions?):\s*(none|nil|n\/a|no(?:\s+(?:urgent\s+)?(?:blockers?|risks?|actions?|follow.?ups?|reviews?|items?))?|0)(\.|$)/i.test(cleaned)) return true;
@@ -1667,7 +1685,7 @@ function normalizeStructuredAction(input: any): StructuredBriefAction | null {
     : 0.8;
   return {
     title: rawTitle || category || 'Brief action',
-    detail: rawDetail.length > 260 ? `${rawDetail.slice(0, 257)}...` : rawDetail,
+    detail: rawDetail.length > 900 ? `${rawDetail.slice(0, 897)}...` : rawDetail,
     severity,
     sourceCategory: category || 'brief',
     confidence,
@@ -1722,7 +1740,7 @@ function extractStructuredBriefActions(text: string, limit = 4): StructuredBrief
     seen.add(key);
     out.push({
       title: 'Brief action',
-      detail: detail.length > 260 ? `${detail.slice(0, 257)}...` : detail,
+      detail: detail.length > 900 ? `${detail.slice(0, 897)}...` : detail,
       severity: severityForText(detail),
       sourceCategory: (cleaned.match(/^([^:]{2,32}):/)?.[1] || 'brief').toLowerCase(),
       confidence: 0.55,
@@ -1995,7 +2013,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
         createdAt: task.started_at || task.created_at,
         agentId: task.agent_id,
         taskId: task.id,
-        href: '/tasks',
+        href: '/scheduled',
       });
     }
     if (task.last_status === 'failed' || task.last_status === 'timeout') {
@@ -2008,7 +2026,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
         createdAt: task.last_run || task.created_at,
         agentId: task.agent_id,
         taskId: task.id,
-        href: '/tasks',
+        href: '/scheduled',
       });
     }
   }
