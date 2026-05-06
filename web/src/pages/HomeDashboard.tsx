@@ -1,12 +1,12 @@
 import type { ComponentChildren } from 'preact';
-import { Archive, CalendarDays, Check, Cpu, ExternalLink, ListChecks, Radio, ShieldCheck, Sunrise, Users } from 'lucide-preact';
+import { Archive, CalendarDays, Check, Cpu, ExternalLink, ListChecks, Radio, RotateCcw, ShieldCheck, Sunrise, Users } from 'lucide-preact';
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { PageHeader } from '@/components/PageHeader';
 import { PageState } from '@/components/PageState';
 import { Pill, StatusDot } from '@/components/Pill';
 import { useFetch } from '@/lib/useFetch';
-import { apiPatch, apiPost, chatId } from '@/lib/api';
+import { apiGet, apiPost, chatId } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/format';
 
 interface Health {
@@ -115,11 +115,13 @@ interface HomeAgenda {
 }
 
 const TERMINAL = new Set(['completed', 'failed', 'partial', 'cancelled']);
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function HomeDashboard() {
   const [, navigate] = useLocation();
   const [expandedBriefs, setExpandedBriefs] = useState<Record<string, boolean>>({});
   const [switchingProvider, setSwitchingProvider] = useState(false);
+  const [restartingMain, setRestartingMain] = useState(false);
   const [providerNote, setProviderNote] = useState<string | null>(null);
   const health = useFetch<Health>(`/api/health?chatId=${encodeURIComponent(chatId)}`, 30_000);
   const missions = useFetch<{ tasks: MissionTask[] }>('/api/mission/tasks', 15_000);
@@ -167,6 +169,41 @@ export function HomeDashboard() {
     }
   }
 
+  async function waitForMainRestart() {
+    await sleep(1_500);
+    let sawDown = false;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        await apiGet('/api/health');
+        if (sawDown || attempt > 2) {
+          window.location.reload();
+          return;
+        }
+      } catch {
+        sawDown = true;
+      }
+      await sleep(1_000);
+    }
+    window.location.reload();
+  }
+
+  async function restartMainRuntime() {
+    if (restartingMain) return;
+    if (!confirm('Restart the main runtime now? Mission Control will briefly disconnect and then reload.')) return;
+    setRestartingMain(true);
+    setProviderNote('Restart queued');
+    try {
+      await apiPost('/api/system/restart-main');
+    } catch (err: any) {
+      if (!/failed to fetch/i.test(err?.message || String(err))) {
+        setProviderNote(err?.body?.error || err?.message || String(err));
+        setRestartingMain(false);
+        return;
+      }
+    }
+    await waitForMainRestart();
+  }
+
   return (
     <div class="flex flex-col h-full">
       <PageHeader
@@ -196,14 +233,26 @@ export function HomeDashboard() {
               tone={stackIssues.length ? 'medium' : 'done'}
               onClick={() => navigate('/runtime')}
               action={
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); void switchMainProvider(); }}
-                  disabled={switchingProvider}
-                  class="shrink-0 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-elevated)] text-[10.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-40"
-                >
-                  {switchingProvider ? 'Switching...' : `Switch to ${health.data.provider === 'codex' ? 'claude' : 'codex'}`}
-                </button>
+                <div class="shrink-0 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); void switchMainProvider(); }}
+                    disabled={switchingProvider || restartingMain}
+                    class="px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-elevated)] text-[10.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-40"
+                  >
+                    {switchingProvider ? 'Switching...' : `Switch to ${health.data.provider === 'codex' ? 'claude' : 'codex'}`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); void restartMainRuntime(); }}
+                    disabled={restartingMain}
+                    class="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-elevated)] text-[10.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-40"
+                    title="Restart main runtime"
+                  >
+                    <RotateCcw size={11} class={restartingMain ? 'animate-spin' : ''} />
+                    {restartingMain ? 'Restarting...' : 'Restart'}
+                  </button>
+                </div>
               }
             />
           </div>
