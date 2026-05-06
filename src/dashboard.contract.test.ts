@@ -573,6 +573,31 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(details).not.toContain('Risks: no urgent blockers.');
   });
 
+  it('archives stale brief attention rows when the current extraction changes', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-stale-cleanup', 'Mid-day pulse', '0 12 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-stale-cleanup',
+      now + 86400,
+      '**Overdue:** None.\n**Inbox:** No K-tagged unread. One form submission from Lucas Riguccini (April 29) on contact form - hasn\'t been actioned.',
+      'success',
+    );
+
+    const first = await jsonOf(await get('/api/home/attention'));
+    expect(first.items.map((item: any) => item.detail)).toContain('One form submission from Lucas Riguccini (April 29) on contact form - hasn\'t been actioned.');
+    expect(first.items.map((item: any) => item.detail)).not.toContain('Overdue: None.');
+
+    updateTaskAfterRun(
+      'brief-stale-cleanup',
+      now + 90000,
+      '**Inbox:** No K-tagged unread.\n**Overdue:** None.',
+      'success',
+    );
+    const second = await jsonOf(await get('/api/home/attention'));
+    expect(second.items.map((item: any) => item.detail)).not.toContain('One form submission from Lucas Riguccini (April 29) on contact form - hasn\'t been actioned.');
+    expect(second.items.map((item: any) => item.detail)).not.toContain('Overdue: None.');
+  });
+
   it('keeps report items out of Needs Attention once matching mission work exists', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-covered', 'Morning brief', '0 9 * * *', now + 3600, 'main');

@@ -1014,6 +1014,17 @@ function isNonActionBriefLine(cleaned: string): boolean {
   return false;
 }
 
+function actionableBriefDetail(cleaned: string): string {
+  if (!/^(inbox|calendar|today|overdue|actions?|follow.?up):\s*/i.test(cleaned)) return cleaned;
+  const parts = cleaned.split(/(?<=\.)\s+/).map((part) => part.trim()).filter(Boolean);
+  const actionable = parts.find((part) =>
+    /has(?: not|n't) been actioned|needs|action|follow.?up|awaiting|blocked|review|approve|failed|missing|error|permission|auth/i.test(part)
+    && !isNonActionBriefLine(part),
+  );
+  if (!actionable) return cleaned;
+  return actionable.replace(/^(inbox|calendar|today|overdue|actions?|follow.?up):\s*/i, '').trim();
+}
+
 function extractAttentionItems(text: string, limit = 4): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -1027,10 +1038,12 @@ function extractAttentionItems(text: string, limit = 4): string[] {
     if (!cleaned || /^OK$/i.test(cleaned)) continue;
     if (isNonActionBriefLine(cleaned)) continue;
     if (!/urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|risk|review|approve|follow.?up|due|tomorrow top|open threads|auth|expired|lapsed|consent|unavailable|re-auth|permission/i.test(cleaned)) continue;
-    const key = cleaned.toLowerCase();
+    const detail = actionableBriefDetail(cleaned);
+    if (!detail || isNonActionBriefLine(detail)) continue;
+    const key = detail.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(cleaned.length > 260 ? `${cleaned.slice(0, 257)}...` : cleaned);
+    out.push(detail.length > 260 ? `${detail.slice(0, 257)}...` : detail);
     if (out.length >= limit) break;
   }
 
@@ -1088,8 +1101,10 @@ function attentionSourceKey(sourceKind: string, sourceId: string, text: string):
 function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[]): void {
   for (const brief of buildHomeBriefs(tasks)) {
     if (!brief) continue;
+    const currentSourceKeys = new Set<string>();
     for (const detail of brief.attentionItems) {
       const sourceKey = attentionSourceKey('brief', brief.taskId, detail);
+      currentSourceKeys.add(sourceKey);
       if (briefDetailCoveredByMission(detail, missions)) {
         const existing = getAttentionItemBySourceKey(sourceKey);
         if (existing?.status === 'open') updateAttentionStatus(existing.id, 'assigned');
@@ -1105,6 +1120,10 @@ function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[
         severity: severityForText(detail),
         href: '/home',
       });
+    }
+    for (const stale of listOpenAttentionItems(200)) {
+      if (stale.source_kind !== 'brief' || stale.source_id !== brief.taskId) continue;
+      if (!currentSourceKeys.has(stale.source_key)) updateAttentionStatus(stale.id, 'archived');
     }
   }
 }
