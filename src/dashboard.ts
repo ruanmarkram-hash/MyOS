@@ -2236,8 +2236,11 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       !looksTraversal && (
         decodedReqPath.startsWith('/assets/') ||
         decodedReqPath.startsWith('/v2/assets/') ||
+        decodedReqPath.startsWith('/pwa/') ||
         decodedReqPath === '/favicon.svg' ||
-        decodedReqPath === '/favicon.ico'
+        decodedReqPath === '/favicon.ico' ||
+        decodedReqPath === '/manifest.webmanifest' ||
+        decodedReqPath === '/sw.js'
       );
     if (isV2Asset) {
       await next();
@@ -2268,6 +2271,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     '.mjs':  'application/javascript; charset=utf-8',
     '.css':  'text/css; charset=utf-8',
     '.json': 'application/json; charset=utf-8',
+    '.webmanifest': 'application/manifest+json; charset=utf-8',
     '.map':  'application/json; charset=utf-8',
     '.svg':  'image/svg+xml',
     '.png':  'image/png',
@@ -2328,7 +2332,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     };
     // Hashed assets are immutable; cache them. Index HTML must always
     // re-fetch so a deploy is visible without a hard refresh.
-    if (ext === '.html') {
+    if (ext === '.html' || path.basename(file) === 'sw.js' || ext === '.webmanifest') {
       headers['Cache-Control'] = 'no-cache';
     } else {
       headers['Cache-Control'] = 'public, max-age=86400, immutable';
@@ -2368,8 +2372,14 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const reqPath = new URL(c.req.url).pathname;
     return serveV2(c, reqPath);
   });
+  app.get('/pwa/*', (c) => {
+    const reqPath = new URL(c.req.url).pathname;
+    return serveV2(c, reqPath);
+  });
   app.get('/favicon.svg', (c) => serveV2(c, '/favicon.svg'));
   app.get('/favicon.ico', (c) => serveV2(c, '/favicon.ico'));
+  app.get('/manifest.webmanifest', (c) => serveV2(c, '/manifest.webmanifest'));
+  app.get('/sw.js', (c) => serveV2(c, '/sw.js'));
 
   // War Room page
   app.get('/warroom', (c) => {

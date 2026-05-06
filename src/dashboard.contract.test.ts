@@ -54,6 +54,14 @@ describe('auth gate', () => {
     expect(await jsonOf(res)).toMatchObject({ error: 'Unauthorized' });
   });
 
+  it('allows PWA install assets without dashboard token', async () => {
+    for (const path of ['/manifest.webmanifest', '/sw.js', '/favicon.svg', '/pwa/icon-192.png']) {
+      const res = await getNoToken(path);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('cache-control')).toMatch(/no-cache|immutable/);
+    }
+  });
+
   it('rejects unauthorized GET with wrong token', async () => {
     const res = await app.request('/api/health?token=wrong');
     expect(res.status).toBe(401);

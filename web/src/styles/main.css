@@ -127,6 +127,27 @@ input, textarea, select {
   user-select: text;
 }
 
+@media (max-width: 720px) {
+  .desktop-sidebar {
+    display: none;
+  }
+
+  .mobile-nav {
+    display: flex;
+  }
+
+  .app-main {
+    padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 520px) {
+  .app-main > div > div:first-child {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+
 /* ── Reusable helpers ────────────────────────────────────────────────── */
 
 .section-label {

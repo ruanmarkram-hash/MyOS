@@ -183,8 +183,8 @@ export function HomeDashboard() {
       {loading && <PageState loading />}
 
       {!error && health.data && (
-        <div class="flex-1 overflow-y-auto p-6 space-y-4">
-          <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        <div class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
             <Metric icon={<Sunrise size={16} />} label="Today" value={attentionItems.length + ' attention items'} detail={`${activeMissions.length} mission loops · ${runningMissions.length} running · ${unassigned.length} unassigned`} tone={attentionItems.some((item) => item.severity === 'high') ? 'medium' : 'neutral'} onClick={() => navigate('/review')} />
             <Metric icon={<CalendarDays size={16} />} label="Calendar" value={calendarConnected ? 'connected' : 'pending'} detail={calendarConnected ? agenda.data?.externalCalendar.provider || 'personal calendar' : 'personal calendar connector pending'} tone="medium" onClick={() => navigate('/agents')} />
             <Metric icon={<Users size={16} />} label="Agents" value={`${liveAgents.length}/${agents.data?.agents.length ?? 0} live`} detail={liveAgents.map((a) => a.name || a.id).slice(0, 3).join(', ') || 'none live'} onClick={() => navigate('/agents')} />
@@ -354,7 +354,7 @@ function Metric({
         }
       }}
       class={[
-        'bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 transition-colors min-h-[118px]',
+        'bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 transition-colors min-h-[104px] sm:min-h-[118px]',
         onClick ? 'cursor-pointer hover:border-[var(--color-border-strong)] hover:bg-[var(--color-elevated)] focus:outline-none focus:border-[var(--color-accent)]' : '',
       ].join(' ')}
     >
@@ -363,7 +363,7 @@ function Metric({
         <div class={tone === 'done' ? 'text-[var(--color-status-done)]' : tone === 'medium' ? 'text-[var(--color-priority-medium)]' : 'text-[var(--color-text-muted)]'}>{icon}</div>
       </div>
       <div class="flex items-start justify-between gap-2">
-        <div class="text-[19px] font-semibold text-[var(--color-text)] truncate min-w-0" title={value}>{value}</div>
+        <div class="text-[17px] sm:text-[19px] font-semibold text-[var(--color-text)] truncate min-w-0" title={value}>{value}</div>
         {action}
       </div>
       <div class="text-[11px] text-[var(--color-text-muted)] truncate mt-1" title={detail}>{detail}</div>
