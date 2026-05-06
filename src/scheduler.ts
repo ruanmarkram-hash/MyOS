@@ -14,6 +14,7 @@ import {
   resetStuckMissionTasks,
   getMissionTasksNeedingNotificationRecovery,
 } from './db.js';
+import type { ScheduledTask } from './db.js';
 import type { MissionTerminalState } from './mission-notify.js';
 import { logger } from './logger.js';
 import { messageQueue } from './message-queue.js';
@@ -263,6 +264,14 @@ async function runDueTasks(): Promise<void> {
       continue;
     }
 
+    const chatId = ALLOWED_CHAT_ID || 'scheduler';
+    const isSilent = !!task.silent;
+    const bypass = isSilent ? tryExtractShellCommand(task.prompt) : null;
+    if (!bypass && messageQueue.queuedFor(chatId) > 0) {
+      logger.info({ taskId: task.id, queued: messageQueue.queuedFor(chatId) }, 'Scheduled task deferred until message queue is free');
+      continue;
+    }
+
     // Compute next occurrence BEFORE executing so we can lock the task
     // in the DB immediately, preventing re-fire on subsequent ticks.
     const nextRun = computeNextRun(task.schedule);
@@ -273,62 +282,19 @@ async function runDueTasks(): Promise<void> {
     const taskModel = task.model ?? classifyTaskModel(task.prompt);
     logger.info({ taskId: task.id, prompt: task.prompt.slice(0, 60), model: taskModel }, 'Firing task');
 
+    if (bypass) {
+      await runShellBypassTask(task, nextRun, bypass);
+      continue;
+    }
+
     // Route through the message queue so scheduled tasks wait for any
     // in-flight user message to finish before running. This prevents
     // two Claude processes from hitting the same session simultaneously.
-    const chatId = ALLOWED_CHAT_ID || 'scheduler';
     messageQueue.enqueue(chatId, async () => {
       const abortController = new AbortController();
       const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
 
       try {
-        const isSilent = !!task.silent;
-
-        // Fast path: silent shell-only tasks bypass the agent entirely.
-        // Avoids the LLM-spawn fragility that was killing overnight heartbeats.
-        // See src/shell-task.ts for the rationale and bypass criteria.
-        const bypass = isSilent ? tryExtractShellCommand(task.prompt) : null;
-        if (bypass) {
-          clearTimeout(timeout);
-          logger.info({ taskId: task.id, kind: bypass.kind, cmd: bypass.command.slice(0, 80) }, 'Shell-bypass: running scheduled task without agent');
-          const shell = await runShellCommand(bypass.command);
-
-          // Compose the "text" the rest of the pipeline expects. On success
-          // we emit stdout (or "OK" if nothing printed). On failure we emit
-          // a clear error so the user sees it on Telegram.
-          let text: string;
-          let status: 'success' | 'failed' | 'timeout';
-          if (shell.timedOut) {
-            text = `⏱ Shell command timed out (60s): ${bypass.command}\n${shell.stderr}`.trim();
-            status = 'timeout';
-          } else if (shell.exitCode !== 0) {
-            text = `❌ Shell command exit ${shell.exitCode}: ${bypass.command}\n${shell.stderr || shell.stdout}`.trim();
-            status = 'failed';
-          } else {
-            text = shell.stdout.length > 0 ? shell.stdout : 'OK';
-            status = 'success';
-          }
-
-          const isOkOutput = /^OK\.?$/i.test(text);
-          if (!isSilent || !isOkOutput) {
-            for (const chunk of splitMessage(formatForTelegram(text))) {
-              await sender(chunk);
-            }
-          } else {
-            logger.info({ taskId: task.id }, 'Shell-bypass returned OK, suppressing Telegram');
-          }
-
-          if (ALLOWED_CHAT_ID) {
-            const activeSession = getSession(ALLOWED_CHAT_ID, schedulerAgentId, getActiveProviderName());
-            logConversationTurn(ALLOWED_CHAT_ID, 'user', `[Scheduled task]: ${task.prompt}`, activeSession ?? undefined, schedulerAgentId);
-            logConversationTurn(ALLOWED_CHAT_ID, 'assistant', text, activeSession ?? undefined, schedulerAgentId);
-          }
-
-          updateTaskAfterRun(task.id, nextRun, text.slice(0, 500), status);
-          logger.info({ taskId: task.id, nextRun, status }, 'Shell-bypass complete, next run scheduled');
-          return;
-        }
-
         if (!isSilent) {
           await sender(`Scheduled task running [${modelTierLabel(taskModel)}]: "${task.prompt.slice(0, 70)}${task.prompt.length > 70 ? '...' : ''}"`);
         }
@@ -390,7 +356,66 @@ async function runDueTasks(): Promise<void> {
   await runDueMissionTasks();
 }
 
+async function runShellBypassTask(
+  task: ScheduledTask,
+  nextRun: number,
+  bypass: NonNullable<ReturnType<typeof tryExtractShellCommand>>,
+): Promise<void> {
+  try {
+    logger.info({ taskId: task.id, kind: bypass.kind, cmd: bypass.command.slice(0, 80) }, 'Shell-bypass: running scheduled task without agent');
+    const shell = await runShellCommand(bypass.command);
+
+    let text: string;
+    let status: 'success' | 'failed' | 'timeout';
+    if (shell.timedOut) {
+      text = `⏱ Shell command timed out (60s): ${bypass.command}\n${shell.stderr}`.trim();
+      status = 'timeout';
+    } else if (shell.exitCode !== 0) {
+      text = `❌ Shell command exit ${shell.exitCode}: ${bypass.command}\n${shell.stderr || shell.stdout}`.trim();
+      status = 'failed';
+    } else {
+      text = shell.stdout.length > 0 ? shell.stdout : 'OK';
+      status = 'success';
+    }
+
+    const isOkOutput = /^OK\.?$/i.test(text);
+    if (!task.silent || !isOkOutput) {
+      for (const chunk of splitMessage(formatForTelegram(text))) {
+        await sender(chunk);
+      }
+    } else {
+      logger.info({ taskId: task.id }, 'Shell-bypass returned OK, suppressing Telegram');
+    }
+
+    if (ALLOWED_CHAT_ID) {
+      const activeSession = getSession(ALLOWED_CHAT_ID, schedulerAgentId, getActiveProviderName());
+      logConversationTurn(ALLOWED_CHAT_ID, 'user', `[Scheduled task]: ${task.prompt}`, activeSession ?? undefined, schedulerAgentId);
+      logConversationTurn(ALLOWED_CHAT_ID, 'assistant', text, activeSession ?? undefined, schedulerAgentId);
+    }
+
+    updateTaskAfterRun(task.id, nextRun, text.slice(0, 500), status);
+    logger.info({ taskId: task.id, nextRun, status }, 'Shell-bypass complete, next run scheduled');
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    updateTaskAfterRun(task.id, nextRun, errMsg.slice(0, 500), 'failed');
+    logger.error({ err, taskId: task.id }, 'Shell-bypass scheduled task failed');
+    try {
+      await sender(`❌ Task failed: "${task.prompt.slice(0, 60)}..." — ${errMsg.slice(0, 200)}`);
+    } catch {
+      // ignore send failure
+    }
+  } finally {
+    runningTaskIds.delete(task.id);
+  }
+}
+
 async function runDueMissionTasks(): Promise<void> {
+  const chatId = ALLOWED_CHAT_ID || 'mission';
+  if (messageQueue.queuedFor(chatId) > 0) {
+    logger.info({ queued: messageQueue.queuedFor(chatId), agentId: schedulerAgentId }, 'Mission claim deferred until message queue is free');
+    return;
+  }
+
   const mission = claimNextMissionTask(schedulerAgentId);
   if (!mission) return;
 
@@ -448,7 +473,6 @@ async function runDueMissionTasks(): Promise<void> {
     return;
   }
 
-  const chatId = ALLOWED_CHAT_ID || 'mission';
   messageQueue.enqueue(chatId, async () => {
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), MISSION_TIMEOUT_MS);
