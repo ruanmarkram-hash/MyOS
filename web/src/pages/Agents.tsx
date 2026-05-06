@@ -139,8 +139,9 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
     if (action === 'restart' && agent.id === 'main' && !confirm('Restart Sage now? Mission Control will briefly disconnect and then reload.')) return;
     let restartQueued = false;
     setBusy(action);
+    const restartingMain = action === 'restart' && agent.id === 'main';
     try {
-      if (action === 'restart' && agent.id === 'main') {
+      if (restartingMain) {
         await apiPost('/api/system/restart-main');
         restartQueued = true;
         await waitForMainRestart();
@@ -152,6 +153,11 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
       if (action === 'delete') await apiDelete(`/api/agents/${agent.id}/full`);
       setTimeout(onChange, action === 'delete' ? 200 : 1500);
     } catch (err: any) {
+      if (restartingMain && /failed to fetch/i.test(err?.message || String(err))) {
+        restartQueued = true;
+        await waitForMainRestart();
+        return;
+      }
       alert(action + ' failed: ' + (err?.message || err));
     } finally {
       if (!restartQueued) setBusy(null);

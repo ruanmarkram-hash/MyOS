@@ -149,7 +149,7 @@ function queueMainRestart(source: string): boolean {
   const timer = setTimeout(() => {
     logger.info({ source }, 'Main agent exiting for graceful restart');
     process.kill(process.pid, 'SIGTERM');
-  }, 750);
+  }, 1_500);
   timer.unref?.();
   return true;
 }
