@@ -24,8 +24,29 @@ export function formatAgentSystemPrompt(systemPrompt: string): string {
   ].join('\n');
 }
 
-export function buildAgentRuntimePrompt(message: string, systemPrompt?: string): string {
+export interface AgentRuntimeMetadata {
+  provider?: string;
+  model?: string;
+}
+
+function formatRuntimeMetadata(metadata?: AgentRuntimeMetadata): string {
+  const lines = [
+    '[Runtime state]',
+    metadata?.provider ? `LLM provider: ${metadata.provider}` : undefined,
+    metadata?.model ? `Resolved model: ${metadata.model}` : undefined,
+    'If asked what model or provider you are running on, answer from this runtime state.',
+    '[End runtime state]',
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
+export function buildAgentRuntimePrompt(
+  message: string,
+  systemPrompt?: string,
+  metadata?: AgentRuntimeMetadata,
+): string {
   const trimmedPrompt = systemPrompt?.trim();
-  if (!trimmedPrompt) return message;
-  return `${formatAgentSystemPrompt(trimmedPrompt)}\n\n${message}`;
+  const runtimeState = formatRuntimeMetadata(metadata);
+  if (!trimmedPrompt) return `${runtimeState}\n\n${message}`;
+  return `${formatAgentSystemPrompt(trimmedPrompt)}\n\n${runtimeState}\n\n${message}`;
 }

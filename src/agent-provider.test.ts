@@ -135,7 +135,13 @@ describe('agent provider configuration', () => {
     const result = await runAgent('hi', undefined, () => {}, undefined, 'claude-opus-4-7');
 
     expect(result.text).toBe('codex ok');
-    expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({ message: 'hi', model: 'gpt-5.5' }));
+    expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('Resolved model: gpt-5.5'),
+      model: 'gpt-5.5',
+    }));
+    expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('\n\nhi'),
+    }));
   });
 
   it('injects the provider-neutral agent definition at the runtime boundary', async () => {
@@ -174,7 +180,13 @@ describe('agent provider configuration', () => {
       message: expect.stringContaining('[ClaudeClaw runtime contract]'),
     }));
     expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({
-      message: expect.stringContaining('[Agent role - follow these instructions]\nYou are Sage.\n[End agent role]\n\nship it'),
+      message: expect.stringContaining('[Agent role - follow these instructions]\nYou are Sage.\n[End agent role]'),
+    }));
+    expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('LLM provider: codex'),
+    }));
+    expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('\n\nship it'),
     }));
   });
 
@@ -212,7 +224,11 @@ describe('agent provider configuration', () => {
 
     expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: '019de375-ca31-7d12-9b37-62ffd7b26ca3',
-      message: expect.stringContaining('[Agent role - follow these instructions]\nYou are Sage.\n[End agent role]\n\ncontinue'),
+      message: expect.stringContaining('[Agent role - follow these instructions]\nYou are Sage.\n[End agent role]'),
+    }));
+    expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: '019de375-ca31-7d12-9b37-62ffd7b26ca3',
+      message: expect.stringContaining('\n\ncontinue'),
     }));
   });
 

@@ -29,7 +29,6 @@ import {
   DAILY_COST_BUDGET,
   HOURLY_TOKEN_BUDGET,
   PROJECT_ROOT,
-  LLM_PROVIDER,
 } from './config.js';
 import { clearAllSessions, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage, saveCompactionEvent, getCompactionCount, getOutboxStats } from './db.js';
 import { logger } from './logger.js';
@@ -144,8 +143,6 @@ const AVAILABLE_MODELS: Record<string, string> = {
   sonnet: 'claude-sonnet-4-5',
   haiku: 'claude-haiku-4-5',
 };
-const DEFAULT_MODEL_LABEL = 'opus';
-
 export function setMainModelOverride(model: string): void {
   if (ALLOWED_CHAT_ID) chatModelOverride.set(ALLOWED_CHAT_ID, model);
 }
@@ -1087,14 +1084,23 @@ export function createBot(): Bot {
     if (await replyIfLocked(ctx)) return;
     const chatIdStr = ctx.chat!.id.toString();
     const arg = ctx.match?.trim().toLowerCase();
+    const activeProvider = getActiveProviderName();
+    const configuredDefaultModel = agentDefaultModel ?? 'claude-opus-4-7';
+    const formatRuntimeModel = (configured: string): string => {
+      const resolved = resolveModelForProvider(activeProvider, configured) || configured;
+      return resolved === configured
+        ? `${resolved} via ${activeProvider}`
+        : `${resolved} via ${activeProvider} (configured tier: ${configured})`;
+    };
+    const codexModels = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2'];
 
     if (!arg) {
-      const current = chatModelOverride.get(chatIdStr);
-      const currentLabel = current
-        ? Object.entries(AVAILABLE_MODELS).find(([, v]) => v === current)?.[0] ?? current
-        : DEFAULT_MODEL_LABEL + ' (default)';
-      const models = LLM_PROVIDER.trim().toLowerCase() === 'codex'
-        ? `${Object.keys(AVAILABLE_MODELS).join(', ')}, or a Codex model ID like gpt-5.5`
+      const current = chatModelOverride.get(chatIdStr) ?? configuredDefaultModel;
+      const currentLabel = chatModelOverride.has(chatIdStr)
+        ? formatRuntimeModel(current)
+        : `${formatRuntimeModel(current)} (default)`;
+      const models = activeProvider === 'codex'
+        ? `${Object.keys(AVAILABLE_MODELS).join(', ')}, or ${codexModels.join(', ')}`
         : Object.keys(AVAILABLE_MODELS).join(', ');
       await ctx.reply(`Current model: ${currentLabel}\nAvailable: ${models}\n\nUsage: /model haiku`);
       return;
@@ -1102,18 +1108,21 @@ export function createBot(): Bot {
 
     if (arg === 'reset' || arg === 'default' || arg === 'opus') {
       chatModelOverride.delete(chatIdStr);
-      await ctx.reply('Model reset to default (opus)');
+      await ctx.reply(`Model reset to default: ${formatRuntimeModel(configuredDefaultModel)}`);
       return;
     }
 
-    const modelId = AVAILABLE_MODELS[arg] ?? (LLM_PROVIDER.trim().toLowerCase() === 'codex' && arg.startsWith('gpt-') ? arg : undefined);
+    const modelId = AVAILABLE_MODELS[arg] ?? (activeProvider === 'codex' && codexModels.includes(arg) ? arg : undefined);
     if (!modelId) {
-      await ctx.reply(`Unknown model: ${arg}\nAvailable: ${Object.keys(AVAILABLE_MODELS).join(', ')}`);
+      const models = activeProvider === 'codex'
+        ? `${Object.keys(AVAILABLE_MODELS).join(', ')}, or ${codexModels.join(', ')}`
+        : Object.keys(AVAILABLE_MODELS).join(', ');
+      await ctx.reply(`Unknown model: ${arg}\nAvailable: ${models}`);
       return;
     }
 
     chatModelOverride.set(chatIdStr, modelId);
-    await ctx.reply(`Model changed: ${arg} (${modelId})`);
+    await ctx.reply(`Model changed: ${formatRuntimeModel(modelId)}`);
   });
 
   // /memory — show recent memories for this chat

@@ -182,7 +182,10 @@ function configuredProviderValue(): string {
 }
 
 function configuredProviderForAgent(agentId: string, config?: Pick<AgentConfig, 'provider'> | null): string {
-  return agentId === 'main' ? configuredProviderValue() : (config?.provider || configuredProviderValue());
+  // The global LLM_PROVIDER belongs to Sage/main only. Specialist agents
+  // must opt into a non-Claude provider in their own agent.yaml; otherwise a
+  // main-provider switch makes the entire roster appear to flip providers.
+  return agentId === 'main' ? configuredProviderValue() : (config?.provider || 'claude');
 }
 
 function providerStatusForAgent(agentId: string, config?: Pick<AgentConfig, 'provider'> | null): { provider: LlmProviderName; configuredProvider: string; providerError: string | null } {
@@ -2109,6 +2112,7 @@ const CLAUDE_DASHBOARD_MODELS = ['claude-opus-4-7', 'claude-opus-4-6', 'claude-s
 function validModelsForProvider(provider: LlmProviderName): string[] {
   if (provider === 'codex') {
     return Array.from(new Set([
+      ...CLAUDE_DASHBOARD_MODELS,
       CODEX_OPUS_MODEL,
       CODEX_SONNET_MODEL,
       CODEX_HAIKU_MODEL,

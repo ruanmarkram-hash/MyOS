@@ -55,7 +55,10 @@ export async function runAgent(
 ): Promise<AgentResult> {
   const provider = getLlmProvider(agentProviderOverride || LLM_PROVIDER);
   const providerModel = resolveModelForProvider(provider.name, model);
-  const providerMessage = buildAgentRuntimePrompt(message, systemPrompt);
+  const providerMessage = buildAgentRuntimePrompt(message, systemPrompt, {
+    provider: provider.name,
+    model: providerModel,
+  });
   return provider.runAgent({
     message: providerMessage,
     sessionId: sessionIdForProvider(provider.name, sessionId),
