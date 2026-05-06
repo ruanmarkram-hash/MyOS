@@ -981,6 +981,14 @@ function isMeaningfulBriefResult(result: string | null): result is string {
   return cleaned.length > 0 && !/^OK$/i.test(cleaned);
 }
 
+function isNonActionBriefLine(cleaned: string): boolean {
+  if (/^(action needed|blocked on you|open threads|stale|breakdown|notes|projects|compliance|calendar|inbox|today|tomorrow top 3):?$/i.test(cleaned)) return true;
+  if (/^(items blocked\/awaiting|total unread|after triage|skipped):/i.test(cleaned)) return true;
+  if (/^(urgent|overdue|blocked|awaiting|needs|actions?|risks?|review|follow.?up|open threads|auth|permissions?):\s*(none|nil|n\/a|no(?:\s+(?:urgent\s+)?(?:blockers?|risks?|actions?|follow.?ups?|reviews?|items?))?|0)(\.|$)/i.test(cleaned)) return true;
+  if (/^(no|none)\s+(urgent|overdue|blocked|awaiting|open|review|follow.?up|action|actions|risks?)/i.test(cleaned)) return true;
+  return false;
+}
+
 function extractAttentionItems(text: string, limit = 4): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -992,8 +1000,7 @@ function extractAttentionItems(text: string, limit = 4): string[] {
       .replace(/\s+/g, ' ')
       .trim();
     if (!cleaned || /^OK$/i.test(cleaned)) continue;
-    if (/^(action needed|blocked on you|open threads|stale|breakdown|notes|projects|compliance|calendar|inbox|today|tomorrow top 3):?$/i.test(cleaned)) continue;
-    if (/^(items blocked\/awaiting|total unread|after triage|skipped):/i.test(cleaned)) continue;
+    if (isNonActionBriefLine(cleaned)) continue;
     if (!/urgent|overdue|blocked|awaiting|needs|action|failed|missing|error|risk|review|approve|follow.?up|due|tomorrow top|open threads|auth|expired|lapsed|consent|unavailable|re-auth|permission/i.test(cleaned)) continue;
     const key = cleaned.toLowerCase();
     if (seen.has(key)) continue;

@@ -25,13 +25,14 @@ bash ~/HQ/skills/msgraph/refresh.sh
 ### 2. Send email
 ```bash
 python3 ~/HQ/skills/msgraph/send_graph_email.py \
-  --from "sage@sonke.com.au" --to "x@y.com" --subject "Hello" --body "..." [--attach /tmp/file.pdf]
+  --from "shared-mailbox@example.com" --to "x@y.com" --subject "Hello" --body "..." [--attach /tmp/file.pdf]
 ```
 
 If `--from` is omitted, the helper uses `REVIEW_EXPORT_SHARED_MAILBOX` or
 `REVIEW_EXPORT_FROM_EMAIL` from `.env`, and posts to
 `/users/{shared-mailbox}/sendMail`. It must not fall back to `/me/sendMail` for
-automated sends.
+automated sends. If `--from` is supplied, it must match the configured shared
+mailbox.
 
 ### 3. Read inbox
 ```bash
@@ -97,12 +98,12 @@ python3 ~/HQ/skills/msgraph/calendar_ops.py decline <event_id> --comment "..."
 ```bash
 # Free/busy view (raw schedule blocks)
 python3 ~/HQ/skills/msgraph/availability.py freebusy \
-  --emails ruan@sonke.com.au,mason@x.com \
+  --emails owner@example.com,colleague@example.com \
   --start 2026-04-25T09:00:00 --end 2026-04-25T17:00:00 --interval 30
 
 # Suggest meeting times
 python3 ~/HQ/skills/msgraph/availability.py suggest \
-  --emails ruan@sonke.com.au,mason@x.com --duration 30 --days 5
+  --emails owner@example.com,colleague@example.com --duration 30 --days 5
 ```
 
 ### 8. Health check

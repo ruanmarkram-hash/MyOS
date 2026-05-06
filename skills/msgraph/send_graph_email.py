@@ -10,7 +10,7 @@ Usage:
     --to "recipient@example.com" \
     --subject "Test" \
     --body "Hello" \
-    [--from "sage@sonke.com.au"] \
+    [--from "shared-mailbox@example.com"] \
     [--attach /path/to/file.pdf] \
     [--html]
 """
@@ -63,7 +63,6 @@ def default_shared_mailbox():
     return (
         config_value("REVIEW_EXPORT_SHARED_MAILBOX")
         or config_value("REVIEW_EXPORT_FROM_EMAIL")
-        or "sage@sonke.com.au"
     )
 
 
@@ -82,9 +81,16 @@ class GraphEmailSender:
 
     def send(self, to, subject, body, from_email=None, attachments=None, html=False):
         """Send email via Graph API."""
-        from_email = (from_email or default_shared_mailbox()).strip()
+        shared_mailbox = default_shared_mailbox()
+        from_email = (from_email or shared_mailbox).strip()
+        if not shared_mailbox:
+            print("Refusing to send without REVIEW_EXPORT_SHARED_MAILBOX configured", file=sys.stderr)
+            return False
         if not from_email:
             print("Refusing to send without a shared mailbox sender", file=sys.stderr)
+            return False
+        if from_email.lower() != shared_mailbox.lower():
+            print(f"Refusing to send from non-shared sender: {from_email}", file=sys.stderr)
             return False
 
         if from_email and from_email.strip().lower() in forbidden_from_emails():

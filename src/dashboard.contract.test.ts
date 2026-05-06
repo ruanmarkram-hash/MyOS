@@ -543,6 +543,29 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(details).not.toContain('Blocked on you:');
   });
 
+  it('does not promote explicit none lines from briefs as attention items', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-none-lines', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-none-lines',
+      now + 86400,
+      [
+        '**Overdue:** None.',
+        '**Risks:** no urgent blockers.',
+        '- Actual follow-up: Lucas form submission has not been actioned.',
+      ].join('\n'),
+      'success',
+    );
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    const details = body.items.map((item: any) => item.detail);
+    expect(details).toContain('Actual follow-up: Lucas form submission has not been actioned.');
+    expect(details).not.toContain('Overdue: None.');
+    expect(details).not.toContain('Risks: no urgent blockers.');
+  });
+
   it('keeps report items out of Needs Attention once matching mission work exists', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-covered', 'Morning brief', '0 9 * * *', now + 3600, 'main');
