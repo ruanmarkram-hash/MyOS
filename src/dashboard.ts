@@ -1130,6 +1130,13 @@ type WholeBrainGraphEdge = {
   count: number;
 };
 
+type WholeBrainThoughtPoint = {
+  id: string;
+  clusterIds: string[];
+  primaryKind: WholeBrainGraphNode['kind'];
+  score: number;
+};
+
 function addGraphNode(nodes: Map<string, GraphCandidateNode>, node: GraphCandidateNode): void {
   if (!nodes.has(node.key)) nodes.set(node.key, node);
 }
@@ -1199,6 +1206,7 @@ async function buildWholeOpenBrainGraph() {
   const map = await getOpenBrainMap(10_000);
   const nodes = new Map<string, WholeBrainGraphNode>();
   const edges = new Map<string, WholeBrainGraphEdge>();
+  const points: WholeBrainThoughtPoint[] = [];
   const rootId = 'database:ob1';
   nodes.set(rootId, {
     id: rootId,
@@ -1240,6 +1248,17 @@ async function buildWholeOpenBrainGraph() {
         bumpWholeBrainEdge(edges, nodeIds[i], nodeIds[j], 'co_occurs_in_thought', 1);
       }
     }
+    const primaryId = nodeIds.find((id) => id.startsWith('topic:'))
+      || nodeIds.find((id) => id.startsWith('source:'))
+      || nodeIds.find((id) => id.startsWith('type:'))
+      || nodeIds[0]
+      || rootId;
+    points.push({
+      id: thought.id,
+      clusterIds: [primaryId, ...nodeIds.filter((id) => id !== primaryId).slice(0, 8)],
+      primaryKind: nodes.get(primaryId)?.kind || 'database',
+      score,
+    });
   }
 
   const sortedNodes = [...nodes.values()].sort((a, b) => {
@@ -1265,6 +1284,7 @@ async function buildWholeOpenBrainGraph() {
     coverage: map.total ? map.represented / map.total : 1,
     nodes: sortedNodes.filter((node) => visibleNodeIds.has(node.id)),
     edges: visibleEdges,
+    points,
     hiddenNodes: Math.max(0, sortedNodes.length - visibleNodeIds.size),
     generatedAt: new Date().toISOString(),
   };

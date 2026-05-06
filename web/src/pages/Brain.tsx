@@ -191,6 +191,13 @@ interface WholeBrainGraphEdge {
   count: number;
 }
 
+interface WholeBrainThoughtPoint {
+  id: string;
+  clusterIds: string[];
+  primaryKind: WholeBrainGraphNode['kind'];
+  score: number;
+}
+
 interface WholeBrainGraphResponse {
   ok: boolean;
   configured: boolean;
@@ -201,6 +208,7 @@ interface WholeBrainGraphResponse {
   coverage: number;
   nodes: WholeBrainGraphNode[];
   edges: WholeBrainGraphEdge[];
+  points: WholeBrainThoughtPoint[];
   hiddenNodes: number;
   generatedAt: string;
   error?: string;
@@ -906,18 +914,29 @@ function WholeOpenBrainGraph({
   ingestNote: string | null;
 }) {
   const [selectedId, setSelectedId] = useState(graph.nodes[0]?.id || 'database:ob1');
+  const [selectedThoughtId, setSelectedThoughtId] = useState<string | null>(null);
   const selected = graph.nodes.find((node) => node.id === selectedId) || graph.nodes[0] || null;
-  const layout = useMemo(() => layoutWholeBrainGraph(graph.nodes), [graph.nodes]);
+  const layout = useMemo(() => layoutWholeBrainGraph(graph.nodes, graph.edges), [graph.nodes, graph.edges]);
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
   const coverage = Math.round((graph.coverage || 0) * 1000) / 10;
   const visibleEdges = graph.edges
     .filter((edge) => layout.has(edge.source) && layout.has(edge.target))
-    .slice(0, 420);
+    .slice(0, 600);
+  const selectedNeighborIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!selected) return ids;
+    for (const edge of graph.edges) {
+      if (edge.source === selected.id) ids.add(edge.target);
+      if (edge.target === selected.id) ids.add(edge.source);
+    }
+    return ids;
+  }, [graph.edges, selected?.id]);
+  const thoughtPointLayout = useMemo(() => layoutThoughtPoints(graph.points || [], layout), [graph.points, layout]);
 
   return (
     <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4 min-h-[620px]">
-      <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 overflow-hidden">
-        <div class="flex items-center justify-between gap-3 mb-3">
+      <div class="bg-[#0f1013] border border-[var(--color-border)] rounded-lg overflow-hidden">
+        <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-[#22242a] bg-[#141519]">
           <div>
             <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Whole OB1 Database Graph</div>
             <div class="text-[12px] text-[var(--color-text-muted)]">
@@ -937,13 +956,20 @@ function WholeOpenBrainGraph({
             </button>
           </div>
         </div>
-        <div class="relative h-[560px] rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] overflow-hidden">
-          <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <div class="relative h-[640px] overflow-hidden bg-[#0b0c0f]">
+          <svg class="absolute inset-0 w-full h-full" viewBox="0 0 1200 760" role="img" aria-label="OpenBrain database graph">
+            <defs>
+              <radialGradient id="ob-node-glow" cx="50%" cy="45%" r="60%">
+                <stop offset="0%" stop-color="currentColor" stop-opacity="0.95" />
+                <stop offset="100%" stop-color="currentColor" stop-opacity="0.68" />
+              </radialGradient>
+            </defs>
             {visibleEdges.map((edge) => {
               const a = layout.get(edge.source);
               const b = layout.get(edge.target);
               if (!a || !b) return null;
-              const intensity = Math.min(0.7, 0.12 + Math.log10(edge.count + 1) * 0.16);
+              const isActive = selected?.id === edge.source || selected?.id === edge.target;
+              const intensity = isActive ? 0.72 : Math.min(0.34, 0.05 + Math.log10(edge.count + 1) * 0.08);
               return (
                 <line
                   key={`${edge.source}-${edge.target}-${edge.relationship}`}
@@ -951,39 +977,91 @@ function WholeOpenBrainGraph({
                   y1={a.y}
                   x2={b.x}
                   y2={b.y}
-                  stroke={`color-mix(in srgb, var(--color-accent) ${Math.round(intensity * 100)}%, transparent)`}
-                  stroke-width={Math.min(0.65, 0.12 + Math.log10(edge.count + 1) * 0.08)}
+                  stroke={isActive ? '#9ca3af' : '#343942'}
+                  stroke-opacity={intensity}
+                  stroke-width={isActive ? Math.min(2.8, 0.8 + Math.log10(edge.count + 1) * 0.35) : Math.min(1.25, 0.35 + Math.log10(edge.count + 1) * 0.16)}
                 />
               );
             })}
+            {(graph.points || []).map((point) => {
+              const position = thoughtPointLayout.get(point.id);
+              if (!position) return null;
+              const isSelectedThought = selectedThoughtId === point.id;
+              const active = isSelectedThought || !selected || point.clusterIds.includes(selected.id);
+              return (
+                <circle
+                  key={point.id}
+                  class="cursor-pointer"
+                  cx={position.x}
+                  cy={position.y}
+                  r={isSelectedThought ? position.r + 2.4 : active ? position.r : Math.max(0.55, position.r * 0.72)}
+                  fill={wholeGraphColor(point.primaryKind)}
+                  fill-opacity={isSelectedThought ? 0.95 : active ? 0.34 : 0.08}
+                  stroke={isSelectedThought ? '#f9fafb' : 'transparent'}
+                  stroke-width={isSelectedThought ? 1.5 : 0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedThoughtId(point.id);
+                  }}
+                />
+              );
+            })}
+            {graph.nodes.filter((node) => layout.has(node.id)).map((node) => {
+              const point = layout.get(node.id)!;
+              const isSelected = selected?.id === node.id;
+              const isNeighbor = selectedNeighborIds.has(node.id);
+              const dim = selected && !isSelected && !isNeighbor ? 0.48 : 1;
+              const shouldLabel = isSelected || isNeighbor || point.label || node.kind !== 'topic';
+              return (
+                <g
+                  key={node.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => { setSelectedId(node.id); setSelectedThoughtId(null); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { setSelectedId(node.id); setSelectedThoughtId(null); } }}
+                  class="cursor-pointer"
+                  style={{ color: wholeGraphColor(node.kind), opacity: dim }}
+                >
+                  <circle
+                    cx={point.x}
+                    cy={point.y}
+                    r={point.r + (isSelected ? 4 : 0)}
+                    fill="currentColor"
+                    fill-opacity={isSelected ? 0.28 : isNeighbor ? 0.2 : 0.1}
+                    stroke="currentColor"
+                    stroke-opacity={isSelected ? 0.98 : isNeighbor ? 0.78 : 0.58}
+                    stroke-width={isSelected ? 2.2 : isNeighbor ? 1.4 : 0.8}
+                  />
+                  <circle
+                    cx={point.x}
+                    cy={point.y}
+                    r={Math.max(2.2, point.r * 0.42)}
+                    fill="currentColor"
+                    fill-opacity={isSelected ? 1 : 0.86}
+                  />
+                  {shouldLabel && (
+                    <text
+                      x={point.x + point.labelDx}
+                      y={point.y + point.labelDy}
+                      fill={isSelected ? '#f9fafb' : isNeighbor ? '#d1d5db' : '#858b96'}
+                      font-size={isSelected ? 14 : point.fontSize}
+                      font-family="Inter, ui-sans-serif, system-ui, sans-serif"
+                      text-anchor={point.labelAnchor}
+                      dominant-baseline="middle"
+                      paint-order="stroke"
+                      stroke="#0b0c0f"
+                      stroke-width="3"
+                      stroke-linejoin="round"
+                    >
+                      {shortGraphLabel(node.label, isSelected ? 42 : 24)}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
           </svg>
-          {graph.nodes.filter((node) => layout.has(node.id)).map((node) => {
-            const point = layout.get(node.id)!;
-            const isSelected = selected?.id === node.id;
-            return (
-              <button
-                key={node.id}
-                type="button"
-                onClick={() => setSelectedId(node.id)}
-                title={`${node.label}: ${node.count} thoughts`}
-                class={'absolute -translate-x-1/2 -translate-y-1/2 rounded-full border flex flex-col items-center justify-center text-center px-2 transition-transform hover:scale-105 ' + (isSelected ? 'z-20' : 'z-10')}
-                style={{
-                  left: point.x + '%',
-                  top: point.y + '%',
-                  width: point.size + 'px',
-                  height: point.size + 'px',
-                  color: wholeGraphColor(node.kind),
-                  borderColor: isSelected ? 'var(--color-accent)' : 'color-mix(in srgb, currentColor 62%, transparent)',
-                  backgroundColor: isSelected ? 'color-mix(in srgb, var(--color-accent) 26%, var(--color-bg))' : 'color-mix(in srgb, currentColor 14%, var(--color-bg))',
-                }}
-              >
-                <span class="text-[11px] text-[var(--color-text)] leading-tight max-w-[108px] truncate">{node.label}</span>
-                <span class="text-[10px] font-mono text-[var(--color-text-faint)]">{node.count.toLocaleString()}</span>
-              </button>
-            );
-          })}
         </div>
-        <div class="mt-3 flex flex-wrap gap-2 text-[11px] text-[var(--color-text-muted)]">
+        <div class="px-4 py-3 flex flex-wrap gap-2 text-[11px] text-[var(--color-text-muted)] border-t border-[#22242a] bg-[#111216]">
           {(['type', 'source', 'topic', 'person', 'time', 'sensitivity'] as WholeBrainGraphNode['kind'][]).map((kind) => (
             <span key={kind} class="inline-flex items-center gap-1.5">
               <span class="w-2 h-2 rounded-full" style={{ backgroundColor: wholeGraphColor(kind) }} />
@@ -995,7 +1073,24 @@ function WholeOpenBrainGraph({
 
       <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 overflow-y-auto max-h-[620px]">
         <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-3">Selected cluster</div>
-        {selected ? (
+        {selectedThoughtId ? (
+          <>
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Selected thought</div>
+                <div class="text-[11px] text-[var(--color-text-muted)] font-mono break-all">{selectedThoughtId}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedThoughtId(null)}
+                class="px-2.5 py-1.5 rounded-md text-[11px] bg-[var(--color-elevated)] border border-[var(--color-border)] text-[var(--color-text)]"
+              >
+                Back
+              </button>
+            </div>
+            <ThoughtDetail id={selectedThoughtId} />
+          </>
+        ) : selected ? (
           <>
             <div class="border-b border-[var(--color-border)] pb-3">
               <div class="flex items-center gap-2 min-w-0">
@@ -1085,44 +1180,161 @@ function wholeGraphColor(kind: WholeBrainGraphNode['kind']): string {
   }
 }
 
-function layoutWholeBrainGraph(nodes: WholeBrainGraphNode[]): Map<string, { x: number; y: number; size: number }> {
-  const groups: Record<WholeBrainGraphNode['kind'], WholeBrainGraphNode[]> = {
-    database: [],
-    type: [],
-    source: [],
-    topic: [],
-    person: [],
-    time: [],
-    sensitivity: [],
-  };
-  for (const node of nodes) groups[node.kind]?.push(node);
-  const layout = new Map<string, { x: number; y: number; size: number }>();
-  const maxCount = Math.max(1, ...nodes.map((node) => node.count));
-  const rings: Array<{ kind: WholeBrainGraphNode['kind']; radius: number; start: number; cap: number }> = [
-    { kind: 'database', radius: 0, start: 0, cap: 1 },
-    { kind: 'type', radius: 16, start: -110, cap: 18 },
-    { kind: 'source', radius: 25, start: -35, cap: 24 },
-    { kind: 'sensitivity', radius: 32, start: 55, cap: 8 },
-    { kind: 'time', radius: 37, start: 130, cap: 30 },
-    { kind: 'person', radius: 41, start: 205, cap: 36 },
-    { kind: 'topic', radius: 45, start: 285, cap: 145 },
-  ];
+interface WholeBrainPoint {
+  x: number;
+  y: number;
+  r: number;
+  label: boolean;
+  labelDx: number;
+  labelDy: number;
+  labelAnchor: 'start' | 'middle' | 'end';
+  fontSize: number;
+}
 
-  for (const ring of rings) {
-    const rows = groups[ring.kind].sort((a, b) => b.count - a.count).slice(0, ring.cap);
-    if (ring.kind === 'database') {
-      for (const node of rows) layout.set(node.id, { x: 50, y: 50, size: 118 });
-      continue;
+function shortGraphLabel(label: string, max = 24): string {
+  return label.length > max ? `${label.slice(0, max - 1).trim()}…` : label;
+}
+
+function hashUnit(input: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) % 10000) / 10000;
+}
+
+function layoutThoughtPoints(points: WholeBrainThoughtPoint[], clusters: Map<string, WholeBrainPoint>): Map<string, { x: number; y: number; r: number }> {
+  const rows = new Map<string, { x: number; y: number; r: number }>();
+  for (const point of points) {
+    const anchors = point.clusterIds.map((id) => clusters.get(id)).filter(Boolean) as WholeBrainPoint[];
+    if (anchors.length === 0) continue;
+    const primary = anchors[0];
+    const secondary = anchors[1];
+    const jitterA = hashUnit(`${point.id}:a`) * Math.PI * 2;
+    const jitterR = 8 + hashUnit(`${point.id}:r`) * 68;
+    const blend = secondary ? 0.24 + hashUnit(`${point.id}:blend`) * 0.18 : 0;
+    const baseX = secondary ? primary.x * (1 - blend) + secondary.x * blend : primary.x;
+    const baseY = secondary ? primary.y * (1 - blend) + secondary.y * blend : primary.y;
+    rows.set(point.id, {
+      x: baseX + Math.cos(jitterA) * jitterR,
+      y: baseY + Math.sin(jitterA) * jitterR,
+      r: Math.min(2.2, 0.75 + Math.log10(Math.max(1, point.score)) * 0.42),
+    });
+  }
+  return rows;
+}
+
+function layoutWholeBrainGraph(nodes: WholeBrainGraphNode[], edges: WholeBrainGraphEdge[]): Map<string, WholeBrainPoint> {
+  const width = 1200;
+  const height = 760;
+  const maxCount = Math.max(1, ...nodes.map((node) => node.count));
+  const kindCenters: Record<WholeBrainGraphNode['kind'], { x: number; y: number }> = {
+    database: { x: 560, y: 370 },
+    type: { x: 555, y: 210 },
+    source: { x: 380, y: 350 },
+    topic: { x: 665, y: 405 },
+    person: { x: 860, y: 315 },
+    time: { x: 505, y: 560 },
+    sensitivity: { x: 235, y: 210 },
+  };
+  const sim = nodes.map((node) => {
+    const center = kindCenters[node.kind];
+    const angle = hashUnit(`${node.id}:angle`) * Math.PI * 2;
+    const radius = node.kind === 'database' ? 0 : 70 + hashUnit(`${node.id}:radius`) * 180;
+    const countScale = Math.log10(node.count + 1) / Math.log10(maxCount + 1);
+    return {
+      node,
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius,
+      vx: 0,
+      vy: 0,
+      r: node.kind === 'database' ? 24 : 3.2 + countScale * 17,
+      label: node.kind !== 'topic' || node.count >= 8 || countScale > 0.22,
+    };
+  });
+  const indexById = new Map(sim.map((item, index) => [item.node.id, index]));
+  const forceEdges = edges
+    .map((edge) => ({ ...edge, a: indexById.get(edge.source), b: indexById.get(edge.target) }))
+    .filter((edge): edge is WholeBrainGraphEdge & { a: number; b: number } => edge.a !== undefined && edge.b !== undefined)
+    .slice(0, 700);
+
+  for (let tick = 0; tick < 130; tick++) {
+    const cooling = 1 - tick / 130;
+    for (const item of sim) {
+      const center = kindCenters[item.node.kind];
+      item.vx += (center.x - item.x) * 0.0035 * cooling;
+      item.vy += (center.y - item.y) * 0.0035 * cooling;
     }
-    for (let index = 0; index < rows.length; index++) {
-      const angle = ((index / Math.max(1, rows.length)) * Math.PI * 2) + (ring.start * Math.PI / 180);
-      const countScale = Math.log10(rows[index].count + 1) / Math.log10(maxCount + 1);
-      layout.set(rows[index].id, {
-        x: 50 + Math.cos(angle) * ring.radius,
-        y: 50 + Math.sin(angle) * ring.radius,
-        size: Math.round(44 + countScale * 64),
-      });
+
+    for (const edge of forceEdges) {
+      const a = sim[edge.a];
+      const b = sim[edge.b];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.max(1, Math.hypot(dx, dy));
+      const desired = edge.source === 'database:ob1' || edge.target === 'database:ob1' ? 210 : 120;
+      const strength = Math.min(0.02, 0.004 + Math.log10(edge.count + 1) * 0.0025) * cooling;
+      const pull = (dist - desired) * strength;
+      const ux = dx / dist;
+      const uy = dy / dist;
+      a.vx += ux * pull;
+      a.vy += uy * pull;
+      b.vx -= ux * pull;
+      b.vy -= uy * pull;
     }
+
+    for (let i = 0; i < sim.length; i++) {
+      for (let j = i + 1; j < sim.length; j++) {
+        const a = sim[i];
+        const b = sim[j];
+        const dx = b.x - a.x || 0.01;
+        const dy = b.y - a.y || 0.01;
+        const distSq = Math.max(36, dx * dx + dy * dy);
+        if (distSq > 42000) continue;
+        const dist = Math.sqrt(distSq);
+        const push = ((a.r + b.r + 14) * 10 / distSq) * cooling;
+        const ux = dx / dist;
+        const uy = dy / dist;
+        a.vx -= ux * push;
+        a.vy -= uy * push;
+        b.vx += ux * push;
+        b.vy += uy * push;
+      }
+    }
+
+    for (const item of sim) {
+      item.vx *= 0.82;
+      item.vy *= 0.82;
+      item.x = Math.max(34, Math.min(width - 34, item.x + item.vx));
+      item.y = Math.max(28, Math.min(height - 28, item.y + item.vy));
+    }
+  }
+
+  const minX = Math.min(...sim.map((item) => item.x));
+  const maxX = Math.max(...sim.map((item) => item.x));
+  const minY = Math.min(...sim.map((item) => item.y));
+  const maxY = Math.max(...sim.map((item) => item.y));
+  const graphWidth = Math.max(1, maxX - minX);
+  const graphHeight = Math.max(1, maxY - minY);
+  const scale = Math.min(2.35, Math.max(1, Math.min((width - 120) / graphWidth, (height - 90) / graphHeight)));
+  const offsetX = (width - graphWidth * scale) / 2 - minX * scale;
+  const offsetY = (height - graphHeight * scale) / 2 - minY * scale;
+  const layout = new Map<string, WholeBrainPoint>();
+  for (const item of sim) {
+    const x = item.x * scale + offsetX;
+    const y = item.y * scale + offsetY;
+    const rightSide = x < width - 230;
+    layout.set(item.node.id, {
+      x,
+      y,
+      r: item.r,
+      label: item.label,
+      labelDx: rightSide ? item.r + 6 : -(item.r + 6),
+      labelDy: item.r > 12 ? -item.r - 3 : -8,
+      labelAnchor: rightSide ? 'start' : 'end',
+      fontSize: item.node.kind === 'database' ? 13 : item.r > 12 ? 11 : 9,
+    });
   }
   return layout;
 }
