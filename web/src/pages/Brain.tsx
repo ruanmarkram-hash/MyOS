@@ -4,7 +4,7 @@ import { Database, Search, Send, Share2, RefreshCcw } from 'lucide-preact';
 import { PageHeader, Tab } from '@/components/PageHeader';
 import { PageState } from '@/components/PageState';
 import { Pill } from '@/components/Pill';
-import { useFetch } from '@/lib/useFetch';
+import { useFetch, type FetchState } from '@/lib/useFetch';
 import { apiGet, apiPost, chatId } from '@/lib/api';
 import { formatRelativeTime, safeJsonArray } from '@/lib/format';
 
@@ -173,6 +173,39 @@ interface BrainGraphNeighborsResponse {
   error?: string;
 }
 
+interface WholeBrainGraphNode {
+  id: string;
+  label: string;
+  kind: 'database' | 'type' | 'source' | 'topic' | 'person' | 'time' | 'sensitivity';
+  count: number;
+  score: number;
+  sampleThoughtIds: string[];
+  metadata: Record<string, unknown>;
+}
+
+interface WholeBrainGraphEdge {
+  source: string;
+  target: string;
+  relationship: string;
+  weight: number;
+  count: number;
+}
+
+interface WholeBrainGraphResponse {
+  ok: boolean;
+  configured: boolean;
+  source: string;
+  total: number;
+  represented: number;
+  truncated: boolean;
+  coverage: number;
+  nodes: WholeBrainGraphNode[];
+  edges: WholeBrainGraphEdge[];
+  hiddenNodes: number;
+  generatedAt: string;
+  error?: string;
+}
+
 const TOPIC_COLORS = ['#8b8af0', '#10b981', '#f59e0b', '#5eb6ff', '#f472b6', '#a78bfa', '#ef4444'];
 const UNREADABLE_BRAIN_HIT = 'OpenBrain returned this hit without readable thought content.';
 
@@ -214,6 +247,10 @@ export function Brain() {
     30_000,
   );
   const graph = useFetch<BrainGraphResponse>('/api/brain/graph/nodes?limit=60', 30_000);
+  const wholeGraph = useFetch<WholeBrainGraphResponse>(
+    status.data?.openBrain.configured ? '/api/brain/map' : null,
+    60_000,
+  );
   const openBrainStats = useFetch<OpenBrainStatsResponse>(
     status.data?.openBrain.configured ? '/api/brain/stats/openbrain' : null,
     30_000,
@@ -269,7 +306,7 @@ export function Brain() {
           {tab === 'browse' && <BrainBrowse configured={status.data.openBrain.configured} />}
           {tab === 'search' && <BrainSearch configured={status.data.openBrain.configured} />}
           {tab === 'capture' && <BrainCapture configured={status.data.openBrain.configured} mutationsEnabled={status.data.mutationsEnabled} />}
-          {tab === 'graph' && <BrainGraph memories={memoryRows} clusters={clusters} graph={graph.data} />}
+          {tab === 'graph' && <BrainGraph memories={memoryRows} clusters={clusters} graph={graph.data} wholeGraph={wholeGraph} />}
         </div>
       )}
     </div>
@@ -737,7 +774,17 @@ interface TopicCluster {
   memories: Memory[];
 }
 
-function BrainGraph({ memories, clusters, graph }: { memories: Memory[]; clusters: TopicCluster[]; graph: BrainGraphResponse | null }) {
+function BrainGraph({
+  memories,
+  clusters,
+  graph,
+  wholeGraph,
+}: {
+  memories: Memory[];
+  clusters: TopicCluster[];
+  graph: BrainGraphResponse | null;
+  wholeGraph: FetchState<WholeBrainGraphResponse>;
+}) {
   const [ingesting, setIngesting] = useState(false);
   const [ingestNote, setIngestNote] = useState<string | null>(null);
 
@@ -755,8 +802,10 @@ function BrainGraph({ memories, clusters, graph }: { memories: Memory[]; cluster
     }
   }
 
-  if (graph?.configured && graph.nodes.length > 0) {
-    return <OpenBrainGraph graph={graph} localMemories={memories} ingestGraph={ingestGraph} ingesting={ingesting} ingestNote={ingestNote} />;
+  if (wholeGraph.loading && !wholeGraph.data) return <PageState loading />;
+  if (wholeGraph.error || wholeGraph.data?.error) return <PageState error={wholeGraph.error || wholeGraph.data?.error} />;
+  if (wholeGraph.data?.nodes?.length) {
+    return <WholeOpenBrainGraph graph={wholeGraph.data} legacyGraph={graph} refresh={wholeGraph.refresh} ingestGraph={ingestGraph} ingesting={ingesting} ingestNote={ingestNote} />;
   }
 
   if (memories.length === 0) {
@@ -839,6 +888,243 @@ function BrainGraph({ memories, clusters, graph }: { memories: Memory[]; cluster
       </div>
     </div>
   );
+}
+
+function WholeOpenBrainGraph({
+  graph,
+  legacyGraph,
+  refresh,
+  ingestGraph,
+  ingesting,
+  ingestNote,
+}: {
+  graph: WholeBrainGraphResponse;
+  legacyGraph: BrainGraphResponse | null;
+  refresh: () => void;
+  ingestGraph: () => void;
+  ingesting: boolean;
+  ingestNote: string | null;
+}) {
+  const [selectedId, setSelectedId] = useState(graph.nodes[0]?.id || 'database:ob1');
+  const selected = graph.nodes.find((node) => node.id === selectedId) || graph.nodes[0] || null;
+  const layout = useMemo(() => layoutWholeBrainGraph(graph.nodes), [graph.nodes]);
+  const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
+  const coverage = Math.round((graph.coverage || 0) * 1000) / 10;
+  const visibleEdges = graph.edges
+    .filter((edge) => layout.has(edge.source) && layout.has(edge.target))
+    .slice(0, 420);
+
+  return (
+    <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4 min-h-[620px]">
+      <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 overflow-hidden">
+        <div class="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Whole OB1 Database Graph</div>
+            <div class="text-[12px] text-[var(--color-text-muted)]">
+              {graph.represented.toLocaleString()} of {graph.total.toLocaleString()} thoughts represented · {coverage}% coverage
+              {graph.truncated ? ' · truncated' : ''}
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <Pill tone="done">actual OB1</Pill>
+            <button
+              type="button"
+              onClick={refresh}
+              class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] bg-[var(--color-elevated)] text-[var(--color-text)] border border-[var(--color-border)] hover:border-[var(--color-accent)] transition-colors"
+            >
+              <RefreshCcw size={13} />
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div class="relative h-[560px] rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] overflow-hidden">
+          <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
+            {visibleEdges.map((edge) => {
+              const a = layout.get(edge.source);
+              const b = layout.get(edge.target);
+              if (!a || !b) return null;
+              const intensity = Math.min(0.7, 0.12 + Math.log10(edge.count + 1) * 0.16);
+              return (
+                <line
+                  key={`${edge.source}-${edge.target}-${edge.relationship}`}
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  stroke={`color-mix(in srgb, var(--color-accent) ${Math.round(intensity * 100)}%, transparent)`}
+                  stroke-width={Math.min(0.65, 0.12 + Math.log10(edge.count + 1) * 0.08)}
+                />
+              );
+            })}
+          </svg>
+          {graph.nodes.filter((node) => layout.has(node.id)).map((node) => {
+            const point = layout.get(node.id)!;
+            const isSelected = selected?.id === node.id;
+            return (
+              <button
+                key={node.id}
+                type="button"
+                onClick={() => setSelectedId(node.id)}
+                title={`${node.label}: ${node.count} thoughts`}
+                class={'absolute -translate-x-1/2 -translate-y-1/2 rounded-full border flex flex-col items-center justify-center text-center px-2 transition-transform hover:scale-105 ' + (isSelected ? 'z-20' : 'z-10')}
+                style={{
+                  left: point.x + '%',
+                  top: point.y + '%',
+                  width: point.size + 'px',
+                  height: point.size + 'px',
+                  color: wholeGraphColor(node.kind),
+                  borderColor: isSelected ? 'var(--color-accent)' : 'color-mix(in srgb, currentColor 62%, transparent)',
+                  backgroundColor: isSelected ? 'color-mix(in srgb, var(--color-accent) 26%, var(--color-bg))' : 'color-mix(in srgb, currentColor 14%, var(--color-bg))',
+                }}
+              >
+                <span class="text-[11px] text-[var(--color-text)] leading-tight max-w-[108px] truncate">{node.label}</span>
+                <span class="text-[10px] font-mono text-[var(--color-text-faint)]">{node.count.toLocaleString()}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2 text-[11px] text-[var(--color-text-muted)]">
+          {(['type', 'source', 'topic', 'person', 'time', 'sensitivity'] as WholeBrainGraphNode['kind'][]).map((kind) => (
+            <span key={kind} class="inline-flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full" style={{ backgroundColor: wholeGraphColor(kind) }} />
+              {kind}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 overflow-y-auto max-h-[620px]">
+        <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-3">Selected cluster</div>
+        {selected ? (
+          <>
+            <div class="border-b border-[var(--color-border)] pb-3">
+              <div class="flex items-center gap-2 min-w-0">
+                <Pill>{selected.kind}</Pill>
+                <div class="text-[13px] text-[var(--color-text)] truncate">{selected.label}</div>
+              </div>
+              <div class="mt-2 text-[24px] font-semibold text-[var(--color-text)] tabular-nums">{selected.count.toLocaleString()}</div>
+              <div class="text-[11px] text-[var(--color-text-muted)]">thoughts in this cluster</div>
+              <div class="mt-3 space-y-1">
+                {Object.entries(selected.metadata || {}).slice(0, 8).map(([key, value]) => (
+                  <div key={key} class="flex items-start justify-between gap-3 text-[11px]">
+                    <span class="text-[var(--color-text-faint)]">{key}</span>
+                    <span class="text-[var(--color-text-muted)] text-right break-all">{Array.isArray(value) ? value.join(', ') : String(value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div class="mt-4">
+              <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-2">Strongest links</div>
+              <div class="space-y-2">
+                {graph.edges
+                  .filter((edge) => edge.source === selected.id || edge.target === selected.id)
+                  .sort((a, b) => b.count - a.count)
+                  .slice(0, 14)
+                  .map((edge) => {
+                    const other = nodeById.get(edge.source === selected.id ? edge.target : edge.source);
+                    if (!other) return null;
+                    return (
+                      <button
+                        type="button"
+                        key={`${edge.source}-${edge.target}-${edge.relationship}`}
+                        onClick={() => setSelectedId(other.id)}
+                        class="block w-full text-left bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md p-2 hover:border-[var(--color-accent)]"
+                      >
+                        <div class="flex items-center gap-2">
+                          <Pill>{other.kind}</Pill>
+                          <span class="text-[11px] text-[var(--color-text)] truncate">{other.label}</span>
+                          <span class="text-[10px] text-[var(--color-text-faint)] ml-auto">{edge.count.toLocaleString()}</span>
+                        </div>
+                        <div class="mt-1 text-[10px] text-[var(--color-text-faint)]">{edge.relationship}</div>
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+            {selected.sampleThoughtIds.length > 0 && (
+              <div class="mt-4">
+                <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-2">Sample thoughts</div>
+                <div class="space-y-2">
+                  {selected.sampleThoughtIds.slice(0, 5).map((id) => <ThoughtDetailInline key={id} id={id} />)}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div class="text-[11px] text-[var(--color-text-muted)]">Select a graph node.</div>
+        )}
+        <div class="mt-4 pt-3 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+          This graph is built from the actual OB1 `thoughts` table. The separate OB-Graph layer currently has {legacyGraph?.count ?? 0} manual nodes and should be treated as auxiliary structure, not the source of truth.
+          {ingestNote && <div class="mt-2">{ingestNote}</div>}
+          {legacyGraph?.configured && (
+            <button
+              type="button"
+              onClick={ingestGraph}
+              disabled={ingesting}
+              class="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] bg-[var(--color-elevated)] text-[var(--color-text)] border border-[var(--color-border)] hover:border-[var(--color-accent)] transition-colors disabled:opacity-45"
+            >
+              <RefreshCcw size={13} />
+              {ingesting ? 'Ingesting auxiliary graph' : 'Update auxiliary graph'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function wholeGraphColor(kind: WholeBrainGraphNode['kind']): string {
+  switch (kind) {
+    case 'database': return '#e5e7eb';
+    case 'type': return '#8b8af0';
+    case 'source': return '#10b981';
+    case 'topic': return '#5eb6ff';
+    case 'person': return '#f472b6';
+    case 'time': return '#f59e0b';
+    case 'sensitivity': return '#ef4444';
+  }
+}
+
+function layoutWholeBrainGraph(nodes: WholeBrainGraphNode[]): Map<string, { x: number; y: number; size: number }> {
+  const groups: Record<WholeBrainGraphNode['kind'], WholeBrainGraphNode[]> = {
+    database: [],
+    type: [],
+    source: [],
+    topic: [],
+    person: [],
+    time: [],
+    sensitivity: [],
+  };
+  for (const node of nodes) groups[node.kind]?.push(node);
+  const layout = new Map<string, { x: number; y: number; size: number }>();
+  const maxCount = Math.max(1, ...nodes.map((node) => node.count));
+  const rings: Array<{ kind: WholeBrainGraphNode['kind']; radius: number; start: number; cap: number }> = [
+    { kind: 'database', radius: 0, start: 0, cap: 1 },
+    { kind: 'type', radius: 16, start: -110, cap: 18 },
+    { kind: 'source', radius: 25, start: -35, cap: 24 },
+    { kind: 'sensitivity', radius: 32, start: 55, cap: 8 },
+    { kind: 'time', radius: 37, start: 130, cap: 30 },
+    { kind: 'person', radius: 41, start: 205, cap: 36 },
+    { kind: 'topic', radius: 45, start: 285, cap: 145 },
+  ];
+
+  for (const ring of rings) {
+    const rows = groups[ring.kind].sort((a, b) => b.count - a.count).slice(0, ring.cap);
+    if (ring.kind === 'database') {
+      for (const node of rows) layout.set(node.id, { x: 50, y: 50, size: 118 });
+      continue;
+    }
+    for (let index = 0; index < rows.length; index++) {
+      const angle = ((index / Math.max(1, rows.length)) * Math.PI * 2) + (ring.start * Math.PI / 180);
+      const countScale = Math.log10(rows[index].count + 1) / Math.log10(maxCount + 1);
+      layout.set(rows[index].id, {
+        x: 50 + Math.cos(angle) * ring.radius,
+        y: 50 + Math.sin(angle) * ring.radius,
+        size: Math.round(44 + countScale * 64),
+      });
+    }
+  }
+  return layout;
 }
 
 function OpenBrainGraph({

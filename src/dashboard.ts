@@ -116,6 +116,7 @@ import {
   createGraphEdge,
   createGraphNode,
   getGraphNeighbors,
+  getOpenBrainMap,
   getOpenBrainStats,
   getOpenBrainThought,
   getOpenBrainThoughtConnections,
@@ -1111,8 +1112,162 @@ type GraphCandidateEdge = {
   properties: Record<string, unknown>;
 };
 
+type WholeBrainGraphNode = {
+  id: string;
+  label: string;
+  kind: 'database' | 'type' | 'source' | 'topic' | 'person' | 'time' | 'sensitivity';
+  count: number;
+  score: number;
+  sampleThoughtIds: string[];
+  metadata: Record<string, unknown>;
+};
+
+type WholeBrainGraphEdge = {
+  source: string;
+  target: string;
+  relationship: string;
+  weight: number;
+  count: number;
+};
+
 function addGraphNode(nodes: Map<string, GraphCandidateNode>, node: GraphCandidateNode): void {
   if (!nodes.has(node.key)) nodes.set(node.key, node);
+}
+
+function metadataStringArray(metadata: Record<string, unknown>, key: string): string[] {
+  const value = metadata?.[key];
+  if (!Array.isArray(value)) return [];
+  return value.map(String).map((item) => item.trim()).filter(Boolean).slice(0, 20);
+}
+
+function monthBucket(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'unknown date';
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function bumpWholeBrainNode(
+  nodes: Map<string, WholeBrainGraphNode>,
+  id: string,
+  label: string,
+  kind: WholeBrainGraphNode['kind'],
+  thoughtId: string,
+  score: number,
+  metadata: Record<string, unknown> = {},
+): void {
+  const existing = nodes.get(id);
+  if (existing) {
+    existing.count++;
+    existing.score += score;
+    if (existing.sampleThoughtIds.length < 8) existing.sampleThoughtIds.push(thoughtId);
+    return;
+  }
+  nodes.set(id, {
+    id,
+    label,
+    kind,
+    count: 1,
+    score,
+    sampleThoughtIds: [thoughtId],
+    metadata,
+  });
+}
+
+function edgeKey(source: string, target: string, relationship: string): string {
+  return `${source}::${relationship}::${target}`;
+}
+
+function bumpWholeBrainEdge(
+  edges: Map<string, WholeBrainGraphEdge>,
+  source: string,
+  target: string,
+  relationship: string,
+  weight = 1,
+): void {
+  if (source === target) return;
+  const key = edgeKey(source, target, relationship);
+  const existing = edges.get(key);
+  if (existing) {
+    existing.count++;
+    existing.weight += weight;
+    return;
+  }
+  edges.set(key, { source, target, relationship, weight, count: 1 });
+}
+
+async function buildWholeOpenBrainGraph() {
+  const map = await getOpenBrainMap(10_000);
+  const nodes = new Map<string, WholeBrainGraphNode>();
+  const edges = new Map<string, WholeBrainGraphEdge>();
+  const rootId = 'database:ob1';
+  nodes.set(rootId, {
+    id: rootId,
+    label: 'OB1 Database',
+    kind: 'database',
+    count: map.represented,
+    score: map.represented,
+    sampleThoughtIds: [],
+    metadata: {
+      total: map.total,
+      represented: map.represented,
+      truncated: map.truncated,
+      coverage: map.total ? map.represented / map.total : 1,
+    },
+  });
+
+  for (const thought of map.thoughts) {
+    const score = Number(thought.importance ?? 1) + Number(thought.quality_score ?? 0) / 50;
+    const type = thought.type || String(thought.metadata?.type || 'unknown');
+    const source = thought.source_type || String(thought.metadata?.source || 'unknown');
+    const sensitivity = thought.sensitivity_tier || 'standard';
+    const month = monthBucket(thought.created_at);
+    const nodeIds: string[] = [];
+    const add = (id: string, label: string, kind: WholeBrainGraphNode['kind'], metadata: Record<string, unknown> = {}) => {
+      bumpWholeBrainNode(nodes, id, label, kind, thought.id, score, metadata);
+      nodeIds.push(id);
+    };
+
+    add(`type:${type}`, type, 'type');
+    add(`source:${source}`, source, 'source');
+    add(`sensitivity:${sensitivity}`, sensitivity, 'sensitivity');
+    add(`time:${month}`, month, 'time');
+    for (const topic of metadataStringArray(thought.metadata, 'topics')) add(`topic:${topic.toLowerCase()}`, topic, 'topic');
+    for (const person of metadataStringArray(thought.metadata, 'people')) add(`person:${person.toLowerCase()}`, person, 'person');
+
+    for (const id of nodeIds) bumpWholeBrainEdge(edges, rootId, id, 'contains', 1);
+    for (let i = 0; i < nodeIds.length; i++) {
+      for (let j = i + 1; j < nodeIds.length; j++) {
+        bumpWholeBrainEdge(edges, nodeIds[i], nodeIds[j], 'co_occurs_in_thought', 1);
+      }
+    }
+  }
+
+  const sortedNodes = [...nodes.values()].sort((a, b) => {
+    if (a.kind === 'database') return -1;
+    if (b.kind === 'database') return 1;
+    return b.count - a.count || a.label.localeCompare(b.label);
+  });
+  const visibleNodeIds = new Set([
+    rootId,
+    ...sortedNodes.filter((node) => node.kind !== 'database').slice(0, 260).map((node) => node.id),
+  ]);
+  const visibleEdges = [...edges.values()]
+    .filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target))
+    .sort((a, b) => b.count - a.count || b.weight - a.weight)
+    .slice(0, 600);
+
+  return {
+    ok: true,
+    source: 'ob1-thoughts',
+    total: map.total,
+    represented: map.represented,
+    truncated: map.truncated,
+    coverage: map.total ? map.represented / map.total : 1,
+    nodes: sortedNodes.filter((node) => visibleNodeIds.has(node.id)),
+    edges: visibleEdges,
+    hiddenNodes: Math.max(0, sortedNodes.length - visibleNodeIds.size),
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 function missionGraphRoute(task: MissionTask): string {
@@ -3461,6 +3616,14 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     }
     const stats = await getOpenBrainStats();
     return c.json({ ok: true, configured: true, stats });
+  });
+
+  app.get('/api/brain/map', async (c) => {
+    if (!openBrainConfigured()) {
+      return c.json({ ok: false, configured: false, error: 'OpenBrain is not configured.', nodes: [], edges: [] }, 400);
+    }
+    const graph = await buildWholeOpenBrainGraph();
+    return c.json({ configured: true, ...graph });
   });
 
   app.post('/api/brain/capture', async (c) => {

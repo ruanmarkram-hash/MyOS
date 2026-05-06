@@ -42,6 +42,24 @@ export interface OpenBrainThoughtList {
   offset: number;
 }
 
+export interface OpenBrainMapThought {
+  id: string;
+  type: string | null;
+  source_type: string | null;
+  importance: number | null;
+  quality_score: number | null;
+  sensitivity_tier: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface OpenBrainMap {
+  thoughts: OpenBrainMapThought[];
+  total: number;
+  represented: number;
+  truncated: boolean;
+}
+
 export interface CaptureArgs {
   content: string;
 }
@@ -241,6 +259,38 @@ export async function getOpenBrainThoughtConnections(id: string, limit = 20): Pr
   const text = await res.text();
   if (!res.ok) throw new Error(`OpenBrain connections HTTP ${res.status}: ${text.slice(0, 300)}`);
   return JSON.parse(text) as Array<Record<string, unknown>>;
+}
+
+export async function getOpenBrainMap(maxRows = 10_000): Promise<OpenBrainMap> {
+  const pageSize = 1000;
+  const rows: OpenBrainMapThought[] = [];
+  let total = 0;
+
+  for (let offset = 0; offset < maxRows; offset += pageSize) {
+    const params = new URLSearchParams();
+    params.set('select', 'id,type,source_type,importance,quality_score,sensitivity_tier,metadata,created_at');
+    params.set('order', 'created_at.desc');
+    const upper = Math.min(offset + pageSize - 1, maxRows - 1);
+    const res = await fetch(restEndpoint(`thoughts?${params.toString()}`), {
+      headers: serviceHeaders({
+        prefer: 'count=exact',
+        range: `${offset}-${upper}`,
+      }),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`OpenBrain map HTTP ${res.status}: ${text.slice(0, 300)}`);
+    const page = JSON.parse(text) as OpenBrainMapThought[];
+    rows.push(...page);
+    total = contentRangeTotal(res.headers.get('content-range'), rows.length);
+    if (page.length < pageSize || rows.length >= total) break;
+  }
+
+  return {
+    thoughts: rows,
+    total,
+    represented: rows.length,
+    truncated: total > rows.length,
+  };
 }
 
 function parseJsonToolText<T>(text: string): T {
