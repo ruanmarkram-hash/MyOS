@@ -11,6 +11,7 @@ export interface AgentConfig {
   botTokenEnv: string;
   botToken: string;
   model?: string;
+  provider?: string;
   mcpServers?: string[];
   obsidian?: {
     vault: string;
@@ -67,6 +68,7 @@ export function loadAgentConfig(agentId: string): AgentConfig {
   const description = (raw['description'] as string) ?? '';
   const botTokenEnv = raw['telegram_bot_token_env'] as string;
   const model = raw['model'] as string | undefined;
+  const provider = raw['provider'] as string | undefined;
 
   if (!name || !botTokenEnv) {
     throw new Error(`Agent config ${configPath} must have 'name' and 'telegram_bot_token_env'`);
@@ -104,6 +106,7 @@ export function loadAgentConfig(agentId: string): AgentConfig {
     botTokenEnv,
     botToken,
     model,
+    provider,
     mcpServers,
     obsidian,
     meetVoiceId,
@@ -119,6 +122,17 @@ export function setAgentModel(agentId: string, model: string): void {
 
   const raw = yaml.load(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
   raw['model'] = model;
+  fs.writeFileSync(configPath, yaml.dump(raw, { lineWidth: -1 }), 'utf-8');
+}
+
+/** Update the provider field in an agent's agent.yaml file. */
+export function setAgentProvider(agentId: string, provider: string): void {
+  const agentDir = resolveAgentDir(agentId);
+  const configPath = path.join(agentDir, 'agent.yaml');
+  if (!fs.existsSync(configPath)) throw new Error(`Agent config not found: ${configPath}`);
+
+  const raw = yaml.load(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+  raw['provider'] = provider;
   fs.writeFileSync(configPath, yaml.dump(raw, { lineWidth: -1 }), 'utf-8');
 }
 
@@ -165,6 +179,7 @@ export function listAllAgents(): Array<{
   name: string;
   description: string;
   model?: string;
+  provider?: string;
 }> {
   const ids = listAgentIds();
   const result: Array<{
@@ -172,6 +187,7 @@ export function listAllAgents(): Array<{
     name: string;
     description: string;
     model?: string;
+    provider?: string;
   }> = [];
 
   for (const id of ids) {
@@ -182,6 +198,7 @@ export function listAllAgents(): Array<{
         name: config.name,
         description: config.description,
         model: config.model,
+        provider: config.provider,
       });
     } catch {
       // Skip agents with broken config

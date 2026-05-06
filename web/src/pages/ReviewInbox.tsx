@@ -42,6 +42,12 @@ interface ReviewItem {
   result: string | null;
   error: string | null;
   kind: 'needs_action' | 'sorted';
+  manifest: {
+    route: 'needs_review' | 'needs_triage' | 'sorted' | 'done';
+    summary: string;
+    blockers: string[];
+    nextAction: string | null;
+  };
   deliverables: Deliverable[];
   review: ReviewState;
 }
@@ -333,6 +339,18 @@ function ReviewCard({
           <div class={'text-[12px] text-[var(--color-text-muted)] mt-1 leading-relaxed whitespace-pre-wrap ' + (expanded ? '' : 'line-clamp-2')}>
             {expanded ? (item.result || item.error || item.summary) : item.summary}
           </div>
+          {(item.manifest.nextAction || item.manifest.blockers.length > 0) && (
+            <div class="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-2.5 py-2">
+              {item.manifest.nextAction && (
+                <div class="text-[11px] text-[var(--color-text)]">
+                  <span class="text-[var(--color-text-faint)] uppercase tracking-wider">Next </span>{item.manifest.nextAction}
+                </div>
+              )}
+              {item.manifest.blockers.slice(0, 2).map((blocker) => (
+                <div key={blocker} class="mt-1 text-[11px] text-[var(--color-status-failed)] line-clamp-2">{blocker}</div>
+              ))}
+            </div>
+          )}
         </button>
       </div>
 

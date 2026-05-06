@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, getMissionReview, getMissionTask, updateTaskAfterRun } from './db.js';
+import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, getMissionManifest, getMissionReview, getMissionTask, updateTaskAfterRun } from './db.js';
 import { buildDashboardApp, configuredReviewExportEmail, configuredReviewExportFromEmail, createReviewEmailAttachment } from './dashboard.js';
 import type { Hono } from 'hono';
 
@@ -330,6 +330,13 @@ describe('GET /api/runtime/stack', () => {
         configuredProvider: expect.any(String),
         supportedProviders: expect.arrayContaining(['claude', 'codex']),
       }),
+      agentRoutes: expect.arrayContaining([
+        expect.objectContaining({
+          agentId: 'main',
+          provider: expect.stringMatching(/^(claude|codex)$/),
+          configuredProvider: expect.any(String),
+        }),
+      ]),
       components: expect.any(Array),
     });
     expect(body.components.map((c: any) => c.id)).toEqual(expect.arrayContaining([
@@ -738,8 +745,19 @@ describe('GET /api/review/inbox', () => {
       id: 'm-review-1',
       title: 'Write Charter deliverable',
       status: 'completed',
+      manifest: expect.objectContaining({
+        route: 'needs_review',
+        deliverables: expect.any(Array),
+        nextAction: expect.any(String),
+      }),
       review: expect.objectContaining({ status: 'needs_review' }),
       deliverables: expect.any(Array),
+    });
+    expect(getMissionManifest(getMissionTask('m-review-1')!)).toMatchObject({
+      route: 'needs_review',
+      deliverables: expect.arrayContaining([
+        expect.objectContaining({ kind: 'file', target: '/tmp/review-deliverable.txt' }),
+      ]),
     });
   });
 
@@ -751,6 +769,17 @@ describe('GET /api/review/inbox', () => {
     expect(res.status).toBe(200);
     const body = await jsonOf(res);
     expect(body.items.map((item: any) => item.id)).not.toContain('m-dev-history');
+  });
+
+  it('does not route dev work to review just because the prompt says deliverable', async () => {
+    createMissionTask('m-dev-deliverable-word', 'Build deliverable manifest parser', 'Implement deliverable manifest routing internals', 'mason', 'dashboard', 4);
+    completeMissionTask('m-dev-deliverable-word', 'Mission complete. Tests passed and commit landed.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=10');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.items.map((item: any) => item.id)).not.toContain('m-dev-deliverable-word');
+    expect(getMissionManifest(getMissionTask('m-dev-deliverable-word')!)).toMatchObject({ route: 'sorted' });
   });
 
   it('does not treat generic Codex review wording as a Ruan review decision', async () => {
@@ -1342,6 +1371,19 @@ describe('PATCH /api/agents/:id/model', () => {
       model: 'claude-sonnet-4-6',
       restartRequired: false,
     });
+  });
+});
+
+describe('PATCH /api/agents/:id/provider', () => {
+  it('rejects unsupported providers before writing config', async () => {
+    const res = await app.request('/api/agents/main/provider' + Q, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'openbrain' }),
+    });
+    expect(res.status).toBe(400);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({ ok: false, error: expect.any(String) });
   });
 });
 

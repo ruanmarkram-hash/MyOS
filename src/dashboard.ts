@@ -38,6 +38,7 @@ import {
   getMissionTasks,
   getMissionTask,
   getMissionReview,
+  getMissionManifest,
   createMissionTask,
   completeMissionTask,
   cancelMissionTask,
@@ -69,7 +70,7 @@ import {
 import { generateContent, parseJsonResponse } from './gemini.js';
 import { getSecurityStatus, getScrubbedSdkEnv } from './security.js';
 import { readEnvFile } from './env.js';
-import { listAgentIds, loadAgentConfig, setAgentModel } from './agent-config.js';
+import { listAgentIds, loadAgentConfig, setAgentModel, setAgentProvider, type AgentConfig } from './agent-config.js';
 import {
   listTemplates,
   validateAgentId,
@@ -156,6 +157,24 @@ function queueMainRestart(source: string): boolean {
 
 function configuredProviderValue(): string {
   return process.env.LLM_PROVIDER || readEnvFile(['LLM_PROVIDER']).LLM_PROVIDER || LLM_PROVIDER;
+}
+
+function configuredProviderForAgent(agentId: string, config?: Pick<AgentConfig, 'provider'> | null): string {
+  return agentId === 'main' ? configuredProviderValue() : (config?.provider || configuredProviderValue());
+}
+
+function providerStatusForAgent(agentId: string, config?: Pick<AgentConfig, 'provider'> | null): { provider: LlmProviderName; configuredProvider: string; providerError: string | null } {
+  const configuredProvider = configuredProviderForAgent(agentId, config);
+  try {
+    const activeProvider = agentId === 'main' ? normalizeLlmProvider(LLM_PROVIDER) : normalizeLlmProvider(configuredProvider);
+    return { provider: activeProvider, configuredProvider, providerError: null };
+  } catch (err: any) {
+    return {
+      provider: 'claude',
+      configuredProvider,
+      providerError: err?.recovery?.userMessage || err?.message || 'Unsupported LLM provider',
+    };
+  }
 }
 
 function writeEnvValue(key: string, value: string): void {
@@ -508,7 +527,7 @@ function reviewTaskText(task: MissionTask): string {
 }
 
 function reviewOutcomeText(task: MissionTask): string {
-  return `${task.title}\n${task.result || ''}\n${task.error || ''}`;
+  return `${task.result || ''}\n${task.error || ''}`;
 }
 
 function missionAgeHours(task: MissionTask): number {
@@ -630,11 +649,13 @@ function isRecentActionableFailure(task: MissionTask): boolean {
 }
 
 function defaultReviewStatusForTask(task: MissionTask, missions: MissionTask[]): MissionReviewStatus | null {
+  const manifest = getMissionManifest(task);
   if (task.status === 'failed' || task.status === 'partial') {
-    return isRecentActionableFailure(task) ? 'needs_triage' : null;
+    return manifest.route === 'needs_triage' && isRecentActionableFailure(task) ? 'needs_triage' : null;
   }
   if (task.status === 'completed') {
     if (completedMissionHasFollowUp(task, missions)) return null;
+    if (manifest.route === 'needs_review') return 'needs_review';
     // Category A: anything that needs Ruan's hands or a deliverable he asked for.
     if (containsHumanActionSignal(task)) return 'needs_review';
     if (isNonDevDeliverable(task)) return 'needs_review';
@@ -699,6 +720,8 @@ function shouldShowReview(review: MissionReview): boolean {
 function reviewItemKind(task: MissionTask, missions: MissionTask[]): 'needs_action' | 'sorted' {
   if (task.status === 'failed' || task.status === 'partial') return 'needs_action';
   if (task.status === 'completed') {
+    const manifest = getMissionManifest(task);
+    if (manifest.route === 'needs_review' || manifest.route === 'needs_triage') return 'needs_action';
     if (containsHumanActionSignal(task)) return 'needs_action';
     if (isNonDevDeliverable(task)) return 'needs_action';
     if (isSortedCompletion(task, missions)) return 'sorted';
@@ -708,6 +731,7 @@ function reviewItemKind(task: MissionTask, missions: MissionTask[]): 'needs_acti
 
 function buildReviewItem(task: MissionTask, review: MissionReview, missions: MissionTask[]) {
   const text = task.result || task.error || '';
+  const manifest = getMissionManifest(task);
   return {
     id: task.id,
     title: task.title,
@@ -720,6 +744,7 @@ function buildReviewItem(task: MissionTask, review: MissionReview, missions: Mis
     result: task.result,
     error: task.error,
     kind: reviewItemKind(task, missions),
+    manifest,
     deliverables: extractMissionDeliverables(task),
     review: {
       status: review.review_status,
@@ -2957,6 +2982,37 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const mutationsEnabled = killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true);
     const llmSpawnEnabled = killSwitchFlag('LLM_SPAWN_ENABLED', true);
     const activeCall = getIsProcessing().processing;
+    const agentRoutes = [
+      {
+        agentId: 'main',
+        name: 'Main',
+        ...providerStatusForAgent('main', null),
+        model: agentDefaultModel || MAIN_AGENT_MODEL,
+        restartRequired: false,
+      },
+      ...listAgentIds().map((id) => {
+        try {
+          const config = loadAgentConfig(id);
+          const status = providerStatusForAgent(id, config);
+          return {
+            agentId: id,
+            name: config.name,
+            ...status,
+            model: config.model || MAIN_AGENT_MODEL,
+            restartRequired: true,
+          };
+        } catch (err: any) {
+          const status = providerStatusForAgent(id, null);
+          return {
+            agentId: id,
+            name: id,
+            ...status,
+            model: MAIN_AGENT_MODEL,
+            restartRequired: true,
+          };
+        }
+      }),
+    ];
 
     return c.json({
       updatedAt: new Date().toISOString(),
@@ -2970,6 +3026,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         sessionShort: runtime.sessionShort,
         providerError,
       },
+      agentRoutes,
       components: [
         {
           id: 'provider-adapter',
@@ -2991,6 +3048,12 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
             resolvedModel: runtime.resolvedModel,
             spawnEnabled: llmSpawnEnabled,
             activeCall,
+            agentRoutes: agentRoutes.map((route) => ({
+              agentId: route.agentId,
+              provider: route.provider,
+              configuredProvider: route.configuredProvider,
+              model: route.model,
+            })),
           },
           actions: {
             smoke: '/api/provider/smoke',
@@ -3113,13 +3176,14 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       return c.json({ ok: false, error: err?.message || 'Unsupported provider' }, 400);
     }
 
+    const previousProvider = currentProviderStatus().provider;
     writeEnvValue('LLM_PROVIDER', provider);
     return c.json({
       ok: true,
       provider,
-      previousProvider: currentProviderStatus().provider,
-      restartRequired: provider !== currentProviderStatus().provider,
-      message: provider === currentProviderStatus().provider
+      previousProvider,
+      restartRequired: provider !== previousProvider,
+      message: provider === previousProvider
         ? 'LLM_PROVIDER already matches the active runtime provider.'
         : 'LLM_PROVIDER updated. Restart Sage to activate this provider.',
     });
@@ -3227,11 +3291,11 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   // List all configured agents with status
   app.get('/api/agents', (c) => {
     const chatId = c.req.query('chatId') || '';
-    const { provider, providerError } = currentProviderStatus();
     const agentIds = listAgentIds();
     const agents = agentIds.map((id) => {
       try {
         const config = loadAgentConfig(id);
+        const { provider, configuredProvider, providerError } = providerStatusForAgent(id, config);
         // Check if agent process is alive via PID file
         const pidFile = path.join(STORE_DIR, `agent-${id}.pid`);
         let running = false;
@@ -3251,7 +3315,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           description: config.description,
           model: runtime.configuredModel,
           provider: runtime.provider,
-          configuredProvider: LLM_PROVIDER,
+          configuredProvider,
           providerError,
           configuredModel: runtime.configuredModel,
           resolvedModel: runtime.resolvedModel,
@@ -3263,13 +3327,14 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           todayCost: stats.todayCost,
         };
       } catch {
+        const { provider, configuredProvider, providerError } = providerStatusForAgent(id, null);
         return {
           id,
           name: id,
           description: '',
           model: 'unknown',
           provider,
-          configuredProvider: LLM_PROVIDER,
+          configuredProvider,
           providerError,
           configuredModel: 'unknown',
           resolvedModel: 'unknown',
@@ -3294,8 +3359,9 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       } catch { /* not running */ }
     }
     const mainStats = getAgentTokenStats('main');
-    const mainSessionId = getSession(chatId, 'main', provider);
-    const mainRuntime = providerRuntime(provider, agentDefaultModel || MAIN_AGENT_MODEL, mainSessionId);
+    const mainProviderStatus = providerStatusForAgent('main', null);
+    const mainSessionId = getSession(chatId, 'main', mainProviderStatus.provider);
+    const mainRuntime = providerRuntime(mainProviderStatus.provider, agentDefaultModel || MAIN_AGENT_MODEL, mainSessionId);
     const allAgents = [
       {
         id: 'main',
@@ -3303,8 +3369,8 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         description: 'Primary ClaudeClaw bot',
         model: mainRuntime.configuredModel,
         provider: mainRuntime.provider,
-        configuredProvider: LLM_PROVIDER,
-        providerError,
+        configuredProvider: mainProviderStatus.configuredProvider,
+        providerError: mainProviderStatus.providerError,
         configuredModel: mainRuntime.configuredModel,
         resolvedModel: mainRuntime.resolvedModel,
         hasSession: mainRuntime.hasSession,
@@ -3386,6 +3452,46 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       return c.json({ ok: true, agent: agentId, model, restartRequired: true });
     } catch (err) {
       return c.json({ error: 'Failed to update model' }, 500);
+    }
+  });
+
+  app.patch('/api/agents/:id/provider', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+    const agentId = c.req.param('id');
+    const body = await c.req.json<{ provider?: string }>();
+    let provider: LlmProviderName;
+    try {
+      provider = normalizeLlmProvider(body?.provider);
+    } catch (err: any) {
+      return c.json({ ok: false, error: err?.message || 'Unsupported provider' }, 400);
+    }
+
+    try {
+      if (agentId === 'main') {
+        const previousProvider = currentProviderStatus().provider;
+        writeEnvValue('LLM_PROVIDER', provider);
+        return c.json({
+          ok: true,
+          agent: 'main',
+          provider,
+          restartRequired: provider !== previousProvider,
+          message: provider === previousProvider
+            ? 'Main provider already matches active runtime.'
+            : 'Main provider saved. Restart Sage to activate it.',
+        });
+      }
+      setAgentProvider(agentId, provider);
+      return c.json({
+        ok: true,
+        agent: agentId,
+        provider,
+        restartRequired: true,
+        message: `${agentId} provider saved. Restart that agent to activate it.`,
+      });
+    } catch {
+      return c.json({ ok: false, error: 'Failed to update provider' }, 500);
     }
   });
 

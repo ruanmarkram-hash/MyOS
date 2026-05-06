@@ -6,6 +6,7 @@ import path from 'path';
 import { DB_ENCRYPTION_KEY, STORE_DIR } from './config.js';
 import { cosineSimilarity } from './embeddings.js';
 import { logger } from './logger.js';
+import { buildMissionManifest, parseMissionManifest, type MissionManifest } from './mission-manifest.js';
 
 // ── Field-Level Encryption (AES-256-GCM) ────────────────────────────
 // All message bodies (WhatsApp, Slack) are encrypted before storage
@@ -235,6 +236,7 @@ function createSchema(database: Database.Database): void {
       created_at      INTEGER NOT NULL,
       started_at      INTEGER,
       completed_at    INTEGER,
+      manifest_json   TEXT,
       notify_on_done  INTEGER NOT NULL DEFAULT 0,
       notified_at     INTEGER,
       delivered_at    INTEGER,
@@ -684,6 +686,9 @@ function runMigrations(database: Database.Database): void {
   if (missionColNames.length > 0 && !missionColNames.includes('model')) {
     database.exec(`ALTER TABLE mission_tasks ADD COLUMN model TEXT`);
   }
+  if (missionColNames.length > 0 && !missionColNames.includes('manifest_json')) {
+    database.exec(`ALTER TABLE mission_tasks ADD COLUMN manifest_json TEXT`);
+  }
   // Mission tasks: --notify-on-done flag + notified_at timestamp (idempotency guard)
   if (missionColNames.length > 0 && !missionColNames.includes('notify_on_done')) {
     database.exec(`ALTER TABLE mission_tasks ADD COLUMN notify_on_done INTEGER NOT NULL DEFAULT 0`);
@@ -923,6 +928,7 @@ function runMigrations(database: Database.Database): void {
         result TEXT, error TEXT, created_by TEXT NOT NULL DEFAULT 'dashboard',
         priority INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
         started_at INTEGER, completed_at INTEGER,
+        manifest_json TEXT,
         model TEXT,
         notify_on_done INTEGER NOT NULL DEFAULT 0,
         notified_at INTEGER,
@@ -932,11 +938,11 @@ function runMigrations(database: Database.Database): void {
       INSERT INTO mission_tasks_new
         (id, title, prompt, assigned_agent, status, result, error, created_by,
          priority, created_at, started_at, completed_at,
-         model, notify_on_done, notified_at, delivered_at, notify_attempt_count)
+         manifest_json, model, notify_on_done, notified_at, delivered_at, notify_attempt_count)
       SELECT
         id, title, prompt, assigned_agent, status, result, error, created_by,
         priority, created_at, started_at, completed_at,
-        model, notify_on_done, notified_at, delivered_at, notify_attempt_count
+        manifest_json, model, notify_on_done, notified_at, delivered_at, notify_attempt_count
       FROM mission_tasks;
       DROP TABLE mission_tasks;
       ALTER TABLE mission_tasks_new RENAME TO mission_tasks;
@@ -2486,6 +2492,7 @@ export interface MissionTask {
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
+  manifest_json: string | null;
   model: string | null;
   notify_on_done: number;
   notified_at: number | null;
@@ -2789,9 +2796,23 @@ export function completeMissionTask(
   error?: string,
 ): void {
   const now = Math.floor(Date.now() / 1000);
+  const task = getMissionTask(id);
+  const manifest = task
+    ? buildMissionManifest({ status, title: task.title, prompt: task.prompt, result, error })
+    : null;
   db.prepare(
-    `UPDATE mission_tasks SET status = ?, result = ?, error = ?, completed_at = ? WHERE id = ?`,
-  ).run(status, result, error ?? null, now, id);
+    `UPDATE mission_tasks SET status = ?, result = ?, error = ?, completed_at = ?, manifest_json = ? WHERE id = ?`,
+  ).run(status, result, error ?? null, now, manifest ? JSON.stringify(manifest) : null, id);
+}
+
+export function getMissionManifest(task: MissionTask): MissionManifest {
+  return parseMissionManifest(task.manifest_json) ?? buildMissionManifest({
+    status: task.status,
+    title: task.title,
+    prompt: task.prompt,
+    result: task.result,
+    error: task.error,
+  });
 }
 
 export function cancelMissionTask(id: string): boolean {

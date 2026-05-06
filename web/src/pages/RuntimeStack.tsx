@@ -32,6 +32,15 @@ interface RuntimeStackPayload {
     sessionShort: string | null;
     providerError: string | null;
   };
+  agentRoutes: Array<{
+    agentId: string;
+    name: string;
+    provider: 'claude' | 'codex';
+    configuredProvider: string;
+    providerError: string | null;
+    model: string;
+    restartRequired: boolean;
+  }>;
   components: RuntimeComponent[];
 }
 
@@ -143,6 +152,30 @@ export function RuntimeStack() {
             </div>
             {note && <div class="mt-3 text-[11px] text-[var(--color-text-muted)]">{note}</div>}
             {data.runtime.providerError && <div class="mt-3 text-[11px] text-[var(--color-status-failed)]">{data.runtime.providerError}</div>}
+          </div>
+
+          <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Agent provider routes</div>
+                <div class="text-[12px] text-[var(--color-text-muted)] mt-1">Each agent can run on a different provider while keeping provider-scoped sessions separate.</div>
+              </div>
+            </div>
+            <div class="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))' }}>
+              {data.agentRoutes.map((route) => (
+                <div key={route.agentId} class="rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-3 py-2">
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                      <div class="text-[12px] text-[var(--color-text)] truncate">{route.name || route.agentId}</div>
+                      <div class="text-[10px] text-[var(--color-text-faint)] uppercase tracking-wider">{route.agentId}</div>
+                    </div>
+                    <Pill tone={route.provider === data.runtime.activeProvider ? 'accent' : 'neutral'}>{route.provider}</Pill>
+                  </div>
+                  <div class="mt-2 text-[11px] text-[var(--color-text-muted)] truncate" title={route.model}>{compact(route.model)}</div>
+                  {route.providerError && <div class="mt-1 text-[10.5px] text-[var(--color-status-failed)] truncate">{route.providerError}</div>}
+                </div>
+              ))}
+            </div>
           </div>
 
           <div class="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))' }}>

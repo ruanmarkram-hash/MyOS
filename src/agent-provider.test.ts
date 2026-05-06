@@ -23,6 +23,7 @@ describe('agent provider configuration', () => {
       CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
       CODEX_SONNET_MODEL: 'gpt-5.4',
       CODEX_OPUS_MODEL: 'gpt-5.5',
+      agentProviderOverride: undefined,
     }));
     vi.doMock('./llm-provider.js', async (importOriginal) => {
       const original = await importOriginal<typeof import('./llm-provider.js')>();
@@ -79,6 +80,7 @@ describe('agent provider configuration', () => {
       CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
       CODEX_SONNET_MODEL: 'gpt-5.4',
       CODEX_OPUS_MODEL: 'gpt-5.5',
+      agentProviderOverride: undefined,
     }));
     vi.doMock('./llm-provider.js', async (importOriginal) => {
       const original = await importOriginal<typeof import('./llm-provider.js')>();
@@ -113,6 +115,7 @@ describe('agent provider configuration', () => {
       CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
       CODEX_SONNET_MODEL: 'gpt-5.4',
       CODEX_OPUS_MODEL: 'gpt-5.5',
+      agentProviderOverride: undefined,
     }));
     vi.doMock('./llm-provider.js', async (importOriginal) => {
       const original = await importOriginal<typeof import('./llm-provider.js')>();
@@ -148,6 +151,7 @@ describe('agent provider configuration', () => {
       CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
       CODEX_SONNET_MODEL: 'gpt-5.4',
       CODEX_OPUS_MODEL: 'gpt-5.5',
+      agentProviderOverride: undefined,
     }));
     vi.doMock('./llm-provider.js', async (importOriginal) => {
       const original = await importOriginal<typeof import('./llm-provider.js')>();
@@ -187,6 +191,7 @@ describe('agent provider configuration', () => {
       CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
       CODEX_SONNET_MODEL: 'gpt-5.4',
       CODEX_OPUS_MODEL: 'gpt-5.5',
+      agentProviderOverride: undefined,
     }));
     vi.doMock('./llm-provider.js', async (importOriginal) => {
       const original = await importOriginal<typeof import('./llm-provider.js')>();
@@ -219,6 +224,7 @@ describe('agent provider configuration', () => {
       CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
       CODEX_SONNET_MODEL: 'gpt-5.4',
       CODEX_OPUS_MODEL: 'gpt-5.5',
+      agentProviderOverride: undefined,
     }));
     vi.doMock('./logger.js', () => ({
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },

@@ -21,6 +21,7 @@ vi.mock('./config.js', () => ({
   LLM_PROVIDER: 'claude',
   PROJECT_ROOT: testPaths.projectRoot,
   agentCwd: undefined,
+  agentProviderOverride: undefined,
   CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
   CODEX_SONNET_MODEL: 'gpt-5.4',
   CODEX_OPUS_MODEL: 'gpt-5.5',

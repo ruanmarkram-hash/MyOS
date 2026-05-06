@@ -179,6 +179,24 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
     } finally { setBusy(null); }
   }
 
+  async function setProvider(provider: 'claude' | 'codex') {
+    if (provider === agent.provider) return;
+    setBusy('provider');
+    try {
+      const res = await apiPatch<{ ok: boolean; restartRequired: boolean; message?: string }>(`/api/agents/${agent.id}/provider`, { provider });
+      if (res.restartRequired) {
+        if (agent.id === 'main') {
+          alert(res.message || 'Provider saved. Restart Sage to activate it.');
+        } else if (confirm(`${agent.name || agent.id} provider saved to ${provider}. Restart this agent now to apply?`)) {
+          await apiPost(`/api/agents/${agent.id}/restart`);
+        }
+      }
+      onChange();
+    } catch (err: any) {
+      alert('Provider change failed: ' + (err?.body?.error || err?.message || err));
+    } finally { setBusy(null); }
+  }
+
   const isMain = agent.id === 'main';
 
   return (
@@ -206,7 +224,17 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
 
       <div class="flex items-center gap-2 mb-3 flex-wrap">
         <ModelPicker value={agent.model} onSelect={setModel} disabled={busy === 'model'} />
-        <Pill tone="accent">{agent.provider}</Pill>
+        <select
+          value={agent.provider}
+          onChange={(event) => void setProvider((event.currentTarget.value as 'claude' | 'codex'))}
+          disabled={busy !== null}
+          class="bg-[var(--color-elevated)] border border-[var(--color-border)] rounded px-2 py-1 text-[11px] text-[var(--color-text)] outline-none disabled:opacity-45"
+          title="LLM provider for this agent"
+        >
+          <option value="claude">claude</option>
+          <option value="codex">codex</option>
+        </select>
+        {agent.configuredProvider !== agent.provider && <Pill tone="medium">configured {agent.configuredProvider}</Pill>}
         {agent.running ? <Pill tone="done">running</Pill> : <Pill tone="cancelled">offline</Pill>}
       </div>
 
