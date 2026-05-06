@@ -504,6 +504,8 @@ function AttentionPanel({
 }) {
   const [assigning, setAssigning] = useState<Record<string, string>>({});
   const [resolving, setResolving] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [instructions, setInstructions] = useState<Record<string, string>>({});
 
   async function resolve(item: HomeAttentionItem, action: 'complete' | 'archive') {
     const label = action === 'complete' ? 'Completing...' : 'Archiving...';
@@ -526,7 +528,16 @@ function AttentionPanel({
     if (!agentId) return;
     setAssigning((prev) => ({ ...prev, [item.id]: agentId }));
     try {
-      await apiPost('/api/home/attention/assign', { itemId: item.id, agentId });
+      await apiPost('/api/home/attention/assign', {
+        itemId: item.id,
+        agentId,
+        instruction: (instructions[item.id] || '').trim(),
+      });
+      setInstructions((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
       onChange();
     } catch (err: any) {
       alert('Assign failed: ' + (err?.body?.error || err?.message || err));
@@ -543,22 +554,34 @@ function AttentionPanel({
   return (
     <div class="space-y-2">
       {items.slice(0, 8).map((item) => (
-        <div key={item.id} class="flex items-start justify-between gap-3 border-b border-[var(--color-border)] last:border-b-0 pb-2 last:pb-0">
-          <button
-            type="button"
-            onClick={() => navigate(item.href || (item.source === 'mission' ? '/mission' : '/home'))}
-            class="min-w-0 flex-1 text-left rounded px-1 py-0.5 hover:bg-[var(--color-elevated)] transition-colors"
-            title="Open source"
-          >
-            <div class="flex items-center gap-2 min-w-0">
-              <Pill tone={item.severity === 'high' ? 'failed' : item.severity === 'medium' ? 'medium' : 'neutral'}>{item.source}</Pill>
-              <div class="text-[12.5px] text-[var(--color-text)] truncate">{item.title}</div>
+        <div key={item.id} class="border-b border-[var(--color-border)] last:border-b-0 pb-3 last:pb-0">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1 rounded px-1 py-0.5">
+              <button
+                type="button"
+                onClick={() => setExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                class="w-full text-left rounded hover:bg-[var(--color-elevated)] transition-colors"
+                title={expanded[item.id] ? 'Collapse detail' : 'Show full action detail'}
+              >
+                <div class="flex items-center gap-2 min-w-0">
+                  <Pill tone={item.severity === 'high' ? 'failed' : item.severity === 'medium' ? 'medium' : 'neutral'}>{item.source}</Pill>
+                  <div class="text-[12.5px] text-[var(--color-text)] truncate">{item.title}</div>
+                </div>
+                <div class={'text-[11px] text-[var(--color-text-muted)] mt-1 whitespace-pre-wrap ' + (expanded[item.id] ? 'leading-relaxed' : 'line-clamp-2')}>
+                  {item.detail || 'No detail supplied.'}
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                class="mt-1 text-[10.5px] text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]"
+              >
+                {expanded[item.id] ? 'Show less' : 'Show full detail'}
+              </button>
             </div>
-            <div class="text-[11px] text-[var(--color-text-muted)] mt-1 line-clamp-2">{item.detail}</div>
-          </button>
-          <div class="shrink-0 flex flex-col items-end gap-1.5">
-            <div class="text-[10.5px] text-[var(--color-text-faint)]">{formatRelativeTime(item.createdAt)}</div>
-            <div class="flex items-center gap-1">
+            <div class="shrink-0 flex flex-col items-end gap-1.5">
+              <div class="text-[10.5px] text-[var(--color-text-faint)]">{formatRelativeTime(item.createdAt)}</div>
+              <div class="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => navigate(item.href || (item.source === 'mission' ? '/mission' : '/home'))}
@@ -585,7 +608,18 @@ function AttentionPanel({
               >
                 <Archive size={12} />
               </button>
+              </div>
             </div>
+          </div>
+          <div class="mt-2 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_132px] gap-2 pl-1">
+            <textarea
+              value={instructions[item.id] || ''}
+              onInput={(e) => setInstructions((prev) => ({ ...prev, [item.id]: (e.target as HTMLTextAreaElement).value }))}
+              rows={2}
+              maxLength={2000}
+              placeholder="Optional instructions for the agent before assigning..."
+              class="min-w-0 resize-y rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] placeholder:text-[var(--color-text-faint)]"
+            />
             <select
               value=""
               onChange={(e) => {

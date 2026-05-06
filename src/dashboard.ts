@@ -42,6 +42,7 @@ import {
   getMissionTask,
   getMissionReview,
   getMissionManifest,
+  appendMissionTaskInstruction,
   createMissionTask,
   completeMissionTask,
   cancelMissionTask,
@@ -2924,10 +2925,11 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
     }
 
-    let body: { itemId?: string; agentId?: string } = {};
+    let body: { itemId?: string; agentId?: string; instruction?: string } = {};
     try { body = await c.req.json(); } catch { body = {}; }
     const itemId = String(body.itemId || '');
     const agentId = String(body.agentId || '').trim();
+    const instruction = String(body.instruction || '').trim().slice(0, 2000);
     const validAgents = ['main', ...listAgentIds()];
     if (!itemId || !agentId) return c.json({ ok: false, error: 'itemId and agentId are required.' }, 400);
     if (!validAgents.includes(agentId)) return c.json({ ok: false, error: `Unknown agent: ${agentId}. Valid: ${validAgents.join(', ')}` }, 400);
@@ -2940,6 +2942,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         const linked = getMissionTask(attention.linked_mission_id);
         if (linked && !TERMINAL_MISSION_STATUSES.has(linked.status)) {
           reassignMissionTask(linked.id, agentId);
+          if (instruction) appendMissionTaskInstruction(linked.id, instruction);
           markAttentionAssigned(attention.id, linked.id, agentId);
           return c.json({ ok: true, task: getMissionTask(linked.id), attention: getAttentionItem(attention.id) });
         }
@@ -2956,6 +2959,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         `Source: ${attention.source_kind}:${attention.source_id}`,
         `Title: ${attention.title}`,
         `Detail: ${attention.detail}`,
+        instruction ? `Additional instructions from Ruan:\n${instruction}` : '',
         attention.href ? `Source link: ${attention.href}` : '',
       ].filter(Boolean).join('\n'), agentId, 'dashboard', attention.severity === 'high' ? 9 : attention.severity === 'medium' ? 6 : 3);
       markAttentionAssigned(attention.id, id, agentId);
@@ -2972,6 +2976,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           return c.json({ ok: false, error: `Mission is already running with @${task.assigned_agent}.` }, 409);
         }
         reassignMissionTask(id, agentId);
+        if (instruction) appendMissionTaskInstruction(id, instruction);
         return c.json({ ok: true, task: getMissionTask(id) });
       }
 
@@ -2983,6 +2988,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         `Source status: ${task.status}`,
         task.result ? `Result:\n${task.result.slice(0, 2000)}` : '',
         task.error ? `Error:\n${task.error.slice(0, 2000)}` : '',
+        instruction ? `Additional instructions from Ruan:\n${instruction}` : '',
       ].filter(Boolean).join('\n'), agentId, 'dashboard', task.status === 'failed' ? 9 : 6);
       upsertMissionReview({
         taskId: task.id,

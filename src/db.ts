@@ -2856,6 +2856,23 @@ export function reassignMissionTask(id: string, newAgent: string): boolean {
   return result.changes > 0;
 }
 
+export function appendMissionTaskInstruction(id: string, instruction: string): MissionTask | null {
+  const clean = instruction.trim().slice(0, 2000);
+  if (!clean) return getMissionTask(id);
+  const task = getMissionTask(id);
+  if (!task || task.status === 'running') return task;
+  const nextPrompt = [
+    task.prompt,
+    '',
+    'Additional instructions from Ruan:',
+    clean,
+  ].join('\n').slice(0, 12000);
+  db.prepare(
+    `UPDATE mission_tasks SET prompt = ? WHERE id = ? AND status != 'running'`,
+  ).run(nextPrompt, id);
+  return getMissionTask(id);
+}
+
 export function assignMissionTask(id: string, agent: string): boolean {
   const result = db.prepare(
     `UPDATE mission_tasks SET assigned_agent = ? WHERE id = ? AND assigned_agent IS NULL AND status = 'queued'`,

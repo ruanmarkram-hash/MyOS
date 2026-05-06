@@ -592,7 +592,7 @@ describe('GET /api/home dashboard endpoints', () => {
     const assign = await app.request('/api/home/attention/assign' + Q, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ itemId: item.id, agentId: 'main' }),
+      body: JSON.stringify({ itemId: item.id, agentId: 'main', instruction: 'Prioritise the Lucas contact form and draft a direct reply.' }),
     });
     expect(assign.status).toBe(201);
 
@@ -601,6 +601,9 @@ describe('GET /api/home dashboard endpoints', () => {
 
     const missions = await jsonOf(await get('/api/mission/tasks'));
     expect(missions.tasks.map((task: any) => task.title)).toContain('Draft Lucas inquiry response');
+    const created = missions.tasks.find((task: any) => task.title === 'Draft Lucas inquiry response');
+    expect(created.prompt).toContain('Additional instructions from Ruan');
+    expect(created.prompt).toContain('Prioritise the Lucas contact form');
   });
 
   it('archives a report attention item durably so the same report text does not resurface', async () => {
