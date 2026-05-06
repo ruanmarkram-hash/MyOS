@@ -133,4 +133,24 @@ describe('buildMemoryContextOb1', () => {
     expect(out).toContain('- [0.5] No topics here.');
     expect(out).not.toContain('()');
   });
+
+  it('does not inject unreadable vector garbage into memory context', async () => {
+    const { buildMemoryContextOb1 } = await import('./adapter.js');
+    mockSearchText.mockResolvedValueOnce(
+      [
+        'Found 1 thought(s):',
+        '',
+        '--- Result 1 (61.0% match) ---',
+        'Captured: 5/6/2026',
+        'Type: project',
+        'Topics: project',
+        '',
+        '| | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | |',
+        '| | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | |',
+      ].join('\n'),
+    );
+    const out = await buildMemoryContextOb1('Darryn');
+    expect(out).toContain('OpenBrain returned this hit without readable thought content.');
+    expect(out).not.toContain('| | | |');
+  });
 });

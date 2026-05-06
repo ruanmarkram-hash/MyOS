@@ -85,6 +85,37 @@ interface CaptureResponse {
 }
 
 const TOPIC_COLORS = ['#8b8af0', '#10b981', '#f59e0b', '#5eb6ff', '#f472b6', '#a78bfa', '#ef4444'];
+const UNREADABLE_BRAIN_HIT = 'OpenBrain returned this hit without readable thought content.';
+
+function looksLikeUnreadableBrainLine(line: string): boolean {
+  const compact = line.replace(/\s+/g, '');
+  if (!compact) return true;
+
+  const alphaNumeric = compact.match(/[a-z0-9]/gi)?.length ?? 0;
+  const pipeCount = compact.match(/\|/g)?.length ?? 0;
+  const commaCount = compact.match(/,/g)?.length ?? 0;
+  const digitCount = compact.match(/\d/g)?.length ?? 0;
+
+  if (pipeCount > 12 && alphaNumeric === 0) return true;
+  if (compact.length > 80 && pipeCount / compact.length > 0.45) return true;
+  if (/^embedding\s*[:=]/i.test(line)) return true;
+  if (compact.length > 160 && commaCount > 20 && digitCount / compact.length > 0.35) return true;
+  if (/^\[?[-+0-9.,eE\s]+\]?$/.test(line) && commaCount > 20) return true;
+
+  return false;
+}
+
+function readableBrainHit(content: string): string {
+  const cleaned = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !looksLikeUnreadableBrainLine(line))
+    .join('\n')
+    .trim();
+
+  if (!cleaned) return UNREADABLE_BRAIN_HIT;
+  return cleaned.length > 1400 ? `${cleaned.slice(0, 1400).trim()}...` : cleaned;
+}
 
 export function Brain() {
   const [tab, setTab] = useState<BrainTab>('overview');
@@ -275,7 +306,7 @@ function BrainSearch({ configured }: { configured: boolean }) {
                 </div>
                 <span class="text-[10px] text-[var(--color-text-faint)] shrink-0">{hit.date}</span>
               </div>
-              <div class="text-[13px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap">{hit.content}</div>
+              <div class="text-[13px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap">{readableBrainHit(hit.content)}</div>
               {hit.source && <div class="mt-2 text-[10.5px] text-[var(--color-text-faint)]">source: {hit.source}</div>}
               {hit.topics.length > 0 && (
                 <div class="flex flex-wrap gap-1 mt-3">

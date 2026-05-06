@@ -15,6 +15,36 @@ export interface Ob1ParsedResult {
   content: string;
 }
 
+const UNREADABLE_CONTENT_FALLBACK = 'OpenBrain returned this hit without readable thought content.';
+
+function looksLikeVectorGarbage(line: string): boolean {
+  const compact = line.replace(/\s+/g, '');
+  if (!compact) return true;
+
+  const alphaNumeric = compact.match(/[a-z0-9]/gi)?.length ?? 0;
+  const pipeCount = compact.match(/\|/g)?.length ?? 0;
+  const commaCount = compact.match(/,/g)?.length ?? 0;
+  const digitCount = compact.match(/\d/g)?.length ?? 0;
+
+  if (pipeCount > 12 && alphaNumeric === 0) return true;
+  if (compact.length > 80 && pipeCount / compact.length > 0.45) return true;
+  if (/^embedding\s*[:=]/i.test(line)) return true;
+  if (compact.length > 160 && commaCount > 20 && digitCount / compact.length > 0.35) return true;
+  if (/^\[?[-+0-9.,eE\s]+\]?$/.test(line) && commaCount > 20) return true;
+
+  return false;
+}
+
+function sanitizeThoughtContent(content: string): string {
+  const lines = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !looksLikeVectorGarbage(line));
+
+  const cleaned = lines.join('\n').trim();
+  return cleaned || UNREADABLE_CONTENT_FALLBACK;
+}
+
 /**
  * Parse the human-readable text block that OB1's search_thoughts tool returns.
  * Format is:
@@ -54,7 +84,7 @@ export function parseSearchText(text: string): Ob1ParsedResult[] {
       contentLines.push(line);
     }
 
-    results.push({ match, date, type, topics, people, content: contentLines.join('\n').trim() });
+    results.push({ match, date, type, topics, people, content: sanitizeThoughtContent(contentLines.join('\n')) });
   }
   return results;
 }
