@@ -126,6 +126,19 @@ describe('GET /api/health', () => {
   });
 });
 
+describe('POST /api/system/restart-main', () => {
+  it('queues a graceful main restart', async () => {
+    const res = await app.request('/api/system/restart-main' + Q, { method: 'POST' });
+    expect(res.status).toBe(202);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      ok: true,
+      queued: expect.any(Boolean),
+      message: expect.any(String),
+    });
+  });
+});
+
 describe('GET /api/brain/status', () => {
   it('returns local and OpenBrain status', async () => {
     const res = await get('/api/brain/status');

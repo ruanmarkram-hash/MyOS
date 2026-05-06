@@ -8,7 +8,7 @@ import { ModelPicker } from '@/components/ModelPicker';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { useFetch } from '@/lib/useFetch';
 import { useDebouncedValue } from '@/lib/useDebounce';
-import { apiPost, apiPatch, apiDelete, chatId } from '@/lib/api';
+import { apiGet, apiPost, apiPatch, apiDelete, chatId } from '@/lib/api';
 import { formatCost } from '@/lib/format';
 import { ScheduledTasksPanel } from '@/pages/Scheduled';
 
@@ -31,6 +31,8 @@ interface Agent {
 }
 
 interface Template { id: string; name: string; description: string; }
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function Agents() {
   const { data, loading, error, refresh } = useFetch<{ agents: Agent[] }>(
@@ -113,10 +115,37 @@ export function Agents() {
 function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
 
+  async function waitForMainRestart() {
+    await sleep(1_500);
+    let sawDown = false;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        await apiGet('/api/health');
+        if (sawDown || attempt > 2) {
+          onChange();
+          window.location.reload();
+          return;
+        }
+      } catch {
+        sawDown = true;
+      }
+      await sleep(1_000);
+    }
+    window.location.reload();
+  }
+
   async function run(action: 'restart' | 'stop' | 'start' | 'delete') {
     if (action === 'delete' && !confirm(`Delete agent "${agent.id}"? This unloads the service, removes its config, deletes its bot token from .env, and removes log files.`)) return;
+    if (action === 'restart' && agent.id === 'main' && !confirm('Restart Sage now? Mission Control will briefly disconnect and then reload.')) return;
+    let restartQueued = false;
     setBusy(action);
     try {
+      if (action === 'restart' && agent.id === 'main') {
+        await apiPost('/api/system/restart-main');
+        restartQueued = true;
+        await waitForMainRestart();
+        return;
+      }
       if (action === 'restart') await apiPost(`/api/agents/${agent.id}/restart`);
       if (action === 'stop') await apiPost(`/api/agents/${agent.id}/deactivate`);
       if (action === 'start') await apiPost(`/api/agents/${agent.id}/activate`);
@@ -125,7 +154,7 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
     } catch (err: any) {
       alert(action + ' failed: ' + (err?.message || err));
     } finally {
-      setBusy(null);
+      if (!restartQueued) setBusy(null);
     }
   }
 
@@ -227,9 +256,9 @@ function AgentCard({ agent, onChange }: { agent: Agent; onChange: () => void }) 
         <button
           type="button"
           onClick={() => run('restart')}
-          disabled={busy !== null || isMain}
+          disabled={busy !== null}
           class="inline-flex items-center justify-center px-2 py-1.5 rounded text-[11px] bg-[var(--color-elevated)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Restart"
+          title={isMain ? 'Gracefully restart Sage' : 'Restart'}
         >
           <RotateCcw size={11} class={busy === 'restart' ? 'animate-spin' : ''} />
         </button>

@@ -110,6 +110,7 @@ import { parseSearchText } from './brain/adapter.js';
 
 const MAIN_AGENT_MODEL = 'claude-opus-4-7';
 const DASHBOARD_AUTH_COOKIE = 'claudeclaw_dashboard';
+let mainRestartQueued = false;
 
 function dashboardCookieValue(): string {
   return crypto.createHash('sha256').update(DASHBOARD_TOKEN).digest('hex');
@@ -134,6 +135,23 @@ function setDashboardAuthCookie(c: any): void {
 
 function dashboardChatId(c: any): string {
   return c.req.query('chatId') || ALLOWED_CHAT_ID || '';
+}
+
+function queueMainRestart(source: string): boolean {
+  if (mainRestartQueued) return false;
+  mainRestartQueued = true;
+  logger.info({ source }, 'Main agent restart queued');
+
+  if (process.env.VITEST === 'true' || process.env.NODE_ENV === 'test') {
+    return true;
+  }
+
+  const timer = setTimeout(() => {
+    logger.info({ source }, 'Main agent exiting for graceful restart');
+    process.kill(process.pid, 'SIGTERM');
+  }, 750);
+  timer.unref?.();
+  return true;
 }
 
 function configuredProviderValue(): string {
@@ -2917,6 +2935,15 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       killSwitchRefusals: {},
       warroom: { textOpenMeetings: 0 },
     });
+  });
+
+  app.post('/api/system/restart-main', (c) => {
+    const queued = queueMainRestart('dashboard');
+    return c.json({
+      ok: true,
+      queued,
+      message: queued ? 'Main agent restart queued' : 'Main agent restart already queued',
+    }, 202);
   });
 
   app.get('/api/runtime/stack', (c) => {
