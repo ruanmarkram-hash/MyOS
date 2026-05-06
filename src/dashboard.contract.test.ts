@@ -91,10 +91,10 @@ describe('auth gate', () => {
     expect(res.headers.get('location')).toContain('/v2/home');
   });
 
-  it('serves the dedicated mobile route through the v2 mount', async () => {
+  it('redirects the deprecated dedicated mobile route to the normal app', async () => {
     const res = await get('/v2/mobile');
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toContain('text/html');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/v2/home');
   });
 
   it('responds 204 to OPTIONS preflight without token check', async () => {

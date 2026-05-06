@@ -2363,7 +2363,6 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     '/voices',
     '/files',
     '/settings',
-    '/mobile',
   ];
 
   function serveRootV2Route(c: any): Response {
@@ -2372,14 +2371,21 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     return c.redirect(`/v2${url.pathname}${url.search}`, 302);
   }
 
+  function redirectDeprecatedMobileRoute(c: any): Response {
+    const url = new URL(c.req.url);
+    return c.redirect(`${MISSION_CONTROL_V2 ? '' : '/v2'}/home${url.search}`, 302);
+  }
+
   if (MISSION_CONTROL_V2) {
     // v2 owns root. Legacy reachable at /legacy for cutover comparison.
     app.get('/', (c) => serveV2(c, '/index.html'));
     app.get('/legacy', renderLegacy);
+    app.get('/mobile', redirectDeprecatedMobileRoute);
   } else {
     // Legacy owns root (default). v2 reachable at /v2 once built.
     app.get('/', renderLegacy);
     app.get('/v2', (c) => serveV2(c, '/index.html'));
+    app.get('/v2/mobile', redirectDeprecatedMobileRoute);
     // SPA deep-link inside /v2 (e.g. /v2/agents) — Vite-built assets are
     // referenced with absolute /assets/ paths regardless of mount point,
     // so we just need to return index.html for non-asset /v2/* lookups.

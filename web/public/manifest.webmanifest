@@ -1,9 +1,9 @@
 {
   "name": "ClaudeClaw Mission Control",
   "short_name": "ClaudeClaw",
-  "description": "Mobile Mission Control for ClaudeClaw.",
-  "id": "/v2/mobile",
-  "start_url": "/v2/mobile",
+  "description": "Mission Control for ClaudeClaw.",
+  "id": "/v2/",
+  "start_url": "/v2/home",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
@@ -34,19 +34,19 @@
     {
       "name": "Review Inbox",
       "short_name": "Review",
-      "url": "/v2/mobile",
+      "url": "/v2/review",
       "description": "Open deliverables and triage items."
     },
     {
       "name": "Mission Control",
       "short_name": "Missions",
-      "url": "/v2/mobile",
+      "url": "/v2/mission",
       "description": "Open the mission queue."
     },
     {
       "name": "Agents",
       "short_name": "Agents",
-      "url": "/v2/mobile",
+      "url": "/v2/agents",
       "description": "Open agent runtime controls."
     }
   ]
