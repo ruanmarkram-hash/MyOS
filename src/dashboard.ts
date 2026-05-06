@@ -442,6 +442,12 @@ function extractMissionDeliverables(task: MissionTask): ReviewDeliverable[] {
   let match: RegExpExecArray | null;
   while ((match = sendFileRe.exec(text))) addFile(match[1]);
 
+  const quotedPathRe = /(?:^|[\s([{:])["'`]((?:~\/|\/Users\/|\/tmp\/|\/private\/tmp\/)[^"'`]+?)["'`]/g;
+  while ((match = quotedPathRe.exec(text))) addFile(match[1]);
+
+  const markdownPathRe = /\]\(((?:~\/|\/Users\/|\/tmp\/|\/private\/tmp\/)[^)]+)\)/g;
+  while ((match = markdownPathRe.exec(text))) addFile(match[1]);
+
   const pathRe = /(?:^|[\s("'`])((?:~\/|\/Users\/|\/tmp\/|\/private\/tmp\/)[^\s"'`<>]+(?:\.[A-Za-z0-9]{1,12})?)/g;
   while ((match = pathRe.exec(text))) addFile(match[1]);
 
@@ -461,6 +467,27 @@ function extractMissionDeliverables(task: MissionTask): ReviewDeliverable[] {
   }
 
   return deliverables;
+}
+
+function deliverableEmailScore(item: ReviewDeliverable): number {
+  if (item.kind !== 'file' || !item.exists || !item.target) return -1;
+  const ext = path.extname(item.target).toLowerCase();
+  const name = path.basename(item.target).toLowerCase();
+  let score = 0;
+  if (['.pdf', '.docx', '.xlsx', '.pptx', '.pages', '.numbers', '.key'].includes(ext)) score += 80;
+  else if (['.md', '.html', '.htm', '.txt', '.rtf'].includes(ext)) score += 55;
+  else if (['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) score += 40;
+  else score += 20;
+  if (/(deliverable|final|draft|review|support|plan|closure|audit|response|letter|pack|charter|policy|report)/i.test(name)) score += 20;
+  if (/(mission[-_ ]?report|transcript|log|stdout|stderr|debug)/i.test(name)) score -= 45;
+  if (item.sizeBytes && item.sizeBytes > 1024) score += 5;
+  return score;
+}
+
+function selectBestEmailDeliverable(task: MissionTask): ReviewDeliverable | null {
+  return extractMissionDeliverables(task)
+    .filter((item) => item.kind === 'file' && item.exists && item.target)
+    .sort((a, b) => deliverableEmailScore(b) - deliverableEmailScore(a))[0] || null;
 }
 
 const OPEN_REVIEW_STATUSES = new Set<MissionReviewStatus>(['needs_review', 'needs_triage', 'waiting_followup', 'snoozed']);
@@ -818,8 +845,7 @@ export async function createReviewEmailAttachment(
   task: MissionTask,
   format: 'docx' | 'html' = 'docx',
 ): Promise<ReviewEmailAttachment> {
-  const deliverable = extractMissionDeliverables(task)
-    .find((item) => item.kind === 'file' && item.exists && item.target);
+  const deliverable = selectBestEmailDeliverable(task);
 
   if (deliverable) {
     const filePath = deliverable.target;
@@ -1201,7 +1227,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
         createdAt: mission.completed_at || mission.created_at,
         agentId: mission.assigned_agent,
         taskId: mission.id,
-        href: '/review',
+        href: `/review?task=${encodeURIComponent(mission.id)}`,
       });
     } else if (completedMissionNeedsAttention(mission, Math.floor(Date.now() / 1000)) && !completedMissionHasFollowUp(mission, missions)) {
       items.push({
@@ -1252,16 +1278,6 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
   return items
     .sort((a, b) => rank[a.severity] - rank[b.severity] || b.createdAt - a.createdAt)
     .slice(0, 12);
-}
-
-function describeCron(cron: string): string {
-  if (cron === '0 9 * * *') return 'Daily at 9am';
-  if (cron === '0 8 * * 1-5') return 'Weekdays at 8am';
-  if (cron === '0 9 * * 1') return 'Mondays at 9am';
-  if (cron === '0 18 * * 0') return 'Sundays at 6pm';
-  const hourly = cron.match(/^0 \*\/(\d+) \* \* \*$/);
-  if (hourly) return 'Every ' + hourly[1] + 'h';
-  return cron;
 }
 
 function parseGraphCalendarTime(value: string | undefined): number | null {
@@ -1347,26 +1363,6 @@ async function fetchHomeCalendarItems() {
     logger.warn({ err: raw.slice(0, 500) }, 'Home calendar read failed');
     return { connected: false, items: [] as any[], note };
   }
-}
-
-function buildHomeScheduleAgenda(tasks: ScheduledTask[]) {
-  const now = Math.floor(Date.now() / 1000);
-  const horizon = now + 24 * 60 * 60;
-  return tasks
-    .filter((task) => task.status !== 'paused')
-    .filter((task) => task.next_run <= horizon || task.next_run < now)
-    .sort((a, b) => a.next_run - b.next_run)
-    .slice(0, 12)
-    .map((task) => ({
-      id: task.id,
-      source: 'schedule',
-      title: scheduleTitle(task.prompt),
-      agentId: task.agent_id,
-      status: task.status,
-      dueAt: task.next_run,
-      overdue: task.next_run < now,
-      detail: describeCron(task.schedule),
-    }));
 }
 
 function providerRuntime(provider: LlmProviderName, model: string | undefined, sessionId: string | undefined) {
@@ -2272,7 +2268,6 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   });
 
   app.get('/api/home/agenda', async (c) => {
-    const tasks = getAllScheduledTasks();
     const calendar = await fetchHomeCalendarItems();
     return c.json({
       updatedAt: new Date().toISOString(),
@@ -2281,7 +2276,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         provider: calendar.connected ? 'Microsoft Graph' : null,
         note: calendar.note,
       },
-      items: calendar.connected ? calendar.items : buildHomeScheduleAgenda(tasks),
+      items: calendar.items,
     });
   });
 

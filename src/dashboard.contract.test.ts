@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import fs from 'fs';
+import path from 'path';
 import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, getMissionReview, getMissionTask, updateTaskAfterRun } from './db.js';
 import { buildDashboardApp, configuredReviewExportEmail, configuredReviewExportFromEmail, createReviewEmailAttachment } from './dashboard.js';
 import type { Hono } from 'hono';
@@ -639,7 +640,7 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(body.items.map((item: any) => item.title)).not.toContain('Stream2-M2: full-chain integration tests');
   });
 
-  it('returns OS scheduled work for the home agenda while calendar is unwired', async () => {
+  it('keeps Home calendar personal-only while the external calendar is unwired', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('agenda-1', 'Run: scripts/daily-brief.sh', '0 9 * * *', now + 1800, 'main');
 
@@ -654,13 +655,7 @@ describe('GET /api/home dashboard endpoints', () => {
       }),
       items: expect.any(Array),
     });
-    expect(body.items[0]).toMatchObject({
-      id: 'agenda-1',
-      source: 'schedule',
-      title: expect.any(String),
-      dueAt: expect.any(Number),
-      overdue: expect.any(Boolean),
-    });
+    expect(body.items).toEqual([]);
   });
 });
 
@@ -983,7 +978,7 @@ describe('GET /api/review/inbox', () => {
         id: 'mission:m-home-failed-visible:terminal',
         source: 'mission',
         severity: 'high',
-        href: '/review',
+        href: '/review?task=m-home-failed-visible',
       }),
     ]));
   });
@@ -1088,6 +1083,40 @@ describe('POST /api/review/tasks/:id/email', () => {
       path: resolvedDeliverablePath,
       format: 'pdf',
       originalPath: resolvedDeliverablePath,
+    });
+  });
+
+  it('can extract and email a deliverable path that contains spaces', async () => {
+    const deliverablePath = '/tmp/claudeclaw contract deliverable final.md';
+    fs.writeFileSync(deliverablePath, '# Contract deliverable\n\nActual worked-on document.\n', { mode: 0o600 });
+    createMissionTask('m-review-spaced-file', 'Spaced file deliverable', 'produce output', 'charter', 'dashboard', 6);
+    completeMissionTask('m-review-spaced-file', `Actual deliverable: "${deliverablePath}"\nMission report follows below.`, 'completed');
+    const task = getMissionTask('m-review-spaced-file')!;
+
+    const attachment = await createReviewEmailAttachment(task, 'html');
+    expect(attachment).toMatchObject({
+      source: 'deliverable',
+      originalPath: fs.realpathSync(deliverablePath),
+      format: 'html',
+    });
+    expect(path.basename(attachment.path)).toContain('claudeclaw-contract-deliverable-final');
+  });
+
+  it('prefers the real document over a mission-report file when both are mentioned', async () => {
+    const reportPath = '/tmp/mission-report-debug.md';
+    const docPath = '/tmp/client-support-plan-final.docx';
+    fs.writeFileSync(reportPath, '# Mission report\n', { mode: 0o600 });
+    fs.writeFileSync(docPath, 'fake docx payload', { mode: 0o600 });
+    createMissionTask('m-review-best-file', 'Best file deliverable', 'produce output', 'charter', 'dashboard', 6);
+    completeMissionTask('m-review-best-file', `Report: ${reportPath}\nDeliverable: ${docPath}`, 'completed');
+    const task = getMissionTask('m-review-best-file')!;
+
+    const attachment = await createReviewEmailAttachment(task, 'docx');
+    expect(attachment).toMatchObject({
+      source: 'deliverable',
+      path: fs.realpathSync(docPath),
+      originalPath: fs.realpathSync(docPath),
+      format: 'docx',
     });
   });
 });

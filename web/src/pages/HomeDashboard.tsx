@@ -1,5 +1,5 @@
 import type { ComponentChildren } from 'preact';
-import { Archive, CalendarDays, Check, Cpu, ListChecks, Radio, ShieldCheck, Sunrise, Users } from 'lucide-preact';
+import { Archive, CalendarDays, Check, Cpu, ExternalLink, ListChecks, Radio, ShieldCheck, Sunrise, Users } from 'lucide-preact';
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { PageHeader } from '@/components/PageHeader';
@@ -217,13 +217,14 @@ export function HomeDashboard() {
                     attention.refresh();
                     missions.refresh();
                   }}
+                  navigate={navigate}
                 />
               </Panel>
 
               <Panel title="Mission Queue" icon={<ListChecks size={15} />} action="/mission" navigate={navigate}>
                 {missionQueueItems.length === 0 ? <EmptyLine text="No dispatched mission tasks." /> : (
                   <div class="space-y-2">
-                    {missionQueueItems.slice(0, 8).map((task) => <MissionLine key={task.id} task={task} />)}
+                    {missionQueueItems.slice(0, 8).map((task) => <MissionLine key={task.id} task={task} navigate={navigate} />)}
                   </div>
                 )}
               </Panel>
@@ -353,10 +354,14 @@ function Panel({
   );
 }
 
-function MissionLine({ task }: { task: MissionTask }) {
+function MissionLine({ task, navigate }: { task: MissionTask; navigate: (path: string) => void }) {
   const tone = task.status === 'running' ? 'running' : 'queued';
   return (
-    <div class="flex items-start justify-between gap-3 border-b border-[var(--color-border)] last:border-b-0 pb-2 last:pb-0">
+    <button
+      type="button"
+      onClick={() => navigate('/mission')}
+      class="w-full flex items-start justify-between gap-3 border-b border-[var(--color-border)] last:border-b-0 pb-2 last:pb-0 text-left hover:bg-[var(--color-elevated)] rounded px-1 transition-colors"
+    >
       <div class="min-w-0">
         <div class="text-[12.5px] text-[var(--color-text)] truncate">{task.title}</div>
         <div class="text-[10.5px] text-[var(--color-text-faint)] mt-0.5">
@@ -364,7 +369,7 @@ function MissionLine({ task }: { task: MissionTask }) {
         </div>
       </div>
       <Pill tone={tone}>{task.status}</Pill>
-    </div>
+    </button>
   );
 }
 
@@ -440,10 +445,12 @@ function AttentionPanel({
   items,
   agents,
   onChange,
+  navigate,
 }: {
   items: HomeAttentionItem[];
   agents: Agent[];
   onChange: () => void;
+  navigate: (path: string) => void;
 }) {
   const [assigning, setAssigning] = useState<Record<string, string>>({});
   const [resolving, setResolving] = useState<Record<string, string>>({});
@@ -487,16 +494,29 @@ function AttentionPanel({
     <div class="space-y-2">
       {items.slice(0, 8).map((item) => (
         <div key={item.id} class="flex items-start justify-between gap-3 border-b border-[var(--color-border)] last:border-b-0 pb-2 last:pb-0">
-          <div class="min-w-0">
+          <button
+            type="button"
+            onClick={() => navigate(item.href || (item.source === 'mission' ? '/mission' : '/home'))}
+            class="min-w-0 flex-1 text-left rounded px-1 py-0.5 hover:bg-[var(--color-elevated)] transition-colors"
+            title="Open source"
+          >
             <div class="flex items-center gap-2 min-w-0">
               <Pill tone={item.severity === 'high' ? 'failed' : item.severity === 'medium' ? 'medium' : 'neutral'}>{item.source}</Pill>
               <div class="text-[12.5px] text-[var(--color-text)] truncate">{item.title}</div>
             </div>
             <div class="text-[11px] text-[var(--color-text-muted)] mt-1 line-clamp-2">{item.detail}</div>
-          </div>
+          </button>
           <div class="shrink-0 flex flex-col items-end gap-1.5">
             <div class="text-[10.5px] text-[var(--color-text-faint)]">{formatRelativeTime(item.createdAt)}</div>
             <div class="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => navigate(item.href || (item.source === 'mission' ? '/mission' : '/home'))}
+                class="inline-flex items-center justify-center w-7 h-7 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)]"
+                title="Open source"
+              >
+                <ExternalLink size={12} />
+              </button>
               <button
                 type="button"
                 onClick={() => void resolve(item, 'complete')}

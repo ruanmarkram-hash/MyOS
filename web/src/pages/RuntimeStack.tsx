@@ -1,9 +1,10 @@
-import { Cpu, Database, LockKeyhole, Plug, ShieldCheck } from 'lucide-preact';
+import { Cpu, Database, LockKeyhole, Plug, RotateCcw, ShieldCheck } from 'lucide-preact';
+import { useState } from 'preact/hooks';
 import { PageHeader } from '@/components/PageHeader';
 import { PageState } from '@/components/PageState';
 import { Pill, StatusDot } from '@/components/Pill';
 import { useFetch } from '@/lib/useFetch';
-import { chatId } from '@/lib/api';
+import { apiPost, chatId } from '@/lib/api';
 
 interface RuntimeComponent {
   id: string;
@@ -43,10 +44,42 @@ const ICONS: Record<string, typeof Cpu> = {
 };
 
 export function RuntimeStack() {
-  const { data, loading, error } = useFetch<RuntimeStackPayload>(
+  const stack = useFetch<RuntimeStackPayload>(
     `/api/runtime/stack?chatId=${encodeURIComponent(chatId)}`,
     30_000,
   );
+  const { data, loading, error } = stack;
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  async function switchProvider(provider: 'claude' | 'codex') {
+    if (!data || provider === data.runtime.activeProvider || busy) return;
+    setBusy(`switch-${provider}`);
+    setNote(null);
+    try {
+      const result = await apiPost<{ provider: string; message: string; restartRequired: boolean }>('/api/provider/switch', { provider });
+      setNote(result.restartRequired ? `${result.provider} saved. Restart Sage to activate it.` : result.message);
+      stack.refresh();
+    } catch (err: any) {
+      setNote(err?.body?.error || err?.message || String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function smokeProvider(provider: 'claude' | 'codex') {
+    if (busy) return;
+    setBusy(`smoke-${provider}`);
+    setNote(null);
+    try {
+      const result = await apiPost<{ ok: boolean; provider: string; resolvedModel: string; error?: string }>('/api/provider/smoke', { provider });
+      setNote(result.ok ? `${provider} smoke passed on ${result.resolvedModel}` : `${provider} smoke failed: ${result.error || 'unknown error'}`);
+    } catch (err: any) {
+      setNote(err?.body?.error || err?.message || String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   return (
     <div class="flex flex-col h-full">
@@ -70,6 +103,46 @@ export function RuntimeStack() {
             <StackMetric label="Configured provider" value={data.runtime.configuredProvider} />
             <StackMetric label="Runtime model" value={compact(data.runtime.resolvedModel)} />
             <StackMetric label="Session" value={data.runtime.sessionShort || 'fresh'} />
+          </div>
+
+          <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Main LLM provider</div>
+                <div class="text-[12px] text-[var(--color-text-muted)] mt-1">Default runtime for Sage. Per-agent and local model routing will sit on this same provider adapter.</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => stack.refresh()}
+                class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-elevated)] transition-colors"
+              >
+                <RotateCcw size={13} /> Refresh
+              </button>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              {data.runtime.supportedProviders.map((provider) => (
+                <div key={provider} class="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] p-1">
+                  <button
+                    type="button"
+                    onClick={() => void switchProvider(provider)}
+                    disabled={busy !== null || provider === data.runtime.activeProvider}
+                    class="px-2.5 py-1.5 rounded text-[12px] text-[var(--color-text)] hover:bg-[var(--color-card)] disabled:opacity-45 disabled:cursor-not-allowed"
+                  >
+                    {provider === data.runtime.activeProvider ? `${provider} active` : `Use ${provider}`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void smokeProvider(provider)}
+                    disabled={busy !== null}
+                    class="px-2 py-1.5 rounded text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-card)] disabled:opacity-45"
+                  >
+                    {busy === `smoke-${provider}` ? 'Testing...' : 'Smoke'}
+                  </button>
+                </div>
+              ))}
+            </div>
+            {note && <div class="mt-3 text-[11px] text-[var(--color-text-muted)]">{note}</div>}
+            {data.runtime.providerError && <div class="mt-3 text-[11px] text-[var(--color-status-failed)]">{data.runtime.providerError}</div>}
           </div>
 
           <div class="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))' }}>

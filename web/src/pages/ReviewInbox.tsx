@@ -1,5 +1,6 @@
 import { Archive, Check, ChevronDown, ChevronRight, Download, ExternalLink, FileText, Mail, RefreshCcw, RotateCcw, Send } from 'lucide-preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
+import { useLocation } from 'wouter-preact';
 import { PageHeader } from '@/components/PageHeader';
 import { PageState } from '@/components/PageState';
 import { Pill } from '@/components/Pill';
@@ -63,7 +64,8 @@ const REVIEW_LABEL: Record<ReviewState['status'], string> = {
 };
 
 export function ReviewInbox() {
-  const inbox = useFetch<ReviewInboxPayload>('/api/review/inbox?limit=75', 15_000);
+  const [location] = useLocation();
+  const inbox = useFetch<ReviewInboxPayload>('/api/review/inbox?limit=100', 15_000);
   const agents = useFetch<{ agents: Agent[] }>('/api/agents', 60_000);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [instructions, setInstructions] = useState<Record<string, string>>({});
@@ -79,6 +81,13 @@ export function ReviewInbox() {
   const actionItems = allItems.filter((item) => item.kind !== 'sorted');
   const sortedItems = allItems.filter((item) => item.kind === 'sorted');
   const grouped = groupItems(actionItems);
+
+  useEffect(() => {
+    const taskId = new URL(window.location.href).searchParams.get('task');
+    if (!taskId) return;
+    setExpanded((prev) => ({ ...prev, [taskId]: true }));
+    window.setTimeout(() => document.getElementById(`review-${taskId}`)?.scrollIntoView({ block: 'center' }), 50);
+  }, [location, inbox.data?.updatedAt]);
 
   async function mutate(item: ReviewItem, label: string, fn: () => Promise<unknown>, refresh = true) {
     setBusy((prev) => ({ ...prev, [item.id]: label }));
@@ -307,6 +316,7 @@ function ReviewCard({
   const triage = item.review.status === 'needs_triage';
   return (
     <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+      <div id={`review-${item.id}`} class="sr-only" />
       <div class="flex items-start gap-3">
         <div class="w-9 h-9 rounded-md bg-[var(--color-elevated)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-accent)] shrink-0">
           <FileText size={17} />
