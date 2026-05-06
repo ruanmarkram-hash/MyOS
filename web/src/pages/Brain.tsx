@@ -8,7 +8,7 @@ import { useFetch } from '@/lib/useFetch';
 import { apiGet, apiPost, chatId } from '@/lib/api';
 import { formatRelativeTime, safeJsonArray } from '@/lib/format';
 
-type BrainTab = 'overview' | 'search' | 'capture' | 'graph';
+type BrainTab = 'overview' | 'browse' | 'search' | 'capture' | 'graph';
 
 interface BrainStatus {
   backend: 'sqlite' | 'ob1';
@@ -83,6 +83,55 @@ interface CaptureResponse {
   confirmation: string;
   backend?: 'sqlite' | 'ob1';
   localMemoryId?: number;
+  error?: string;
+}
+
+interface OpenBrainThought {
+  id: string;
+  content: string;
+  type: string | null;
+  source_type: string | null;
+  importance: number | null;
+  quality_score: number | null;
+  sensitivity_tier: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at?: string;
+  similarity?: number;
+  rank?: number;
+}
+
+interface OpenBrainThoughtList {
+  ok: boolean;
+  thoughts: OpenBrainThought[];
+  total: number;
+  limit: number;
+  offset: number;
+  error?: string;
+}
+
+interface OpenBrainStatsResponse {
+  ok: boolean;
+  stats: {
+    total?: number;
+    top_types?: Array<{ type: string | null; count: number }>;
+    top_topics?: Array<{ topic: string; count: number }>;
+  } | null;
+  error?: string;
+}
+
+interface OpenBrainConnectionsResponse {
+  ok: boolean;
+  connections: Array<{
+    id: string;
+    type: string | null;
+    importance: number | null;
+    preview: string;
+    created_at: string;
+    shared_topics?: string[];
+    shared_people?: string[];
+    overlap_count?: number;
+  }>;
   error?: string;
 }
 
@@ -165,6 +214,14 @@ export function Brain() {
     30_000,
   );
   const graph = useFetch<BrainGraphResponse>('/api/brain/graph/nodes?limit=60', 30_000);
+  const openBrainStats = useFetch<OpenBrainStatsResponse>(
+    status.data?.openBrain.configured ? '/api/brain/stats/openbrain' : null,
+    30_000,
+  );
+  const recentThoughts = useFetch<OpenBrainThoughtList>(
+    status.data?.openBrain.configured ? '/api/brain/thoughts?limit=8&offset=0' : null,
+    30_000,
+  );
 
   const memoryRows = memories.data?.memories ?? [];
   const clusters = useMemo(() => buildTopicClusters(memoryRows), [memoryRows]);
@@ -186,6 +243,7 @@ export function Brain() {
         tabs={
           <>
             <Tab label="Overview" active={tab === 'overview'} onClick={() => setTab('overview')} />
+            <Tab label="Browse" active={tab === 'browse'} onClick={() => setTab('browse')} />
             <Tab label="Search" active={tab === 'search'} onClick={() => setTab('search')} />
             <Tab label="Capture" active={tab === 'capture'} onClick={() => setTab('capture')} />
             <Tab label="Graph" active={tab === 'graph'} onClick={() => setTab('graph')} />
@@ -198,7 +256,17 @@ export function Brain() {
 
       {status.data && (
         <div class="flex-1 overflow-y-auto p-6">
-          {tab === 'overview' && <Overview status={status.data} total={memories.data?.total ?? 0} clusters={clusters} refresh={() => { status.refresh(); memories.refresh(); }} />}
+          {tab === 'overview' && (
+            <Overview
+              status={status.data}
+              total={memories.data?.total ?? 0}
+              clusters={clusters}
+              openBrainStats={openBrainStats.data}
+              recentThoughts={recentThoughts.data?.thoughts ?? []}
+              refresh={() => { status.refresh(); memories.refresh(); openBrainStats.refresh(); recentThoughts.refresh(); }}
+            />
+          )}
+          {tab === 'browse' && <BrainBrowse configured={status.data.openBrain.configured} />}
           {tab === 'search' && <BrainSearch configured={status.data.openBrain.configured} />}
           {tab === 'capture' && <BrainCapture configured={status.data.openBrain.configured} mutationsEnabled={status.data.mutationsEnabled} />}
           {tab === 'graph' && <BrainGraph memories={memoryRows} clusters={clusters} graph={graph.data} />}
@@ -208,7 +276,21 @@ export function Brain() {
   );
 }
 
-function Overview({ status, total, clusters, refresh }: { status: BrainStatus; total: number; clusters: TopicCluster[]; refresh: () => void }) {
+function Overview({
+  status,
+  total,
+  clusters,
+  openBrainStats,
+  recentThoughts,
+  refresh,
+}: {
+  status: BrainStatus;
+  total: number;
+  clusters: TopicCluster[];
+  openBrainStats: OpenBrainStatsResponse | null;
+  recentThoughts: OpenBrainThought[];
+  refresh: () => void;
+}) {
   const [ingesting, setIngesting] = useState(false);
   const [ingestNote, setIngestNote] = useState<string | null>(null);
 
@@ -231,10 +313,44 @@ function Overview({ status, total, clusters, refresh }: { status: BrainStatus; t
     <div class="space-y-4">
       <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
         <MetricCard icon={<Database size={16} />} label="Active backend" value={status.backend === 'ob1' ? 'OpenBrain' : 'SQLite'} />
-        <MetricCard icon={<Search size={16} />} label="OpenBrain" value={status.openBrain.ready ? 'ready' : 'local fallback'} />
-        <MetricCard icon={<Share2 size={16} />} label="Topic clusters" value={String(clusters.length)} />
+        <MetricCard icon={<Search size={16} />} label="OpenBrain thoughts" value={String(openBrainStats?.stats?.total ?? 'unknown')} />
+        <MetricCard icon={<Share2 size={16} />} label="Graph" value={status.openBrain.graphConfigured ? 'configured' : 'not configured'} />
         <MetricCard icon={<Send size={16} />} label="SQLite memories" value={String(total || status.sqlite.totalMemories)} />
       </div>
+
+      {openBrainStats?.stats && (
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+            <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-3">OpenBrain types</div>
+            <div class="space-y-2">
+              {(openBrainStats.stats.top_types || []).slice(0, 8).map((row) => (
+                <div key={String(row.type)} class="flex items-center justify-between gap-3 text-[12px]">
+                  <span class="text-[var(--color-text)]">{row.type || 'unknown'}</span>
+                  <span class="text-[var(--color-text-muted)] tabular-nums">{row.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+            <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-3">OpenBrain topics</div>
+            <div class="flex flex-wrap gap-1.5">
+              {(openBrainStats.stats.top_topics || []).slice(0, 18).map((row) => (
+                <span key={row.topic} class="inline-flex items-center gap-1 text-[11px] bg-[var(--color-elevated)] border border-[var(--color-border)] rounded px-2 py-1">
+                  {row.topic}
+                  <span class="text-[var(--color-text-faint)]">{row.count}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {recentThoughts.length > 0 && (
+        <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+          <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-3">Recent OpenBrain thoughts</div>
+          <ThoughtRows thoughts={recentThoughts} />
+        </div>
+      )}
 
       <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
         <div class="flex items-center justify-between gap-3">
@@ -285,6 +401,7 @@ function Overview({ status, total, clusters, refresh }: { status: BrainStatus; t
 
 function BrainSearch({ configured }: { configured: boolean }) {
   const [query, setQuery] = useState('');
+  const [mode, setMode] = useState<'semantic' | 'text'>('semantic');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BrainSearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -296,7 +413,7 @@ function BrainSearch({ configured }: { configured: boolean }) {
     setError(null);
     setResult(null);
     try {
-      const data = await apiGet<BrainSearchResponse>(`/api/brain/search?query=${encodeURIComponent(q)}&limit=8&threshold=0.45`);
+      const data = await apiGet<BrainSearchResponse>(`/api/brain/search?query=${encodeURIComponent(q)}&mode=${mode}&limit=12&threshold=0.45`);
       setResult(data);
     } catch (err: any) {
       setError(err?.body?.error || err?.message || String(err));
@@ -316,6 +433,18 @@ function BrainSearch({ configured }: { configured: boolean }) {
             placeholder="Search OpenBrain"
             class="flex-1 min-w-0 bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md px-3 py-2 text-[13px] outline-none focus:border-[var(--color-accent)]"
           />
+          <div class="inline-flex bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md p-0.5">
+            {(['semantic', 'text'] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setMode(item)}
+                class={'px-2.5 py-1.5 rounded text-[11px] capitalize ' + (mode === item ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]' : 'text-[var(--color-text-muted)]')}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             onClick={runSearch}
@@ -338,7 +467,7 @@ function BrainSearch({ configured }: { configured: boolean }) {
             </div>
           )}
           {result.results.map((hit, index) => (
-            <div key={index} class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+            <div key={(hit as any).id || index} class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
               <div class="flex items-start justify-between gap-3 mb-2">
                 <div class="flex items-center gap-2 min-w-0">
                   <Pill tone="accent">{hit.match}</Pill>
@@ -348,6 +477,7 @@ function BrainSearch({ configured }: { configured: boolean }) {
                 <span class="text-[10px] text-[var(--color-text-faint)] shrink-0">{hit.date}</span>
               </div>
               <div class="text-[13px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap">{readableBrainHit(hit.content)}</div>
+              {(hit as any).id && <ThoughtDetailInline id={(hit as any).id} />}
               {hit.source && <div class="mt-2 text-[10.5px] text-[var(--color-text-faint)]">source: {hit.source}</div>}
               {hit.topics.length > 0 && (
                 <div class="flex flex-wrap gap-1 mt-3">
@@ -411,6 +541,188 @@ function BrainCapture({ configured, mutationsEnabled }: { configured: boolean; m
           <div class={'mt-3 text-[12px] leading-relaxed ' + (result.ok ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-status-failed)]')}>
             {result.ok ? result.confirmation : result.error}
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BrainBrowse({ configured }: { configured: boolean }) {
+  const [offset, setOffset] = useState(0);
+  const [type, setType] = useState('');
+  const [source, setSource] = useState('');
+  const limit = 25;
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (type) params.set('type', type);
+  if (source) params.set('source', source);
+  const thoughts = useFetch<OpenBrainThoughtList>(configured ? `/api/brain/thoughts?${params.toString()}` : null, 30_000);
+
+  if (!configured) {
+    return <PageState empty emptyTitle="OpenBrain is not configured" emptyDescription="Browse requires direct OpenBrain table access." />;
+  }
+
+  return (
+    <div class="space-y-4">
+      <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <select
+            value={type}
+            onChange={(e) => { setType((e.currentTarget as HTMLSelectElement).value); setOffset(0); }}
+            class="bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md px-3 py-2 text-[12px] outline-none"
+          >
+            <option value="">All types</option>
+            {['idea', 'task', 'person_note', 'reference', 'decision', 'lesson', 'meeting', 'journal', 'project'].map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+          <input
+            value={source}
+            onInput={(e) => { setSource((e.currentTarget as HTMLInputElement).value); setOffset(0); }}
+            placeholder="Source filter"
+            class="min-w-[180px] bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md px-3 py-2 text-[12px] outline-none focus:border-[var(--color-accent)]"
+          />
+          <button type="button" onClick={thoughts.refresh} class="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] bg-[var(--color-elevated)] border border-[var(--color-border)] text-[var(--color-text)]">
+            <RefreshCcw size={13} />
+            Refresh
+          </button>
+          <div class="ml-auto text-[11px] text-[var(--color-text-muted)] tabular-nums">{thoughts.data?.total ?? 0} thoughts</div>
+        </div>
+      </div>
+
+      {thoughts.error && <PageState error={thoughts.error} />}
+      {thoughts.loading && !thoughts.data && <PageState loading />}
+      {thoughts.data && (
+        <>
+          <ThoughtRows thoughts={thoughts.data.thoughts} />
+          <div class="flex items-center justify-between">
+            <button
+              type="button"
+              disabled={offset === 0}
+              onClick={() => setOffset(Math.max(0, offset - limit))}
+              class="px-3 py-1.5 rounded-md text-[12px] bg-[var(--color-elevated)] border border-[var(--color-border)] disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <div class="text-[11px] text-[var(--color-text-muted)]">Page {Math.floor(offset / limit) + 1}</div>
+            <button
+              type="button"
+              disabled={offset + limit >= thoughts.data.total}
+              onClick={() => setOffset(offset + limit)}
+              class="px-3 py-1.5 rounded-md text-[12px] bg-[var(--color-elevated)] border border-[var(--color-border)] disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ThoughtRows({ thoughts }: { thoughts: OpenBrainThought[] }) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const selectedId = selected || thoughts[0]?.id || null;
+  return (
+    <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4">
+      <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg overflow-hidden">
+        <table class="w-full text-[12px]">
+          <thead>
+            <tr class="border-b border-[var(--color-border)] text-[var(--color-text-faint)] uppercase tracking-wider text-[10px]">
+              <th class="text-left px-4 py-3 font-medium">Content</th>
+              <th class="text-left px-4 py-3 font-medium w-28">Type</th>
+              <th class="text-left px-4 py-3 font-medium w-24">Source</th>
+              <th class="text-left px-4 py-3 font-medium w-24">Quality</th>
+              <th class="text-left px-4 py-3 font-medium w-28">Date</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[var(--color-border)]">
+            {thoughts.map((thought) => (
+              <tr key={thought.id} onClick={() => setSelected(thought.id)} class="hover:bg-[var(--color-elevated)] cursor-pointer">
+                <td class="px-4 py-3 text-[var(--color-text)]">
+                  <div class="line-clamp-2">{readableBrainHit(thought.content).slice(0, 180)}</div>
+                </td>
+                <td class="px-4 py-3"><Pill>{thought.type || 'unknown'}</Pill></td>
+                <td class="px-4 py-3 text-[var(--color-text-muted)] truncate">{thought.source_type || String(thought.metadata?.source || '')}</td>
+                <td class="px-4 py-3 text-[var(--color-text-muted)] tabular-nums">{thought.quality_score ?? thought.importance ?? '-'}</td>
+                <td class="px-4 py-3 text-[var(--color-text-faint)]">{new Date(thought.created_at).toLocaleDateString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ThoughtDetail id={selectedId} onSelect={setSelected} />
+    </div>
+  );
+}
+
+function ThoughtDetailInline({ id }: { id: string }) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState(id);
+  return (
+    <div class="mt-3">
+      <button type="button" onClick={() => setOpen((v) => !v)} class="text-[11px] text-[var(--color-accent)]">
+        {open ? 'Hide detail' : 'Open detail'}
+      </button>
+      {open && <div class="mt-3"><ThoughtDetail id={selected} onSelect={setSelected} /></div>}
+    </div>
+  );
+}
+
+function ThoughtDetail({ id, onSelect }: { id: string | null; onSelect?: (id: string) => void }) {
+  const detail = useFetch<{ ok: boolean; thought: OpenBrainThought }>(id ? `/api/brain/thoughts/${encodeURIComponent(id)}` : null, 0);
+  const connections = useFetch<OpenBrainConnectionsResponse>(id ? `/api/brain/thoughts/${encodeURIComponent(id)}/connections` : null, 0);
+
+  if (!id) {
+    return <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 text-[12px] text-[var(--color-text-muted)]">Select a thought.</div>;
+  }
+  if (detail.loading && !detail.data) return <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 text-[12px] text-[var(--color-text-muted)]">Loading thought</div>;
+  if (detail.error || !detail.data?.thought) return <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 text-[12px] text-[var(--color-status-failed)]">{detail.error || 'Thought unavailable'}</div>;
+
+  const thought = detail.data.thought;
+  const topics = Array.isArray(thought.metadata?.topics) ? thought.metadata.topics.map(String) : [];
+  const people = Array.isArray(thought.metadata?.people) ? thought.metadata.people.map(String) : [];
+  return (
+    <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 max-h-[620px] overflow-y-auto">
+      <div class="flex items-center gap-2 mb-3">
+        <Pill tone="accent">{thought.type || 'unknown'}</Pill>
+        {thought.source_type && <Pill>{thought.source_type}</Pill>}
+        {thought.sensitivity_tier && <Pill>{thought.sensitivity_tier}</Pill>}
+      </div>
+      <div class="text-[13px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap">{readableBrainHit(thought.content)}</div>
+      <div class="grid grid-cols-2 gap-3 mt-4 text-[11px]">
+        <Stat label="Importance" value={String(thought.importance ?? '-')} />
+        <Stat label="Quality" value={String(thought.quality_score ?? '-')} />
+        <Stat label="Created" value={new Date(thought.created_at).toLocaleString()} />
+        <Stat label="ID" value={thought.id} />
+      </div>
+      {(topics.length > 0 || people.length > 0) && (
+        <div class="flex flex-wrap gap-1 mt-4">
+          {[...topics, ...people].map((topic) => <TopicPill key={topic} topic={topic} />)}
+        </div>
+      )}
+      <div class="mt-5 pt-4 border-t border-[var(--color-border)]">
+        <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-2">Connections</div>
+        {connections.loading && !connections.data && <div class="text-[11px] text-[var(--color-text-muted)]">Loading connections</div>}
+        {connections.data?.connections?.length ? (
+          <div class="space-y-2">
+            {connections.data.connections.slice(0, 8).map((conn) => (
+              <button
+                type="button"
+                key={conn.id}
+                onClick={() => onSelect?.(conn.id)}
+                disabled={!onSelect}
+                class="block w-full text-left bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md p-2"
+              >
+                <div class="flex items-center gap-2">
+                  <Pill>{conn.type || 'thought'}</Pill>
+                  <span class="text-[10px] text-[var(--color-text-faint)] ml-auto">{conn.overlap_count ?? 0} shared</span>
+                </div>
+                <div class="mt-1 text-[11px] text-[var(--color-text-muted)] line-clamp-2">{conn.preview}</div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div class="text-[11px] text-[var(--color-text-muted)]">No metadata connections returned.</div>
         )}
       </div>
     </div>
@@ -548,6 +860,7 @@ function OpenBrainGraph({
     30_000,
   );
   const nodes = graph.nodes.slice(0, 36);
+  const grouped = groupGraphNodes(nodes);
   return (
     <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-4 min-h-[560px]">
       <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 overflow-hidden">
@@ -570,18 +883,30 @@ function OpenBrainGraph({
           </div>
         </div>
         {ingestNote && <div class="mb-3 text-[11px] text-[var(--color-text-muted)]">{ingestNote}</div>}
-        <div class="relative h-[500px] rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
-          {nodes.map((node, index) => (
-            <GraphNodeBubble
-              key={node.id}
-              node={node}
-              index={index}
-              total={nodes.length}
-              color={TOPIC_COLORS[index % TOPIC_COLORS.length]}
-              selected={selected?.id === node.id}
-              onClick={() => setSelected(node)}
-            />
-          ))}
+        <div class="h-[500px] rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] overflow-auto p-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
+            {grouped.map((group) => (
+              <div key={group.type} class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-md overflow-hidden">
+                <div class="flex items-center justify-between px-3 py-2 border-b border-[var(--color-border)]">
+                  <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">{group.type}</div>
+                  <div class="text-[10px] text-[var(--color-text-muted)] tabular-nums">{group.nodes.length}</div>
+                </div>
+                <div class="divide-y divide-[var(--color-border)]">
+                  {group.nodes.slice(0, 10).map((node) => (
+                    <button
+                      key={node.id}
+                      type="button"
+                      onClick={() => setSelected(node)}
+                      class={'block w-full text-left px-3 py-2 transition-colors ' + (selected?.id === node.id ? 'bg-[var(--color-accent-soft)]' : 'hover:bg-[var(--color-elevated)]')}
+                    >
+                      <div class="text-[12px] text-[var(--color-text)] truncate">{node.label}</div>
+                      <div class="mt-0.5 text-[10px] text-[var(--color-text-faint)] truncate">{String(node.properties?.source || node.properties?.stableKey || node.id)}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
       <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 overflow-y-auto max-h-[552px]">
@@ -634,6 +959,17 @@ function OpenBrainGraph({
       </div>
     </div>
   );
+}
+
+function groupGraphNodes(nodes: BrainGraphNode[]): Array<{ type: string; nodes: BrainGraphNode[] }> {
+  const map = new Map<string, BrainGraphNode[]>();
+  for (const node of nodes) {
+    const type = node.node_type || 'entity';
+    map.set(type, [...(map.get(type) || []), node]);
+  }
+  return [...map.entries()]
+    .map(([type, rows]) => ({ type, nodes: rows.sort((a, b) => a.label.localeCompare(b.label)) }))
+    .sort((a, b) => b.nodes.length - a.nodes.length || a.type.localeCompare(b.type));
 }
 
 function GraphNodeBubble({

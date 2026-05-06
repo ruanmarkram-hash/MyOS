@@ -111,7 +111,21 @@ import {
 } from './llm-provider.js';
 import { resolveModelForProvider } from './model-router.js';
 import { buildAgentRuntimePrompt } from './agent-runtime.js';
-import { captureThought, createGraphEdge, createGraphNode, getGraphNeighbors, listGraphEdgeTypes, searchGraphNodes, searchThoughts, type GraphNode } from './brain/client.js';
+import {
+  captureThought,
+  createGraphEdge,
+  createGraphNode,
+  getGraphNeighbors,
+  getOpenBrainStats,
+  getOpenBrainThought,
+  getOpenBrainThoughtConnections,
+  listGraphEdgeTypes,
+  listOpenBrainThoughts,
+  searchGraphNodes,
+  searchOpenBrainText,
+  searchThoughts,
+  type GraphNode,
+} from './brain/client.js';
 import { parseSearchText } from './brain/adapter.js';
 import { checkStale, RUNTIME_BUILD_META, RUNTIME_STARTED_AT, shortSha } from './build-meta.js';
 
@@ -3352,8 +3366,11 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
     const parsedLimit = parseInt(c.req.query('limit') || '8', 10);
     const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(20, parsedLimit)) : 8;
+    const parsedOffset = parseInt(c.req.query('offset') || '0', 10);
+    const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
     const parsedThreshold = parseFloat(c.req.query('threshold') || '0.5');
     const threshold = Number.isFinite(parsedThreshold) ? Math.max(0, Math.min(1, parsedThreshold)) : 0.5;
+    const mode = (c.req.query('mode') || 'semantic').toLowerCase();
 
     const forceLocal = (c.req.query('backend') || '').toLowerCase() === 'sqlite';
     if (forceLocal || !openBrainConfigured()) {
@@ -3368,6 +3385,27 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       });
     }
 
+    if (mode === 'text') {
+      const data = await searchOpenBrainText({ query, limit, offset });
+      return c.json({
+        ok: true,
+        backend: 'ob1',
+        mode: 'text',
+        query,
+        limit,
+        offset,
+        total: data.total,
+        results: data.thoughts.map((thought) => ({
+          ...thought,
+          match: `${Math.round(Number(thought.rank ?? 0) * 100)} rank`,
+          date: thought.created_at ? new Date(thought.created_at).toISOString().slice(0, 10) : '',
+          topics: Array.isArray(thought.metadata?.topics) ? thought.metadata.topics : [],
+          people: Array.isArray(thought.metadata?.people) ? thought.metadata.people : [],
+        })),
+        raw: '',
+      });
+    }
+
     const raw = await searchThoughts({ query, limit, threshold });
     return c.json({
       ok: true,
@@ -3378,6 +3416,51 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       results: parseSearchText(raw),
       raw,
     });
+  });
+
+  app.get('/api/brain/thoughts', async (c) => {
+    if (!openBrainConfigured()) {
+      return c.json({ ok: false, configured: false, thoughts: [], total: 0, error: 'OpenBrain is not configured.' }, 400);
+    }
+    const parsedLimit = parseInt(c.req.query('limit') || '25', 10);
+    const parsedOffset = parseInt(c.req.query('offset') || '0', 10);
+    const importanceRaw = c.req.query('importanceMin');
+    const result = await listOpenBrainThoughts({
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : 25,
+      offset: Number.isFinite(parsedOffset) ? parsedOffset : 0,
+      type: (c.req.query('type') || '').trim() || undefined,
+      source_type: (c.req.query('source') || '').trim() || undefined,
+      importance_min: importanceRaw ? parseInt(importanceRaw, 10) : undefined,
+    });
+    return c.json({ ok: true, configured: true, ...result });
+  });
+
+  app.get('/api/brain/thoughts/:id', async (c) => {
+    if (!openBrainConfigured()) {
+      return c.json({ ok: false, configured: false, error: 'OpenBrain is not configured.' }, 400);
+    }
+    const id = c.req.param('id');
+    const thought = await getOpenBrainThought(id);
+    if (!thought) return c.json({ ok: false, error: 'thought not found' }, 404);
+    return c.json({ ok: true, thought });
+  });
+
+  app.get('/api/brain/thoughts/:id/connections', async (c) => {
+    if (!openBrainConfigured()) {
+      return c.json({ ok: false, configured: false, connections: [], error: 'OpenBrain is not configured.' }, 400);
+    }
+    const id = c.req.param('id');
+    const limit = Math.max(1, Math.min(parseInt(c.req.query('limit') || '20', 10) || 20, 50));
+    const connections = await getOpenBrainThoughtConnections(id, limit);
+    return c.json({ ok: true, connections });
+  });
+
+  app.get('/api/brain/stats/openbrain', async (c) => {
+    if (!openBrainConfigured()) {
+      return c.json({ ok: false, configured: false, stats: null, error: 'OpenBrain is not configured.' }, 400);
+    }
+    const stats = await getOpenBrainStats();
+    return c.json({ ok: true, configured: true, stats });
   });
 
   app.post('/api/brain/capture', async (c) => {

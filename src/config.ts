@@ -49,6 +49,9 @@ const envConfig = readEnvFile([
   'BRAIN',
   'OB1_SUPABASE_URL',
   'MCP_ACCESS_KEY',
+  'OB1_SUPABASE_ANON_KEY',
+  'OB1_SUPABASE_SERVICE_KEY',
+  'OB1_SUPABASE_SERVICE_ROLE_KEY',
   'OB1_BRAIN_FUNCTION',
   'OB1_GRAPH_FUNCTION',
   'MISSION_CONTROL_V2',
@@ -233,6 +236,16 @@ export const OB1_SUPABASE_URL =
   process.env.OB1_SUPABASE_URL || envConfig.OB1_SUPABASE_URL || '';
 export const MCP_ACCESS_KEY =
   process.env.MCP_ACCESS_KEY || envConfig.MCP_ACCESS_KEY || '';
+export const OB1_SUPABASE_ANON_KEY =
+  process.env.OB1_SUPABASE_ANON_KEY || envConfig.OB1_SUPABASE_ANON_KEY || '';
+export const OB1_SUPABASE_SERVICE_KEY =
+  process.env.OB1_SUPABASE_SERVICE_KEY
+  || process.env.OB1_SUPABASE_SERVICE_ROLE_KEY
+  || process.env.SUPABASE_SERVICE_ROLE_KEY
+  || envConfig.OB1_SUPABASE_SERVICE_KEY
+  || envConfig.OB1_SUPABASE_SERVICE_ROLE_KEY
+  || envConfig.SUPABASE_SERVICE_ROLE_KEY
+  || '';
 // Edge function name. Default matches Phase 2 deployment.
 export const OB1_BRAIN_FUNCTION =
   process.env.OB1_BRAIN_FUNCTION || envConfig.OB1_BRAIN_FUNCTION || 'brain-mcp';
