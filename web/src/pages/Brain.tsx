@@ -96,7 +96,7 @@ function looksLikeUnreadableBrainLine(line: string): boolean {
   const commaCount = compact.match(/,/g)?.length ?? 0;
   const digitCount = compact.match(/\d/g)?.length ?? 0;
 
-  if (pipeCount > 12 && alphaNumeric === 0) return true;
+  if (pipeCount > 0 && alphaNumeric === 0) return true;
   if (compact.length > 80 && pipeCount / compact.length > 0.45) return true;
   if (/^embedding\s*[:=]/i.test(line)) return true;
   if (compact.length > 160 && commaCount > 20 && digitCount / compact.length > 0.35) return true;

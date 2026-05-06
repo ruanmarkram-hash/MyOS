@@ -153,4 +153,22 @@ describe('buildMemoryContextOb1', () => {
     expect(out).toContain('OpenBrain returned this hit without readable thought content.');
     expect(out).not.toContain('| | | |');
   });
+
+  it('filters short pipe-only OpenBrain search fragments', async () => {
+    const { buildMemoryContextOb1 } = await import('./adapter.js');
+    mockSearchText.mockResolvedValueOnce(
+      [
+        'Found 1 thought(s):',
+        '',
+        '--- Result 1 (60.3% match) ---',
+        'Captured: 5/6/2026',
+        'Type: project',
+        '',
+        '| | |',
+      ].join('\n'),
+    );
+    const out = await buildMemoryContextOb1('Darryn');
+    expect(out).toContain('OpenBrain returned this hit without readable thought content.');
+    expect(out).not.toContain('| | |');
+  });
 });
