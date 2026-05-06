@@ -139,6 +139,30 @@ input, textarea, select {
   .app-main {
     padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));
   }
+
+  .desktop-mission-board {
+    display: none;
+  }
+
+  .mobile-mission-view {
+    display: block;
+  }
+
+  .metric-card {
+    min-height: 84px;
+  }
+
+  .metric-card .metric-detail {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .metric-card .metric-value {
+    font-size: 14px;
+  }
 }
 
 @media (max-width: 520px) {

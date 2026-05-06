@@ -38,6 +38,7 @@ export function MissionControl() {
   const [createOpen, setCreateOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [bulkAssigning, setBulkAssigning] = useState(false);
+  const [mobileFilter, setMobileFilter] = useState<'dispatch' | 'running' | 'queued' | 'landed'>('dispatch');
 
   // ?new=1 from the command palette opens the create modal.
   useEffect(() => {
@@ -49,7 +50,7 @@ export function MissionControl() {
     }
   }, [location]);
 
-  const { byAgent, inbox, totalActive } = useMemo(() => {
+  const { byAgent, inbox, totalActive, visibleTasks } = useMemo(() => {
     const all = tasks.data?.tasks ?? [];
     const agentList = agents.data?.agents ?? [];
     const now = Date.now() / 1000;
@@ -65,7 +66,7 @@ export function MissionControl() {
       if (!t.assigned_agent) continue;
       (byAgent[t.assigned_agent] ??= []).push(t);
     }
-    return { byAgent, inbox, totalActive: visible.filter((t) => !TERMINAL.includes(t.status)).length };
+    return { byAgent, inbox, visibleTasks: visible, totalActive: visible.filter((t) => !TERMINAL.includes(t.status)).length };
   }, [tasks.data, agents.data]);
 
   async function autoAssignAll() {
@@ -126,7 +127,17 @@ export function MissionControl() {
       {loading && <PageState loading />}
 
       {!loading && !error && (
-        <div class="flex-1 min-h-0 overflow-x-auto overflow-y-hidden">
+        <>
+        <MobileMissionView
+          tasks={visibleTasks}
+          inbox={inbox}
+          agents={agents.data?.agents ?? []}
+          filter={mobileFilter}
+          onFilter={setMobileFilter}
+          onChange={tasks.refresh}
+          navigate={navigate}
+        />
+        <div class="desktop-mission-board flex-1 min-h-0 overflow-x-auto overflow-y-hidden">
           <div class="flex gap-3 p-4 h-full min-w-max">
             <InboxColumn tasks={inbox} onChange={tasks.refresh} agents={agents.data?.agents ?? []} />
             {(agents.data?.agents ?? []).map((a) => (
@@ -141,6 +152,7 @@ export function MissionControl() {
             ))}
           </div>
         </div>
+        </>
       )}
 
       <CreateTaskModal
@@ -153,6 +165,107 @@ export function MissionControl() {
       <Drawer open={historyOpen} onClose={() => setHistoryOpen(false)} title="Task history">
         <HistoryList />
       </Drawer>
+    </div>
+  );
+}
+
+function MobileMissionView({
+  tasks,
+  inbox,
+  agents,
+  filter,
+  onFilter,
+  onChange,
+  navigate,
+}: {
+  tasks: MissionTask[];
+  inbox: MissionTask[];
+  agents: Agent[];
+  filter: 'dispatch' | 'running' | 'queued' | 'landed';
+  onFilter: (filter: 'dispatch' | 'running' | 'queued' | 'landed') => void;
+  onChange: () => void;
+  navigate: (path: string) => void;
+}) {
+  const running = tasks.filter((task) => task.status === 'running');
+  const queued = tasks.filter((task) => task.status === 'queued' && task.assigned_agent);
+  const landed = tasks.filter((task) => TERMINAL.includes(task.status));
+  const filterItems = {
+    dispatch: inbox,
+    running,
+    queued,
+    landed,
+  }[filter];
+  const counts = {
+    dispatch: inbox.length,
+    running: running.length,
+    queued: queued.length,
+    landed: landed.length,
+  };
+
+  return (
+    <div class="mobile-mission-view hidden flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
+      <div class="grid grid-cols-4 gap-1.5">
+        {([
+          ['dispatch', 'Inbox'],
+          ['running', 'Run'],
+          ['queued', 'Queue'],
+          ['landed', 'Landed'],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => onFilter(id)}
+            class={[
+              'rounded-md border px-1.5 py-2 text-center transition-colors',
+              filter === id
+                ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                : 'border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-muted)]',
+            ].join(' ')}
+          >
+            <div class="text-[13px] font-semibold tabular-nums">{counts[id]}</div>
+            <div class="text-[9.5px] uppercase tracking-wider">{label}</div>
+          </button>
+        ))}
+      </div>
+
+      <div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] overflow-hidden">
+        <div class="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-3 py-2.5">
+          <div>
+            <div class="text-[12.5px] font-medium text-[var(--color-text)]">
+              {filter === 'dispatch' ? 'Needs dispatch' : filter === 'running' ? 'Running now' : filter === 'queued' ? 'Queued by agent' : 'Recently landed'}
+            </div>
+            <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+              {filterItems.length} item{filterItems.length === 1 ? '' : 's'}
+            </div>
+          </div>
+          {filter === 'dispatch' && inbox.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void apiPost('/api/mission/tasks/auto-assign-all').then(onChange).catch((err) => alert('Auto-assign failed: ' + (err?.message || err)))}
+              class="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]"
+            >
+              <Wand2 size={12} /> Auto all
+            </button>
+          )}
+        </div>
+        <div class="divide-y divide-[var(--color-border)]">
+          {filterItems.length === 0 ? (
+            <div class="px-3 py-8 text-center text-[12px] text-[var(--color-text-faint)]">
+              Nothing in this lane.
+            </div>
+          ) : (
+            filterItems.map((task) => (
+              <MobileTaskRow
+                key={task.id}
+                task={task}
+                agents={agents}
+                onChange={onChange}
+                navigate={navigate}
+              />
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -465,6 +578,112 @@ function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; age
           {task.error}
         </div>
       )}
+    </div>
+  );
+}
+
+function MobileTaskRow({ task, agents, onChange, navigate }: { task: MissionTask; agents: Agent[]; onChange: () => void; navigate: (path: string) => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const priorityTone = task.priority >= 7 ? 'high' : task.priority >= 4 ? 'medium' : 'low';
+
+  async function assign(agentId: string) {
+    if (!agentId || agentId === task.assigned_agent || task.status === 'running') return;
+    setBusy('assign');
+    try {
+      const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { assigned_agent: agentId });
+      if (!result.ok) throw new Error('Task is running or no longer exists');
+      onChange();
+    } catch (err: any) {
+      alert('Assign failed: ' + (err?.message || err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function autoAssign() {
+    setBusy('auto');
+    try {
+      await apiPost(`/api/mission/tasks/${task.id}/auto-assign`);
+      onChange();
+    } catch (err: any) {
+      alert('Auto-assign failed: ' + (err?.message || err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function cancel() {
+    setBusy('cancel');
+    try {
+      await apiPost(`/api/mission/tasks/${task.id}/cancel`);
+      onChange();
+    } catch (err: any) {
+      alert('Cancel failed: ' + (err?.message || err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div class="px-3 py-3">
+      <div class="flex items-start gap-2">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-1.5 mb-1">
+            {task.priority > 0 && <Pill tone={priorityTone}>P{task.priority}</Pill>}
+            <Pill tone={task.status as any}>{task.status}</Pill>
+            {task.assigned_agent && <Pill tone="neutral">@{task.assigned_agent}</Pill>}
+            <span class="ml-auto text-[10px] text-[var(--color-text-faint)]">{formatRelativeTime(task.completed_at || task.started_at || task.created_at)}</span>
+          </div>
+          <div class="text-[13px] text-[var(--color-text)] leading-snug">{task.title}</div>
+          {(task.error || task.result) && (
+            <div class={'mt-1 text-[11px] leading-relaxed ' + (task.error ? 'text-[var(--color-status-failed)]' : 'text-[var(--color-text-muted)]') + ' line-clamp-2'}>
+              {task.error || task.result}
+            </div>
+          )}
+        </div>
+      </div>
+      <div class="mt-2 flex items-center gap-1.5">
+        {!task.assigned_agent && (
+          <button
+            type="button"
+            onClick={autoAssign}
+            disabled={busy !== null}
+            class="inline-flex items-center gap-1 rounded-md bg-[var(--color-accent-soft)] px-2 py-1.5 text-[11px] font-medium text-[var(--color-accent)] disabled:opacity-40"
+          >
+            <Wand2 size={12} /> Auto
+          </button>
+        )}
+        {task.status !== 'running' && !TERMINAL.includes(task.status) && (
+          <select
+            value={task.assigned_agent || ''}
+            onChange={(event) => void assign((event.target as HTMLSelectElement).value)}
+            disabled={busy !== null}
+            class="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-2 py-1.5 text-[11px] text-[var(--color-text)] outline-none disabled:opacity-40"
+          >
+            <option value="">Assign to...</option>
+            {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name || agent.id}</option>)}
+          </select>
+        )}
+        {TERMINAL.includes(task.status) && (
+          <button
+            type="button"
+            onClick={() => navigate(`/review?task=${encodeURIComponent(task.id)}`)}
+            class="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]"
+          >
+            <FileText size={12} /> Review
+          </button>
+        )}
+        {(task.status === 'queued' || task.status === 'running') && (
+          <button
+            type="button"
+            onClick={cancel}
+            disabled={busy !== null}
+            class="rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-2 py-1.5 text-[11px] text-[var(--color-text-muted)] disabled:opacity-40"
+          >
+            Cancel
+          </button>
+        )}
+      </div>
     </div>
   );
 }
