@@ -252,6 +252,83 @@ function escapeHtml(input: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function inlineMarkdownToHtml(input: string): string {
+  return escapeHtml(input)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+
+function markdownishToHtml(title: string, content: string): string {
+  const lines = content.split(/\r?\n/);
+  const out: string[] = [];
+  let inList = false;
+  const closeList = () => {
+    if (inList) {
+      out.push('</ul>');
+      inList = false;
+    }
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      closeList();
+      continue;
+    }
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      closeList();
+      const level = Math.min(heading[1].length + 1, 4);
+      out.push(`<h${level}>${inlineMarkdownToHtml(heading[2])}</h${level}>`);
+      continue;
+    }
+    const bullet = line.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      if (!inList) {
+        out.push('<ul>');
+        inList = true;
+      }
+      out.push(`<li>${inlineMarkdownToHtml(bullet[1])}</li>`);
+      continue;
+    }
+    closeList();
+    out.push(`<p>${inlineMarkdownToHtml(line)}</p>`);
+  }
+  closeList();
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #111827; line-height: 1.5; }
+    h1 { font-size: 24px; margin: 0 0 16px; }
+    h2 { font-size: 18px; margin: 20px 0 8px; }
+    h3, h4 { font-size: 15px; margin: 16px 0 8px; }
+    p { margin: 0 0 10px; }
+    ul { margin: 0 0 12px 20px; padding: 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  ${out.join('\n')}
+</body>
+</html>`;
+}
+
+function summarizeMissionForEmail(task: MissionTask): string {
+  const raw = task.result || task.error || 'No result text was recorded.';
+  return raw
+    .replace(/\[SEND_(?:FILE|PHOTO):[^\]]+\]/g, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/[#*_>`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 900);
+}
+
 function maskEmail(email: string): string {
   const [name, domain] = email.split('@');
   if (!domain) return 'configured owner';
@@ -504,9 +581,7 @@ function isSortedCompletion(task: MissionTask, missions: MissionTask[]): boolean
 
 function isRecentActionableFailure(task: MissionTask): boolean {
   if (task.status !== 'failed' && task.status !== 'partial') return false;
-  if (isReviewSpawnedTask(task)) return true;
-  if (containsHumanActionSignal(task)) return true;
-  return missionAgeHours(task) <= 6 && task.assigned_agent !== null;
+  return true;
 }
 
 function defaultReviewStatusForTask(task: MissionTask, missions: MissionTask[]): MissionReviewStatus | null {
@@ -680,7 +755,78 @@ async function createMissionTaskExport(task: MissionTask, format: 'docx' | 'html
   return { path: htmlPath, format: 'html' };
 }
 
-async function sendMissionTaskExportEmail(task: MissionTask, to: string, from: string, attachmentPath: string): Promise<void> {
+type ReviewEmailAttachment = {
+  path: string;
+  format: string;
+  source: 'deliverable' | 'report';
+  label: string;
+  originalPath?: string;
+};
+
+async function createTextDeliverableExport(
+  task: MissionTask,
+  filePath: string,
+  format: 'docx' | 'html',
+): Promise<ReviewEmailAttachment> {
+  fs.mkdirSync(REVIEW_EXPORT_DIR, { recursive: true, mode: 0o700 });
+  const slug = sanitizeExportSlug(path.basename(filePath, path.extname(filePath)) || task.title);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const htmlPath = path.join(REVIEW_EXPORT_DIR, `${slug}-${task.id}-${stamp}.html`);
+  const content = fs.readFileSync(filePath, 'utf-8');
+  fs.writeFileSync(htmlPath, markdownishToHtml(path.basename(filePath), content), { encoding: 'utf-8', mode: 0o600 });
+
+  if (format === 'html') {
+    return { path: htmlPath, format: 'html', source: 'deliverable', label: path.basename(htmlPath), originalPath: filePath };
+  }
+
+  const docxPath = htmlPath.replace(/\.html$/, '.docx');
+  try {
+    const { safeExecFileAsync } = await import('./safe-spawn.js');
+    await safeExecFileAsync('textutil', ['-convert', 'docx', '-output', docxPath, htmlPath], {
+      envClass: 'system-tool',
+      timeout: 30_000,
+    });
+    if (fs.existsSync(docxPath)) {
+      return { path: docxPath, format: 'docx', source: 'deliverable', label: path.basename(docxPath), originalPath: filePath };
+    }
+  } catch {
+    // Fall back to formatted HTML on systems without textutil conversion support.
+  }
+
+  return { path: htmlPath, format: 'html', source: 'deliverable', label: path.basename(htmlPath), originalPath: filePath };
+}
+
+export async function createReviewEmailAttachment(
+  task: MissionTask,
+  format: 'docx' | 'html' = 'docx',
+): Promise<ReviewEmailAttachment> {
+  const deliverable = extractMissionDeliverables(task)
+    .find((item) => item.kind === 'file' && item.exists && item.target);
+
+  if (deliverable) {
+    const filePath = deliverable.target;
+    const ext = path.extname(filePath).toLowerCase();
+    if (['.md', '.txt', '.html', '.htm'].includes(ext)) {
+      return createTextDeliverableExport(task, filePath, format);
+    }
+    return {
+      path: filePath,
+      format: ext.replace(/^\./, '') || 'file',
+      source: 'deliverable',
+      label: path.basename(filePath),
+      originalPath: filePath,
+    };
+  }
+
+  const exported = await createMissionTaskExport(task, format);
+  return {
+    ...exported,
+    source: 'report',
+    label: path.basename(exported.path),
+  };
+}
+
+async function sendMissionTaskExportEmail(task: MissionTask, to: string, from: string, attachment: ReviewEmailAttachment): Promise<void> {
   const graphEnv = readEnvFile([
     'GRAPH_CLIENT_ID',
     'GRAPH_TENANT_ID',
@@ -688,10 +834,15 @@ async function sendMissionTaskExportEmail(task: MissionTask, to: string, from: s
     'GRAPH_REFRESH_TOKEN',
     'MSGRAPH_FORBIDDEN_FROM_EMAILS',
   ]);
-  const bodyPath = attachmentPath.replace(/\.[^.]+$/, '.email.html');
-  const body = `<p>Attached is the exported deliverable from Mission Control.</p>
+  const bodyPath = path.join(REVIEW_EXPORT_DIR, `${sanitizeExportSlug(task.title)}-${task.id}.email.html`);
+  const summary = summarizeMissionForEmail(task);
+  const attachmentLabel = attachment.source === 'deliverable'
+    ? `actual deliverable: ${attachment.label}`
+    : `mission report: ${attachment.label}`;
+  const body = `<p>Attached is the ${escapeHtml(attachmentLabel)} from Mission Control.</p>
 <p><strong>${escapeHtml(task.title)}</strong><br>
-Mission ${escapeHtml(task.id)} · ${escapeHtml(task.assigned_agent || 'unassigned')} · ${escapeHtml(task.status)}</p>`;
+Mission ${escapeHtml(task.id)} · ${escapeHtml(task.assigned_agent || 'unassigned')} · ${escapeHtml(task.status)}</p>
+<p><strong>Quick summary</strong><br>${escapeHtml(summary)}</p>`;
   fs.writeFileSync(bodyPath, body, { encoding: 'utf-8', mode: 0o600 });
 
   const { safeExecFileAsync } = await import('./safe-spawn.js');
@@ -702,7 +853,7 @@ Mission ${escapeHtml(task.id)} · ${escapeHtml(task.assigned_agent || 'unassigne
     '--subject', `Mission deliverable: ${task.title}`,
     '--body-file', bodyPath,
     '--html',
-    '--attach', attachmentPath,
+    '--attach', attachment.path,
   ], {
     envClass: 'sdk',
     extraEnv: graphEnv,
@@ -1003,7 +1154,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
   items.push(...listOpenAttentionItems(50).map(durableAttentionToHome));
 
   for (const mission of missions) {
-    const review = getMissionReview(mission.id);
+    const review = effectiveMissionReview(mission, missions);
     if (!TERMINAL_MISSION_STATUSES.has(mission.status)) {
       const followUpSource = missionFollowUpSourceKey(mission);
       if (followUpSource && !canonicalFollowUps.has(mission.id)) continue;
@@ -1032,7 +1183,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
         createdAt: mission.completed_at || mission.created_at,
         agentId: mission.assigned_agent,
         taskId: mission.id,
-        href: '/mission',
+        href: '/review',
       });
     } else if (completedMissionNeedsAttention(mission, Math.floor(Date.now() / 1000)) && !completedMissionHasFollowUp(mission, missions)) {
       items.push({
@@ -2406,9 +2557,9 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
     let body: { format?: 'docx' | 'html' } = {};
     try { body = await c.req.json(); } catch { body = {}; }
-    const exported = await createMissionTaskExport(task, body.format === 'html' ? 'html' : 'docx');
+    const exported = await createReviewEmailAttachment(task, body.format === 'html' ? 'html' : 'docx');
     try {
-      await sendMissionTaskExportEmail(task, ownerEmail, fromEmail, exported.path);
+      await sendMissionTaskExportEmail(task, ownerEmail, fromEmail, exported);
     } catch (err: any) {
       return c.json({
         ok: false,

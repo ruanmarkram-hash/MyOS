@@ -14,8 +14,9 @@
 // land BEFORE config.ts evaluates at import time.
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import fs from 'fs';
 import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, getMissionReview, getMissionTask, updateTaskAfterRun } from './db.js';
-import { buildDashboardApp, configuredReviewExportEmail, configuredReviewExportFromEmail } from './dashboard.js';
+import { buildDashboardApp, configuredReviewExportEmail, configuredReviewExportFromEmail, createReviewEmailAttachment } from './dashboard.js';
 import type { Hono } from 'hono';
 
 const TOKEN = 'test-contract-token';
@@ -773,6 +774,22 @@ describe('GET /api/review/inbox', () => {
     expect(getMissionTask(body.task.id)?.prompt).toContain('Parent mission: m-review-fail');
   });
 
+  it('surfaces failed missions for triage even without magic action wording', async () => {
+    createMissionTask('m-review-generic-fail', 'Generic failed mission', 'try a thing', 'mason', 'mason', 4);
+    completeMissionTask('m-review-generic-fail', null, 'failed', 'Something went wrong. Check the logs and try again.');
+
+    const res = await get('/api/review/inbox?limit=50');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    const item = body.items.find((entry: any) => entry.id === 'm-review-generic-fail');
+    expect(item).toBeTruthy();
+    expect(item).toMatchObject({
+      status: 'failed',
+      kind: 'needs_action',
+      review: expect.objectContaining({ status: 'needs_triage' }),
+    });
+  });
+
   it('approves review items so they leave the default inbox', async () => {
     createMissionTask('m-review-approve', 'Approve me', 'deliver', 'mason', 'dashboard', 6);
     completeMissionTask('m-review-approve', 'Done.', 'completed');
@@ -941,6 +958,22 @@ describe('GET /api/review/inbox', () => {
     const body = await jsonOf(res);
     expect(body.items.map((item: any) => item.id)).not.toContain('mission:m-home-failed-review:terminal');
   });
+
+  it('surfaces failed missions in Home Needs Attention with a Review Inbox target', async () => {
+    createMissionTask('m-home-failed-visible', 'Visible failed mission', 'original prompt', 'mason', 'mason', 6);
+    completeMissionTask('m-home-failed-visible', null, 'failed', 'Something went wrong. Check the logs and try again.');
+
+    const res = await get('/api/home/attention');
+    const body = await jsonOf(res);
+    expect(body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'mission:m-home-failed-visible:terminal',
+        source: 'mission',
+        severity: 'high',
+        href: '/review',
+      }),
+    ]));
+  });
 });
 
 describe('POST /api/review/tasks/:id/email', () => {
@@ -1026,6 +1059,23 @@ describe('POST /api/review/tasks/:id/email', () => {
       if (prev === undefined) delete process.env.DASHBOARD_MUTATIONS_ENABLED;
       else process.env.DASHBOARD_MUTATIONS_ENABLED = prev;
     }
+  });
+
+  it('prefers an actual file deliverable over the generated mission report attachment', async () => {
+    const deliverablePath = '/tmp/claudeclaw-contract-deliverable.pdf';
+    fs.writeFileSync(deliverablePath, '%PDF-1.3\ncontract test\n', { mode: 0o600 });
+    createMissionTask('m-review-real-file', 'Real file deliverable', 'produce output', 'charter', 'dashboard', 6);
+    completeMissionTask('m-review-real-file', `Deliverable: \`${deliverablePath}\`\n\nSummary report text.`, 'completed');
+    const task = getMissionTask('m-review-real-file')!;
+
+    const attachment = await createReviewEmailAttachment(task, 'docx');
+    const resolvedDeliverablePath = fs.realpathSync(deliverablePath);
+    expect(attachment).toMatchObject({
+      source: 'deliverable',
+      path: resolvedDeliverablePath,
+      format: 'pdf',
+      originalPath: resolvedDeliverablePath,
+    });
   });
 });
 

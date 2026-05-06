@@ -99,9 +99,10 @@ export function ReviewInbox() {
 
   async function emailExport(item: ReviewItem) {
     await mutate(item, 'Emailing...', async () => {
-      const result = await apiPost<{ from?: string; to: string; exported: { format: string } }>(`/api/review/tasks/${item.id}/email`, { format: 'docx' });
+      const result = await apiPost<{ from?: string; to: string; exported: { format: string; source?: string } }>(`/api/review/tasks/${item.id}/email`, { format: 'docx' });
       const from = result.from ? ` from ${result.from}` : '';
-      setMessage((prev) => ({ ...prev, [item.id]: `Sent ${result.exported.format}${from} to ${result.to}` }));
+      const source = result.exported.source === 'deliverable' ? 'deliverable' : 'report';
+      setMessage((prev) => ({ ...prev, [item.id]: `Sent ${source} ${result.exported.format}${from} to ${result.to}` }));
     }, false);
   }
 
@@ -328,7 +329,7 @@ function ReviewCard({
       <div class="mt-3 flex flex-wrap gap-2">
         {item.deliverables.map((deliverable) => <DeliverableAction key={deliverable.id} deliverable={deliverable} />)}
         <button type="button" onClick={onEmail} disabled={!!busy} class="review-btn">
-          <Mail size={12} /> Email export
+          <Mail size={12} /> Email deliverable
         </button>
         <button type="button" onClick={onApprove} disabled={!!busy} class="review-btn">
           <Check size={12} /> Approve
