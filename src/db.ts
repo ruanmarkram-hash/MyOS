@@ -260,6 +260,29 @@ function createSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_mission_reviews_followup
       ON mission_reviews(followup_task_id);
 
+    CREATE TABLE IF NOT EXISTS attention_items (
+      id                TEXT PRIMARY KEY,
+      source_kind       TEXT NOT NULL,
+      source_id         TEXT NOT NULL,
+      source_key        TEXT NOT NULL UNIQUE,
+      title             TEXT NOT NULL,
+      detail            TEXT NOT NULL,
+      severity          TEXT NOT NULL,
+      status            TEXT NOT NULL DEFAULT 'open',
+      linked_mission_id TEXT,
+      assigned_agent    TEXT,
+      href              TEXT,
+      created_at        INTEGER NOT NULL,
+      updated_at        INTEGER NOT NULL,
+      resolved_at       INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_attention_status
+      ON attention_items(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_attention_source
+      ON attention_items(source_kind, source_id);
+    CREATE INDEX IF NOT EXISTS idx_attention_mission
+      ON attention_items(linked_mission_id);
+
     CREATE TABLE IF NOT EXISTS meet_sessions (
       id              TEXT PRIMARY KEY,         -- session id from the provider's join response
       agent_id        TEXT NOT NULL,            -- which agent is in the meeting
@@ -698,6 +721,31 @@ function runMigrations(database: Database.Database): void {
       ON mission_reviews(review_status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_mission_reviews_followup
       ON mission_reviews(followup_task_id);
+  `);
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS attention_items (
+      id                TEXT PRIMARY KEY,
+      source_kind       TEXT NOT NULL,
+      source_id         TEXT NOT NULL,
+      source_key        TEXT NOT NULL UNIQUE,
+      title             TEXT NOT NULL,
+      detail            TEXT NOT NULL,
+      severity          TEXT NOT NULL,
+      status            TEXT NOT NULL DEFAULT 'open',
+      linked_mission_id TEXT,
+      assigned_agent    TEXT,
+      href              TEXT,
+      created_at        INTEGER NOT NULL,
+      updated_at        INTEGER NOT NULL,
+      resolved_at       INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_attention_status
+      ON attention_items(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_attention_source
+      ON attention_items(source_kind, source_id);
+    CREATE INDEX IF NOT EXISTS idx_attention_mission
+      ON attention_items(linked_mission_id);
   `);
 
   // ── Memory V2 migration ──────────────────────────────────────────────
@@ -1528,6 +1576,114 @@ export function pauseScheduledTask(id: string): void {
 
 export function resumeScheduledTask(id: string): void {
   db.prepare(`UPDATE scheduled_tasks SET status = 'active' WHERE id = ?`).run(id);
+}
+
+// ── Durable Attention Items ──────────────────────────────────────────
+
+export type AttentionItemStatus = 'open' | 'assigned' | 'resolved' | 'archived';
+
+export interface AttentionItem {
+  id: string;
+  source_kind: 'brief' | 'mission' | 'schedule';
+  source_id: string;
+  source_key: string;
+  title: string;
+  detail: string;
+  severity: 'high' | 'medium' | 'low';
+  status: AttentionItemStatus;
+  linked_mission_id: string | null;
+  assigned_agent: string | null;
+  href: string | null;
+  created_at: number;
+  updated_at: number;
+  resolved_at: number | null;
+}
+
+function attentionIdForSource(sourceKey: string): string {
+  return 'att_' + crypto.createHash('sha1').update(sourceKey).digest('hex').slice(0, 16);
+}
+
+export function getAttentionItem(id: string): AttentionItem | null {
+  return (db.prepare('SELECT * FROM attention_items WHERE id = ?').get(id) as AttentionItem | undefined) ?? null;
+}
+
+export function getAttentionItemBySourceKey(sourceKey: string): AttentionItem | null {
+  return (db.prepare('SELECT * FROM attention_items WHERE source_key = ?').get(sourceKey) as AttentionItem | undefined) ?? null;
+}
+
+export function listOpenAttentionItems(limit = 50): AttentionItem[] {
+  return db.prepare(
+    `SELECT * FROM attention_items
+     WHERE status = 'open'
+     ORDER BY
+       CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+       updated_at DESC
+     LIMIT ?`,
+  ).all(limit) as AttentionItem[];
+}
+
+export function upsertAttentionItem(input: {
+  sourceKind: AttentionItem['source_kind'];
+  sourceId: string;
+  sourceKey: string;
+  title: string;
+  detail: string;
+  severity: AttentionItem['severity'];
+  href?: string | null;
+}): AttentionItem {
+  const now = Math.floor(Date.now() / 1000);
+  const existing = db.prepare('SELECT * FROM attention_items WHERE source_key = ?').get(input.sourceKey) as AttentionItem | undefined;
+  if (existing) {
+    if (existing.status === 'resolved' || existing.status === 'archived' || existing.status === 'assigned') {
+      return existing;
+    }
+    db.prepare(
+      `UPDATE attention_items
+       SET title = ?, detail = ?, severity = ?, href = ?, updated_at = ?
+       WHERE id = ? AND status = 'open'`,
+    ).run(input.title.slice(0, 220), input.detail.slice(0, 1000), input.severity, input.href ?? null, now, existing.id);
+    return getAttentionItem(existing.id)!;
+  }
+
+  const id = attentionIdForSource(input.sourceKey);
+  db.prepare(
+    `INSERT INTO attention_items (
+      id, source_kind, source_id, source_key, title, detail, severity,
+      status, linked_mission_id, assigned_agent, href, created_at, updated_at, resolved_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', NULL, NULL, ?, ?, ?, NULL)`,
+  ).run(
+    id,
+    input.sourceKind,
+    input.sourceId,
+    input.sourceKey,
+    input.title.slice(0, 220),
+    input.detail.slice(0, 1000),
+    input.severity,
+    input.href ?? null,
+    now,
+    now,
+  );
+  return getAttentionItem(id)!;
+}
+
+export function markAttentionAssigned(id: string, missionId: string, agentId: string | null): AttentionItem | null {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE attention_items
+     SET status = 'assigned', linked_mission_id = ?, assigned_agent = ?, updated_at = ?, resolved_at = NULL
+     WHERE id = ?`,
+  ).run(missionId, agentId, now, id);
+  return getAttentionItem(id);
+}
+
+export function updateAttentionStatus(id: string, status: AttentionItemStatus): AttentionItem | null {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE attention_items
+     SET status = ?, updated_at = ?, resolved_at = CASE WHEN ? IN ('resolved', 'archived') THEN ? ELSE resolved_at END
+     WHERE id = ?`,
+  ).run(status, now, status, now, id);
+  return getAttentionItem(id);
 }
 
 /**

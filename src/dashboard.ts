@@ -13,6 +13,12 @@ import {
   pauseScheduledTask,
   resumeScheduledTask,
   clearScheduledTaskAttention,
+  getAttentionItem,
+  getAttentionItemBySourceKey,
+  listOpenAttentionItems,
+  markAttentionAssigned,
+  updateAttentionStatus,
+  upsertAttentionItem,
   getConversationPage,
   getDashboardMemoryStats,
   getDashboardPinnedMemories,
@@ -58,6 +64,7 @@ import {
   type MissionReview,
   type MissionReviewStatus,
   type ScheduledTask,
+  type AttentionItem,
 } from './db.js';
 import { generateContent, parseJsonResponse } from './gemini.js';
 import { getSecurityStatus, getScrubbedSdkEnv } from './security.js';
@@ -730,6 +737,50 @@ function severityForText(text: string): AttentionSeverity {
   return 'low';
 }
 
+function attentionSourceKey(sourceKind: string, sourceId: string, text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim().toLowerCase();
+  const hash = crypto.createHash('sha1').update(normalized).digest('hex').slice(0, 16);
+  return `${sourceKind}:${sourceId}:${hash}`;
+}
+
+function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[]): void {
+  for (const brief of buildHomeBriefs(tasks)) {
+    if (!brief) continue;
+    for (const detail of brief.attentionItems) {
+      const sourceKey = attentionSourceKey('brief', brief.taskId, detail);
+      if (briefDetailCoveredByMission(detail, missions)) {
+        const existing = getAttentionItemBySourceKey(sourceKey);
+        if (existing?.status === 'open') updateAttentionStatus(existing.id, 'assigned');
+        continue;
+      }
+
+      upsertAttentionItem({
+        sourceKind: 'brief',
+        sourceId: brief.taskId,
+        sourceKey,
+        title: `${brief.label} brief`,
+        detail,
+        severity: severityForText(detail),
+        href: '/home',
+      });
+    }
+  }
+}
+
+function durableAttentionToHome(item: AttentionItem) {
+  return {
+    id: `attention:${item.id}`,
+    source: item.source_kind,
+    severity: item.severity,
+    title: item.title,
+    detail: item.detail,
+    createdAt: item.updated_at || item.created_at,
+    agentId: item.assigned_agent,
+    taskId: item.source_id,
+    href: item.href || '/home',
+  };
+}
+
 function briefDetailCoveredByMission(detail: string, missions: MissionTask[]): boolean {
   const d = detail.toLowerCase();
   const missionTitles = missions.map((mission) => mission.title.toLowerCase());
@@ -814,6 +865,7 @@ function completedMissionHasFollowUp(mission: MissionTask, missions: MissionTask
 }
 
 function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
+  syncReportAttentionItems(tasks, missions);
   const canonicalFollowUps = canonicalFollowUpIds(missions);
   const items: Array<{
     id: string;
@@ -827,23 +879,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
     href?: string;
   }> = [];
 
-  for (const brief of buildHomeBriefs(tasks)) {
-    if (!brief) continue;
-    for (const [index, detail] of brief.attentionItems.entries()) {
-      if (briefDetailCoveredByMission(detail, missions)) continue;
-      items.push({
-        id: `brief:${brief.taskId}:${index}`,
-        source: 'brief',
-        severity: severityForText(detail),
-        title: `${brief.label} brief`,
-        detail,
-        createdAt: brief.lastRun || 0,
-        agentId: brief.agentId,
-        taskId: brief.taskId,
-        href: '/home',
-      });
-    }
-  }
+  items.push(...listOpenAttentionItems(50).map(durableAttentionToHome));
 
   for (const mission of missions) {
     const review = getMissionReview(mission.id);
@@ -851,6 +887,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
       const followUpSource = missionFollowUpSourceKey(mission);
       if (followUpSource && !canonicalFollowUps.has(mission.id)) continue;
       const ageHours = (Date.now() / 1000 - mission.created_at) / 3600;
+      if (mission.assigned_agent && mission.status === 'queued' && ageHours <= 12) continue;
       items.push({
         id: `mission:${mission.id}`,
         source: 'mission',
@@ -1791,6 +1828,99 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     });
   });
 
+  app.post('/api/home/attention/assign', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+
+    let body: { itemId?: string; agentId?: string } = {};
+    try { body = await c.req.json(); } catch { body = {}; }
+    const itemId = String(body.itemId || '');
+    const agentId = String(body.agentId || '').trim();
+    const validAgents = ['main', ...listAgentIds()];
+    if (!itemId || !agentId) return c.json({ ok: false, error: 'itemId and agentId are required.' }, 400);
+    if (!validAgents.includes(agentId)) return c.json({ ok: false, error: `Unknown agent: ${agentId}. Valid: ${validAgents.join(', ')}` }, 400);
+
+    const attentionMatch = itemId.match(/^attention:([^:]+)/);
+    if (attentionMatch) {
+      const attention = getAttentionItem(attentionMatch[1]);
+      if (!attention) return c.json({ ok: false, error: 'Attention source not found.' }, 404);
+      if (attention.linked_mission_id) {
+        const linked = getMissionTask(attention.linked_mission_id);
+        if (linked && !TERMINAL_MISSION_STATUSES.has(linked.status)) {
+          reassignMissionTask(linked.id, agentId);
+          markAttentionAssigned(attention.id, linked.id, agentId);
+          return c.json({ ok: true, task: getMissionTask(linked.id), attention: getAttentionItem(attention.id) });
+        }
+      }
+
+      const id = crypto.randomBytes(4).toString('hex');
+      const missionTitle = (attention.source_kind === 'brief' ? attention.detail : attention.title)
+        .replace(/^action needed:\s*/i, '')
+        .replace(/^follow up:\s*/i, '')
+        .slice(0, 180);
+      createMissionTask(id, missionTitle, [
+        'Needs Attention item from Home dashboard.',
+        `Attention item: ${attention.id}`,
+        `Source: ${attention.source_kind}:${attention.source_id}`,
+        `Title: ${attention.title}`,
+        `Detail: ${attention.detail}`,
+        attention.href ? `Source link: ${attention.href}` : '',
+      ].filter(Boolean).join('\n'), agentId, 'dashboard', attention.severity === 'high' ? 9 : attention.severity === 'medium' ? 6 : 3);
+      markAttentionAssigned(attention.id, id, agentId);
+      return c.json({ ok: true, task: getMissionTask(id), attention: getAttentionItem(attention.id) }, 201);
+    }
+
+    const missionMatch = itemId.match(/^mission:([^:]+)/);
+    if (missionMatch) {
+      const id = missionMatch[1];
+      const task = getMissionTask(id);
+      if (!task) return c.json({ ok: false, error: 'Mission source not found.' }, 404);
+      if (!TERMINAL_MISSION_STATUSES.has(task.status)) {
+        if (task.status === 'running' && task.assigned_agent && task.assigned_agent !== agentId) {
+          return c.json({ ok: false, error: `Mission is already running with @${task.assigned_agent}.` }, 409);
+        }
+        reassignMissionTask(id, agentId);
+        return c.json({ ok: true, task: getMissionTask(id) });
+      }
+
+      const followupId = crypto.randomBytes(4).toString('hex');
+      const title = `Follow up: ${task.title.replace(/^follow up:\s*/i, '')}`.slice(0, 200);
+      createMissionTask(followupId, title, [
+        'Needs Attention follow-up from Home dashboard.',
+        `Source mission: ${task.id}`,
+        `Source status: ${task.status}`,
+        task.result ? `Result:\n${task.result.slice(0, 2000)}` : '',
+        task.error ? `Error:\n${task.error.slice(0, 2000)}` : '',
+      ].filter(Boolean).join('\n'), agentId, 'dashboard', task.status === 'failed' ? 9 : 6);
+      upsertMissionReview({
+        taskId: task.id,
+        reviewStatus: 'waiting_followup',
+        resolution: 'delegated',
+        followupTaskId: followupId,
+      });
+      return c.json({ ok: true, task: getMissionTask(followupId), review: getMissionReview(task.id) }, 201);
+    }
+
+    const scheduleMatch = itemId.match(/^(?:schedule|brief):([^:]+)/);
+    if (scheduleMatch) {
+      const id = scheduleMatch[1];
+      const schedule = getAllScheduledTasks().find((task) => task.id === id);
+      if (!schedule) return c.json({ ok: false, error: 'Scheduled source not found.' }, 404);
+      const missionId = crypto.randomBytes(4).toString('hex');
+      createMissionTask(missionId, `Follow up: ${scheduleTitle(schedule.prompt)}`.slice(0, 200), [
+        'Scheduled Needs Attention follow-up from Home dashboard.',
+        `Source schedule: ${schedule.id}`,
+        `Last status: ${schedule.last_status || schedule.status}`,
+        schedule.last_result ? `Last result:\n${schedule.last_result.slice(0, 2000)}` : '',
+      ].filter(Boolean).join('\n'), agentId, 'dashboard', schedule.last_status === 'failed' ? 9 : 6);
+      clearScheduledTaskAttention(id, `Assigned follow-up mission ${missionId} from Home Needs Attention.`);
+      return c.json({ ok: true, task: getMissionTask(missionId) }, 201);
+    }
+
+    return c.json({ ok: false, error: 'Unsupported attention source.' }, 400);
+  });
+
   app.post('/api/home/attention/resolve', async (c) => {
     if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
       return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
@@ -1802,6 +1932,14 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const action = body.action;
     if (!itemId || (action !== 'complete' && action !== 'archive')) {
       return c.json({ ok: false, error: 'itemId and action are required.' }, 400);
+    }
+
+    const attentionMatch = itemId.match(/^attention:([^:]+)/);
+    if (attentionMatch) {
+      const attention = getAttentionItem(attentionMatch[1]);
+      if (!attention) return c.json({ ok: false, error: 'Attention source not found.' }, 404);
+      const updated = updateAttentionStatus(attention.id, action === 'complete' ? 'resolved' : 'archived');
+      return c.json({ ok: true, source: attention.source_kind, action, attention: updated });
     }
 
     const missionMatch = itemId.match(/^mission:([^:]+)/);

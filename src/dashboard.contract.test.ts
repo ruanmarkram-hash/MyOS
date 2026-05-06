@@ -404,6 +404,49 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(body.items.map((item: any) => item.id)).not.toContain('mission:m-home-resolve');
   });
 
+  it('assigns a report attention item into Mission Queue and removes it from Needs Attention', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-action-onramp', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun('brief-action-onramp', now + 86400, 'Action needed: Draft Lucas inquiry response', 'success');
+
+    const before = await jsonOf(await get('/api/home/attention'));
+    const item = before.items.find((entry: any) => entry.detail.includes('Draft Lucas inquiry response'));
+    expect(item).toMatchObject({ id: expect.stringMatching(/^attention:/), source: 'brief' });
+
+    const assign = await app.request('/api/home/attention/assign' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ itemId: item.id, agentId: 'main' }),
+    });
+    expect(assign.status).toBe(201);
+
+    const after = await jsonOf(await get('/api/home/attention'));
+    expect(after.items.map((entry: any) => entry.id)).not.toContain(item.id);
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks.map((task: any) => task.title)).toContain('Draft Lucas inquiry response');
+  });
+
+  it('archives a report attention item durably so the same report text does not resurface', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-action-archive', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun('brief-action-archive', now + 86400, 'Action needed: Review CA-10 restrictive practices', 'success');
+
+    const before = await jsonOf(await get('/api/home/attention'));
+    const item = before.items.find((entry: any) => entry.detail.includes('Review CA-10'));
+    expect(item?.id).toMatch(/^attention:/);
+
+    const archive = await app.request('/api/home/attention/resolve' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ itemId: item.id, action: 'archive' }),
+    });
+    expect(archive.status).toBe(200);
+
+    const after = await jsonOf(await get('/api/home/attention'));
+    expect(after.items.map((entry: any) => entry.id)).not.toContain(item.id);
+  });
+
   it('archives a mission attention item by updating review state at the source', async () => {
     createMissionTask('m-home-archive', 'Archive from Home', 'partial work', 'mason', 'dashboard', 7);
     completeMissionTask('m-home-archive', 'Partial output.', 'partial');
@@ -440,7 +483,7 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(details).not.toContain('Blocked on you:');
   });
 
-  it('suppresses brief items once a matching mission task exists', async () => {
+  it('keeps report items out of Needs Attention once matching mission work exists', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-covered', 'Morning brief', '0 9 * * *', now + 3600, 'main');
     updateTaskAfterRun(
@@ -464,7 +507,14 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(details).not.toContain('Scripts unavailable (missing `caldav` module). Fix needed.');
     expect(details).not.toContain('Digest unavailable (database access error). Fix needed.');
     expect(details).not.toContain('CA-05 Support Plans personalised (overdue since 12 Apr)');
-    expect(body.items.map((item: any) => item.title)).toEqual(expect.arrayContaining([
+    expect(body.items.map((item: any) => item.title)).not.toEqual(expect.arrayContaining([
+      'Fix Reminders CalDAV auth',
+      'Fix iMessage digest access',
+      'CA-05 support plans recovery',
+    ]));
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks.map((task: any) => task.title)).toEqual(expect.arrayContaining([
       'Fix Reminders CalDAV auth',
       'Fix iMessage digest access',
       'CA-05 support plans recovery',
@@ -516,7 +566,7 @@ describe('GET /api/home dashboard endpoints', () => {
     const body = await jsonOf(res);
     const titles = body.items.map((item: any) => item.title);
     expect(titles.filter((title: string) => title === 'Fix iMessage digest access')).toHaveLength(0);
-    expect(titles.filter((title: string) => title === 'Follow up: Fix iMessage digest access')).toHaveLength(1);
+    expect(titles.filter((title: string) => title === 'Follow up: Fix iMessage digest access')).toHaveLength(0);
   });
 
   it('does not surface old dev completed missions just because their result contains critical review text', async () => {

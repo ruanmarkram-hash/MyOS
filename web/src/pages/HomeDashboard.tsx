@@ -119,6 +119,7 @@ export function HomeDashboard() {
   const loading = (health.loading || missions.loading || briefs.loading || attention.loading || agenda.loading || agents.loading || runtime.loading) && !health.data;
 
   const activeMissions = (missions.data?.tasks ?? []).filter((task) => !TERMINAL.has(task.status));
+  const missionQueueItems = activeMissions.filter((task) => !!task.assigned_agent);
   const runningMissions = activeMissions.filter((task) => task.status === 'running');
   const unassigned = activeMissions.filter((task) => !task.assigned_agent);
   const liveAgents = (agents.data?.agents ?? []).filter((agent) => agent.running);
@@ -212,7 +213,6 @@ export function HomeDashboard() {
                 <AttentionPanel
                   items={attentionItems}
                   agents={agents.data?.agents ?? []}
-                  missions={missions.data?.tasks ?? []}
                   onChange={() => {
                     attention.refresh();
                     missions.refresh();
@@ -221,9 +221,9 @@ export function HomeDashboard() {
               </Panel>
 
               <Panel title="Mission Queue" icon={<ListChecks size={15} />} action="/mission" navigate={navigate}>
-                {activeMissions.length === 0 ? <EmptyLine text="No active mission tasks." /> : (
+                {missionQueueItems.length === 0 ? <EmptyLine text="No dispatched mission tasks." /> : (
                   <div class="space-y-2">
-                    {activeMissions.slice(0, 8).map((task) => <MissionLine key={task.id} task={task} />)}
+                    {missionQueueItems.slice(0, 8).map((task) => <MissionLine key={task.id} task={task} />)}
                   </div>
                 )}
               </Panel>
@@ -439,12 +439,10 @@ function BriefAttention({ items }: { items: HomeAttentionItem[] }) {
 function AttentionPanel({
   items,
   agents,
-  missions,
   onChange,
 }: {
   items: HomeAttentionItem[];
   agents: Agent[];
-  missions: MissionTask[];
   onChange: () => void;
 }) {
   const [assigning, setAssigning] = useState<Record<string, string>>({});
@@ -471,41 +469,10 @@ function AttentionPanel({
     if (!agentId) return;
     setAssigning((prev) => ({ ...prev, [item.id]: agentId }));
     try {
-      const sourceMission = item.taskId ? missions.find((task) => task.id === item.taskId) : null;
-      if (sourceMission && !TERMINAL.has(sourceMission.status)) {
-        const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${sourceMission.id}`, { assigned_agent: agentId });
-        if (!result.ok) throw new Error('Mission could not be reassigned');
-      } else {
-        const followUpTitle = `Follow up: ${item.title}`.slice(0, 200);
-        const existingFollowUp = missions.find((task) => !TERMINAL.has(task.status) && task.title.toLowerCase() === followUpTitle.toLowerCase());
-        if (existingFollowUp) {
-          if (existingFollowUp.status === 'running') {
-            if (existingFollowUp.assigned_agent !== agentId) {
-              throw new Error(`Follow-up is already running with @${existingFollowUp.assigned_agent || 'unassigned'}`);
-            }
-          } else if (existingFollowUp.assigned_agent !== agentId) {
-            const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${existingFollowUp.id}`, { assigned_agent: agentId });
-            if (!result.ok) throw new Error('Existing follow-up could not be reassigned');
-          }
-          onChange();
-          return;
-        }
-        await apiPost('/api/mission/tasks', {
-          title: followUpTitle,
-          prompt: [
-            `Needs Attention item from Home dashboard.`,
-            `Title: ${item.title}`,
-            `Detail: ${item.detail}`,
-            item.taskId ? `Source mission: ${item.taskId}` : '',
-            item.href ? `Source link: ${item.href}` : '',
-          ].filter(Boolean).join('\n'),
-          assigned_agent: agentId,
-          priority: item.severity === 'high' ? 9 : item.severity === 'medium' ? 6 : 3,
-        });
-      }
+      await apiPost('/api/home/attention/assign', { itemId: item.id, agentId });
       onChange();
     } catch (err: any) {
-      alert('Assign failed: ' + (err?.message || err));
+      alert('Assign failed: ' + (err?.body?.error || err?.message || err));
     } finally {
       setAssigning((prev) => {
         const next = { ...prev };
