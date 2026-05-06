@@ -196,6 +196,12 @@ interface WholeBrainThoughtPoint {
   clusterIds: string[];
   primaryKind: WholeBrainGraphNode['kind'];
   score: number;
+  label: string;
+  type: string;
+  sourceType: string;
+  createdAt: string;
+  topics: string[];
+  people: string[];
 }
 
 interface WholeBrainGraphResponse {
@@ -216,6 +222,7 @@ interface WholeBrainGraphResponse {
 
 const TOPIC_COLORS = ['#8b8af0', '#10b981', '#f59e0b', '#5eb6ff', '#f472b6', '#a78bfa', '#ef4444'];
 const UNREADABLE_BRAIN_HIT = 'OpenBrain returned this hit without readable thought content.';
+const WHOLE_GRAPH_FILTER_KINDS: Array<WholeBrainGraphNode['kind']> = ['type', 'source', 'topic', 'person', 'time', 'sensitivity'];
 
 function looksLikeUnreadableBrainLine(line: string): boolean {
   const compact = line.replace(/\s+/g, '');
@@ -915,28 +922,91 @@ function WholeOpenBrainGraph({
 }) {
   const [selectedId, setSelectedId] = useState(graph.nodes[0]?.id || 'database:ob1');
   const [selectedThoughtId, setSelectedThoughtId] = useState<string | null>(null);
-  const selected = graph.nodes.find((node) => node.id === selectedId) || graph.nodes[0] || null;
-  const layout = useMemo(() => layoutWholeBrainGraph(graph.nodes, graph.edges), [graph.nodes, graph.edges]);
-  const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
+  const [query, setQuery] = useState('');
+  const [visibleKinds, setVisibleKinds] = useState<Record<WholeBrainGraphNode['kind'], boolean>>({
+    database: true,
+    type: true,
+    source: true,
+    topic: true,
+    person: true,
+    time: true,
+    sensitivity: true,
+  });
+  const queryText = query.trim().toLowerCase();
+  const pointQueryClusterIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!queryText) return ids;
+    for (const point of graph.points || []) {
+      const haystack = [
+        point.id,
+        point.label,
+        point.type,
+        point.sourceType,
+        point.createdAt,
+        ...(point.topics || []),
+        ...(point.people || []),
+      ].join(' ').toLowerCase();
+      if (!haystack.includes(queryText)) continue;
+      for (const clusterId of point.clusterIds) ids.add(clusterId);
+    }
+    return ids;
+  }, [graph.points, queryText]);
+  const filteredNodes = useMemo(() => {
+    return graph.nodes.filter((node) => {
+      if (node.kind !== 'database' && visibleKinds[node.kind] === false) return false;
+      if (queryText && (node.kind === 'database' ? pointQueryClusterIds.size > 0 : pointQueryClusterIds.has(node.id))) return true;
+      if (!queryText) return true;
+      const metadata = Object.values(node.metadata || {}).join(' ').toLowerCase();
+      return node.label.toLowerCase().includes(queryText)
+        || node.kind.includes(queryText)
+        || metadata.includes(queryText)
+        || node.sampleThoughtIds.some((id) => id.toLowerCase().includes(queryText));
+    });
+  }, [graph.nodes, pointQueryClusterIds, queryText, visibleKinds]);
+  const visibleNodeIds = useMemo(() => new Set(filteredNodes.map((node) => node.id)), [filteredNodes]);
+  const filteredEdges = useMemo(() => graph.edges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)), [graph.edges, visibleNodeIds]);
+  const filteredPoints = useMemo(() => {
+    return (graph.points || []).filter((point) => {
+      if (visibleKinds[point.primaryKind] === false) return false;
+      const clusterVisible = point.clusterIds.some((id) => visibleNodeIds.has(id));
+      if (!clusterVisible) return false;
+      if (!queryText) return true;
+      const haystack = [
+        point.id,
+        point.label,
+        point.type,
+        point.sourceType,
+        point.createdAt,
+        ...(point.topics || []),
+        ...(point.people || []),
+      ].join(' ').toLowerCase();
+      return haystack.includes(queryText);
+    });
+  }, [graph.points, queryText, visibleKinds, visibleNodeIds]);
+  const selected = filteredNodes.find((node) => node.id === selectedId) || filteredNodes[0] || null;
+  const layout = useMemo(() => layoutWholeBrainGraph(filteredNodes, filteredEdges), [filteredNodes, filteredEdges]);
+  const nodeById = useMemo(() => new Map(filteredNodes.map((node) => [node.id, node])), [filteredNodes]);
   const coverage = Math.round((graph.coverage || 0) * 1000) / 10;
-  const visibleEdges = graph.edges
+  const visibleEdges = filteredEdges
     .filter((edge) => layout.has(edge.source) && layout.has(edge.target))
     .slice(0, 600);
   const selectedNeighborIds = useMemo(() => {
     const ids = new Set<string>();
     if (!selected) return ids;
-    for (const edge of graph.edges) {
+    for (const edge of filteredEdges) {
       if (edge.source === selected.id) ids.add(edge.target);
       if (edge.target === selected.id) ids.add(edge.source);
     }
     return ids;
-  }, [graph.edges, selected?.id]);
-  const thoughtPointLayout = useMemo(() => layoutThoughtPoints(graph.points || [], layout), [graph.points, layout]);
+  }, [filteredEdges, selected?.id]);
+  const thoughtPointLayout = useMemo(() => layoutThoughtPoints(filteredPoints, layout), [filteredPoints, layout]);
+  const activeKindCount = WHOLE_GRAPH_FILTER_KINDS.filter((kind) => visibleKinds[kind] !== false).length;
 
   return (
     <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4 min-h-[620px]">
       <div class="bg-[#0f1013] border border-[var(--color-border)] rounded-lg overflow-hidden">
-        <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-[#22242a] bg-[#141519]">
+        <div class="flex flex-col gap-3 px-4 py-3 border-b border-[#22242a] bg-[#141519]">
+          <div class="flex items-center justify-between gap-3">
           <div>
             <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Whole OB1 Database Graph</div>
             <div class="text-[12px] text-[var(--color-text-muted)]">
@@ -954,6 +1024,35 @@ function WholeOpenBrainGraph({
               <RefreshCcw size={13} />
               Refresh
             </button>
+          </div>
+          </div>
+          <div class="flex flex-col xl:flex-row xl:items-center gap-2">
+            <input
+              value={query}
+              onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
+              placeholder="Filter graph by project, person, topic, source, or thought id"
+              class="flex-1 min-w-0 bg-[#0d0e11] border border-[#282b33] rounded-md px-3 py-2 text-[12px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+            />
+            <div class="flex flex-wrap gap-1.5">
+              {WHOLE_GRAPH_FILTER_KINDS.map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => setVisibleKinds((prev) => ({ ...prev, [kind]: prev[kind] === false }))}
+                  class={'inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[10.5px] capitalize transition-colors ' + (visibleKinds[kind] === false
+                    ? 'border-[#262832] text-[var(--color-text-faint)] bg-[#0d0e11]'
+                    : 'border-[#343844] text-[var(--color-text)] bg-[#191b21]')}
+                >
+                  <span class="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: wholeGraphColor(kind) }} />
+                  {kind}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div class="flex items-center gap-3 text-[10.5px] text-[var(--color-text-faint)]">
+            <span>{filteredPoints.length.toLocaleString()} thoughts shown</span>
+            <span>{filteredNodes.length.toLocaleString()} clusters</span>
+            <span>{activeKindCount}/{WHOLE_GRAPH_FILTER_KINDS.length} layers on</span>
           </div>
         </div>
         <div class="relative h-[640px] overflow-hidden bg-[#0b0c0f]">
@@ -983,7 +1082,7 @@ function WholeOpenBrainGraph({
                 />
               );
             })}
-            {(graph.points || []).map((point) => {
+            {filteredPoints.map((point) => {
               const position = thoughtPointLayout.get(point.id);
               if (!position) return null;
               const isSelectedThought = selectedThoughtId === point.id;
@@ -1003,10 +1102,12 @@ function WholeOpenBrainGraph({
                     e.stopPropagation();
                     setSelectedThoughtId(point.id);
                   }}
-                />
+                >
+                  <title>{point.label}</title>
+                </circle>
               );
             })}
-            {graph.nodes.filter((node) => layout.has(node.id)).map((node) => {
+            {filteredNodes.filter((node) => layout.has(node.id)).map((node) => {
               const point = layout.get(node.id)!;
               const isSelected = selected?.id === node.id;
               const isNeighbor = selectedNeighborIds.has(node.id);
@@ -1226,6 +1327,7 @@ function layoutThoughtPoints(points: WholeBrainThoughtPoint[], clusters: Map<str
 }
 
 function layoutWholeBrainGraph(nodes: WholeBrainGraphNode[], edges: WholeBrainGraphEdge[]): Map<string, WholeBrainPoint> {
+  if (nodes.length === 0) return new Map();
   const width = 1200;
   const height = 760;
   const maxCount = Math.max(1, ...nodes.map((node) => node.count));

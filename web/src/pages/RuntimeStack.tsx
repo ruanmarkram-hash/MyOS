@@ -46,6 +46,7 @@ interface RuntimeStackPayload {
 
 const ICONS: Record<string, typeof Cpu> = {
   'provider-adapter': Cpu,
+  'local-model-readiness': Plug,
   'memory-backend': Database,
   'tool-boundary': Plug,
   'session-store': LockKeyhole,

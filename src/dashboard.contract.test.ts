@@ -207,6 +207,18 @@ describe('GET /api/brain/graph', () => {
       count: expect.any(Number),
     });
   });
+
+  it('returns a stable whole-OpenBrain map shape across configured and fallback states', async () => {
+    const res = await get('/api/brain/map');
+    expect([200, 400]).toContain(res.status);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      configured: expect.any(Boolean),
+      nodes: expect.any(Array),
+      edges: expect.any(Array),
+      points: expect.any(Array),
+    });
+  });
 });
 
 describe('POST /api/brain/capture', () => {
@@ -417,6 +429,7 @@ describe('GET /api/runtime/stack', () => {
     });
     expect(body.components.map((c: any) => c.id)).toEqual(expect.arrayContaining([
       'provider-adapter',
+      'local-model-readiness',
       'memory-backend',
       'tool-boundary',
       'session-store',
@@ -828,6 +841,47 @@ describe('GET /api/mission/history', () => {
 });
 
 describe('GET /api/review/inbox', () => {
+  it('smoke-tests the mission loop: clean completion, real deliverable, and failure routing', async () => {
+    const deliverablePath = '/tmp/claudeclaw-loop-smoke-deliverable.md';
+    fs.writeFileSync(deliverablePath, '# Smoke deliverable\n\nActual file worked on.\n', { mode: 0o600 });
+
+    createMissionTask('m-loop-clean', 'Clean loop smoke', 'do a small check', 'mason', 'main', 3);
+    completeMissionTask('m-loop-clean', 'Completed cleanly. No deliverable and no human action required.', 'completed');
+
+    createMissionTask('m-loop-deliverable', 'Deliverable loop smoke', 'produce a document', 'charter', 'main', 6);
+    completeMissionTask('m-loop-deliverable', `Deliverable: ${deliverablePath}\nReady for review.`, 'completed');
+
+    createMissionTask('m-loop-failed', 'Failed loop smoke', 'fail intentionally', 'mason', 'main', 8);
+    completeMissionTask('m-loop-failed', null, 'failed', 'Intentional smoke failure.');
+
+    const reviewBody = await jsonOf(await get('/api/review/inbox?limit=50'));
+    const clean = reviewBody.items.find((entry: any) => entry.id === 'm-loop-clean');
+    const deliverable = reviewBody.items.find((entry: any) => entry.id === 'm-loop-deliverable');
+    const failed = reviewBody.items.find((entry: any) => entry.id === 'm-loop-failed');
+
+    expect(clean).toMatchObject({ kind: 'sorted' });
+    expect(deliverable).toMatchObject({
+      kind: 'needs_action',
+      review: expect.objectContaining({ status: 'needs_review' }),
+      deliverables: expect.arrayContaining([
+        expect.objectContaining({ kind: 'file', target: fs.realpathSync(deliverablePath) }),
+      ]),
+    });
+    expect(failed).toMatchObject({
+      kind: 'needs_action',
+      status: 'failed',
+      review: expect.objectContaining({ status: 'needs_triage' }),
+    });
+
+    const attentionBody = await jsonOf(await get('/api/home/attention'));
+    expect(attentionBody.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'mission:m-loop-failed:terminal',
+        href: '/review?task=m-loop-failed',
+      }),
+    ]));
+  });
+
   it('returns completed mission deliverables for review', async () => {
     createMissionTask('m-review-1', 'Write Charter deliverable', 'produce output', 'charter', 'dashboard', 6);
     completeMissionTask('m-review-1', 'Review pack prepared at /tmp/review-deliverable.txt for review.', 'completed');

@@ -126,6 +126,7 @@ import {
   searchOpenBrainText,
   searchThoughts,
   type GraphNode,
+  type OpenBrainMapThought,
 } from './brain/client.js';
 import { parseSearchText } from './brain/adapter.js';
 import { checkStale, RUNTIME_BUILD_META, RUNTIME_STARTED_AT, shortSha } from './build-meta.js';
@@ -1135,6 +1136,12 @@ type WholeBrainThoughtPoint = {
   clusterIds: string[];
   primaryKind: WholeBrainGraphNode['kind'];
   score: number;
+  label: string;
+  type: string;
+  sourceType: string;
+  createdAt: string;
+  topics: string[];
+  people: string[];
 };
 
 function addGraphNode(nodes: Map<string, GraphCandidateNode>, node: GraphCandidateNode): void {
@@ -1202,6 +1209,21 @@ function bumpWholeBrainEdge(
   edges.set(key, { source, target, relationship, weight, count: 1 });
 }
 
+function wholeBrainPointLabel(thought: OpenBrainMapThought, type: string, source: string): string {
+  const metadata = thought.metadata || {};
+  const candidates = [
+    metadata.title,
+    metadata.summary,
+    metadata.label,
+    metadata.name,
+    metadata.subject,
+  ];
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 160);
+  }
+  return `${type || 'thought'} from ${source || 'unknown source'}`;
+}
+
 async function buildWholeOpenBrainGraph() {
   const map = await getOpenBrainMap(10_000);
   const nodes = new Map<string, WholeBrainGraphNode>();
@@ -1229,6 +1251,8 @@ async function buildWholeOpenBrainGraph() {
     const source = thought.source_type || String(thought.metadata?.source || 'unknown');
     const sensitivity = thought.sensitivity_tier || 'standard';
     const month = monthBucket(thought.created_at);
+    const topics = metadataStringArray(thought.metadata, 'topics');
+    const people = metadataStringArray(thought.metadata, 'people');
     const nodeIds: string[] = [];
     const add = (id: string, label: string, kind: WholeBrainGraphNode['kind'], metadata: Record<string, unknown> = {}) => {
       bumpWholeBrainNode(nodes, id, label, kind, thought.id, score, metadata);
@@ -1239,8 +1263,8 @@ async function buildWholeOpenBrainGraph() {
     add(`source:${source}`, source, 'source');
     add(`sensitivity:${sensitivity}`, sensitivity, 'sensitivity');
     add(`time:${month}`, month, 'time');
-    for (const topic of metadataStringArray(thought.metadata, 'topics')) add(`topic:${topic.toLowerCase()}`, topic, 'topic');
-    for (const person of metadataStringArray(thought.metadata, 'people')) add(`person:${person.toLowerCase()}`, person, 'person');
+    for (const topic of topics) add(`topic:${topic.toLowerCase()}`, topic, 'topic');
+    for (const person of people) add(`person:${person.toLowerCase()}`, person, 'person');
 
     for (const id of nodeIds) bumpWholeBrainEdge(edges, rootId, id, 'contains', 1);
     for (let i = 0; i < nodeIds.length; i++) {
@@ -1258,6 +1282,12 @@ async function buildWholeOpenBrainGraph() {
       clusterIds: [primaryId, ...nodeIds.filter((id) => id !== primaryId).slice(0, 8)],
       primaryKind: nodes.get(primaryId)?.kind || 'database',
       score,
+      label: wholeBrainPointLabel(thought, type, source),
+      type,
+      sourceType: source,
+      createdAt: thought.created_at,
+      topics: topics.slice(0, 8),
+      people: people.slice(0, 8),
     });
   }
 
@@ -3640,7 +3670,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
   app.get('/api/brain/map', async (c) => {
     if (!openBrainConfigured()) {
-      return c.json({ ok: false, configured: false, error: 'OpenBrain is not configured.', nodes: [], edges: [] }, 400);
+      return c.json({ ok: false, configured: false, error: 'OpenBrain is not configured.', nodes: [], edges: [], points: [] }, 400);
     }
     const graph = await buildWholeOpenBrainGraph();
     return c.json({ configured: true, ...graph });
@@ -4012,6 +4042,31 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
             switch: '/api/provider/switch',
           },
           error: providerError,
+        },
+        {
+          id: 'local-model-readiness',
+          name: 'Local model readiness',
+          category: 'LLM',
+          status: process.env.LOCAL_LLM_BASE_URL || process.env.OLLAMA_HOST ? 'limited' : 'disabled',
+          active: process.env.LOCAL_LLM_BASE_URL || process.env.OLLAMA_HOST ? 'endpoint configured' : 'not configured',
+          configured: process.env.LOCAL_LLM_MODEL || 'no local model selected',
+          implementations: ['OpenAI-compatible local API', 'Ollama-compatible API'],
+          contract: [
+            'provider adapter must implement runAgent(options)',
+            'same MCP allowlist contract as Claude and Codex',
+            'session storage must be scoped by provider',
+            'model routing must be selectable per agent/task',
+          ],
+          signals: {
+            localBaseUrlConfigured: !!process.env.LOCAL_LLM_BASE_URL,
+            ollamaHostConfigured: !!process.env.OLLAMA_HOST,
+            localModelConfigured: !!process.env.LOCAL_LLM_MODEL,
+            adapterImplemented: false,
+          },
+          actions: {},
+          error: process.env.LOCAL_LLM_BASE_URL || process.env.OLLAMA_HOST
+            ? 'Local endpoint is configured, but the local LLM provider adapter has not landed yet.'
+            : 'Set LOCAL_LLM_BASE_URL or OLLAMA_HOST, then land a local provider adapter before routing agents locally.',
         },
         {
           id: 'memory-backend',

@@ -49,6 +49,23 @@ interface RuntimeComponent {
   active: string;
 }
 
+interface ReliabilityStatus {
+  summary: {
+    openIssues: number;
+    stuckWorkers: number;
+    staleMissions: number;
+    telegramDeadLetters: number;
+    restartNeeded: boolean;
+  };
+  issues: Array<{
+    kind: string;
+    severity: 'high' | 'medium' | 'low';
+    title: string;
+    detail: string;
+    href?: string;
+  }>;
+}
+
 interface HomeBrief {
   slot: 'morning' | 'midday' | 'evening' | 'other';
   label: string;
@@ -114,9 +131,10 @@ export function HomeDashboard() {
     `/api/runtime/stack?chatId=${encodeURIComponent(chatId)}`,
     30_000,
   );
+  const reliability = useFetch<ReliabilityStatus>('/api/reliability/status', 30_000);
 
-  const error = health.error || missions.error || briefs.error || attention.error || agenda.error || agents.error || runtime.error;
-  const loading = (health.loading || missions.loading || briefs.loading || attention.loading || agenda.loading || agents.loading || runtime.loading) && !health.data;
+  const error = health.error || missions.error || briefs.error || attention.error || agenda.error || agents.error || runtime.error || reliability.error;
+  const loading = (health.loading || missions.loading || briefs.loading || attention.loading || agenda.loading || agents.loading || runtime.loading || reliability.loading) && !health.data;
 
   const activeMissions = (missions.data?.tasks ?? []).filter((task) => !TERMINAL.has(task.status));
   const missionQueueItems = activeMissions.filter((task) => !!task.assigned_agent);
@@ -129,6 +147,7 @@ export function HomeDashboard() {
   const agendaItems = agenda.data?.items ?? [];
   const calendarConnected = !!agenda.data?.externalCalendar.connected;
   const personalCalendarItems = calendarConnected ? agendaItems : [];
+  const reliabilityIssues = reliability.data?.issues ?? [];
 
   async function switchMainProvider() {
     if (!health.data || switchingProvider) return;
@@ -265,6 +284,37 @@ export function HomeDashboard() {
                     </div>
                   ))}
                 </div>
+              </Panel>
+
+              <Panel title="Reliability" icon={<ShieldCheck size={15} />} action="/reliability" navigate={navigate}>
+                {!reliability.data ? <EmptyLine text="Reliability status loading." /> : (
+                  <div class="space-y-3">
+                    <div class="grid grid-cols-2 gap-2">
+                      <MiniStatus label="issues" value={String(reliability.data.summary.openIssues)} tone={reliability.data.summary.openIssues ? 'medium' : 'done'} />
+                      <MiniStatus label="restart" value={reliability.data.summary.restartNeeded ? 'needed' : 'clean'} tone={reliability.data.summary.restartNeeded ? 'medium' : 'done'} />
+                      <MiniStatus label="stale missions" value={String(reliability.data.summary.staleMissions)} tone={reliability.data.summary.staleMissions ? 'medium' : 'done'} />
+                      <MiniStatus label="dead letters" value={String(reliability.data.summary.telegramDeadLetters)} tone={reliability.data.summary.telegramDeadLetters ? 'medium' : 'done'} />
+                    </div>
+                    {reliabilityIssues.length === 0 ? <EmptyLine text="No reliability issues currently surfaced." /> : (
+                      <div class="space-y-2">
+                        {reliabilityIssues.slice(0, 4).map((issue) => (
+                          <button
+                            key={`${issue.kind}:${issue.title}`}
+                            type="button"
+                            onClick={() => navigate(issue.href || '/reliability')}
+                            class="w-full text-left rounded border border-[var(--color-border)] bg-[var(--color-elevated)] px-3 py-2 hover:border-[var(--color-border-strong)]"
+                          >
+                            <div class="flex items-center gap-2">
+                              <Pill tone={issue.severity === 'high' ? 'failed' : issue.severity === 'medium' ? 'medium' : 'neutral'}>{issue.kind}</Pill>
+                              <span class="text-[12px] text-[var(--color-text)] truncate">{issue.title}</span>
+                            </div>
+                            <div class="mt-1 text-[10.5px] text-[var(--color-text-muted)] line-clamp-2">{issue.detail}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </Panel>
             </section>
           </div>
@@ -564,6 +614,15 @@ function ControlLine({ label, on }: { label: string; on: boolean }) {
     <div class="flex items-center justify-between gap-3 text-[12px]">
       <span class="text-[var(--color-text)]">{label}</span>
       <Pill tone={on ? 'done' : 'failed'}>{on ? 'on' : 'off'}</Pill>
+    </div>
+  );
+}
+
+function MiniStatus({ label, value, tone }: { label: string; value: string; tone: 'done' | 'medium' }) {
+  return (
+    <div class="rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-3 py-2">
+      <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">{label}</div>
+      <div class={(tone === 'done' ? 'text-[var(--color-status-done)]' : 'text-[var(--color-priority-medium)]') + ' mt-1 text-[13px] font-medium truncate'}>{value}</div>
     </div>
   );
 }
