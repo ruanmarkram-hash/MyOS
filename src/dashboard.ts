@@ -27,6 +27,9 @@ import {
   getDashboardMemoryTimeline,
   getDashboardConsolidations,
   getDashboardMemoriesList,
+  memoryExistsBySourceAndSummary,
+  saveStructuredMemory,
+  searchMemories,
   getDashboardTokenStats,
   getDashboardCostTimeline,
   getDashboardRecentTokenUsage,
@@ -47,6 +50,7 @@ import {
   assignMissionTask,
   getUnassignedMissionTasks,
   getMissionTaskHistory,
+  listStaleMissionTasks,
   upsertMissionReview,
   updateMissionReviewState,
   getAuditLog,
@@ -66,6 +70,7 @@ import {
   type MissionReviewStatus,
   type ScheduledTask,
   type AttentionItem,
+  getOutboxStats,
 } from './db.js';
 import { generateContent, parseJsonResponse } from './gemini.js';
 import { getSecurityStatus, getScrubbedSdkEnv } from './security.js';
@@ -108,6 +113,7 @@ import { resolveModelForProvider } from './model-router.js';
 import { buildAgentRuntimePrompt } from './agent-runtime.js';
 import { captureThought, searchThoughts } from './brain/client.js';
 import { parseSearchText } from './brain/adapter.js';
+import { checkStale, RUNTIME_BUILD_META, RUNTIME_STARTED_AT, shortSha } from './build-meta.js';
 
 const MAIN_AGENT_MODEL = 'claude-opus-4-7';
 const DASHBOARD_AUTH_COOKIE = 'claudeclaw_dashboard';
@@ -583,9 +589,12 @@ const HUMAN_ACTION_PATTERN = new RegExp([
   // Restart / system hand
   'send /restart',
 ].join('|'), 'i');
+const NO_HUMAN_ACTION_PATTERN = /\b(?:no|none|without)\s+(?:human\s+|manual\s+|your\s+|ruan\s+)?(?:action|review|approval|follow[- ]?up|intervention)\s+(?:required|needed|pending)|\bno\s+(?:deliverable|human action|manual action|review)\b/i;
 
 function containsHumanActionSignal(task: MissionTask): boolean {
-  return HUMAN_ACTION_PATTERN.test(reviewOutcomeText(task));
+  const text = reviewOutcomeText(task);
+  if (NO_HUMAN_ACTION_PATTERN.test(text)) return false;
+  return HUMAN_ACTION_PATTERN.test(text);
 }
 
 // Intent-based deliverable detector. No agent exclusion — a mason or warden
@@ -593,6 +602,7 @@ function containsHumanActionSignal(task: MissionTask): boolean {
 // (2026-05-06: removed the hard mason/warden exclusion that was filtering
 // 32/34 completions out of the inbox.)
 function isNonDevDeliverable(task: MissionTask): boolean {
+  if (NO_HUMAN_ACTION_PATTERN.test(reviewOutcomeText(task))) return false;
   return /(deliverable|handoff|review pack|prepared|draft (?:ready|complete|done)?|response (?:ready|drafted|prepared)|audit|compliance|support plan|restrictive practice|charter|inquiry)/i
     .test(reviewOutcomeText(task));
 }
@@ -935,6 +945,137 @@ function openBrainConfigured(): boolean {
   return BRAIN === 'ob1' && !!OB1_SUPABASE_URL && !!MCP_ACCESS_KEY && !!OB1_BRAIN_FUNCTION;
 }
 
+function openBrainConfigState() {
+  const missing = [
+    BRAIN === 'ob1' ? '' : 'BRAIN=ob1',
+    OB1_SUPABASE_URL ? '' : 'OB1_SUPABASE_URL',
+    MCP_ACCESS_KEY ? '' : 'MCP_ACCESS_KEY',
+    OB1_BRAIN_FUNCTION ? '' : 'OB1_BRAIN_FUNCTION',
+  ].filter(Boolean);
+  return {
+    active: BRAIN === 'ob1',
+    configured: missing.length === 0,
+    ready: BRAIN === 'ob1' && missing.length === 0,
+    missing,
+  };
+}
+
+function confidenceFromMemory(memory: { importance: number; salience: number }): number {
+  return Math.max(0.1, Math.min(0.99, ((memory.importance || 0.5) * 0.65) + (Math.min(memory.salience || 1, 5) / 5) * 0.35));
+}
+
+function localBrainSearch(chatId: string, query: string, limit: number) {
+  return searchMemories(chatId, query, limit).map((memory) => ({
+    match: `${Math.round(confidenceFromMemory(memory) * 100)}% local`,
+    date: memory.created_at ? new Date(memory.created_at * 1000).toISOString().slice(0, 10) : '',
+    type: memory.source,
+    source: memory.source,
+    confidence: confidenceFromMemory(memory),
+    topics: safeJsonArray(memory.topics),
+    people: safeJsonArray(memory.entities),
+    content: memory.summary || memory.raw_text,
+    rawPreview: (memory.raw_text || '').slice(0, 500),
+  }));
+}
+
+function safeJsonArray(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function summarizeForBrain(text: string, limit = 220): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, limit);
+}
+
+function saveLocalBrainCapture(chatId: string, content: string, source = 'dashboard_capture', topics: string[] = ['openbrain']): number {
+  return saveStructuredMemory(
+    chatId,
+    content,
+    summarizeForBrain(content),
+    [],
+    topics,
+    0.75,
+    source,
+    AGENT_ID,
+  );
+}
+
+function collectBrainIngestionCandidates(chatId: string) {
+  const missionCandidates: Array<{ source: string; summary: string; content: string; topics: string[]; confidence: number }> = [];
+  const briefCandidates: Array<{ source: string; summary: string; content: string; topics: string[]; confidence: number }> = [];
+  const decisionCandidates: Array<{ source: string; summary: string; content: string; topics: string[]; confidence: number }> = [];
+  for (const task of getMissionTaskHistory(80, 0).tasks) {
+    const manifest = getMissionManifest(task);
+    if (manifest.route === 'done' && !manifest.summary) continue;
+    missionCandidates.push({
+      source: 'mission_manifest',
+      summary: `Mission ${task.id}: ${task.title} -> ${manifest.route}`,
+      content: [
+        `Mission: ${task.title}`,
+        `Status: ${task.status}`,
+        `Route: ${manifest.route}`,
+        `Summary: ${manifest.summary}`,
+        manifest.nextAction ? `Next action: ${manifest.nextAction}` : '',
+        manifest.blockers.length ? `Blockers: ${manifest.blockers.join('; ')}` : '',
+        manifest.deliverables.length ? `Deliverables: ${manifest.deliverables.map((d) => `${d.label} ${d.target}`).join('; ')}` : '',
+      ].filter(Boolean).join('\n'),
+      topics: ['mission', manifest.route, task.assigned_agent || 'unassigned'],
+      confidence: task.status === 'completed' ? 0.82 : 0.68,
+    });
+  }
+
+  for (const task of getAllScheduledTasks()) {
+    if (!task.last_result || !briefSlot(task)) continue;
+    const actions = extractStructuredBriefActions(task.last_result, 8);
+    if (actions.length === 0 && !/(decision|decided|blocked|risk|priority|handoff|action)/i.test(task.last_result)) continue;
+    briefCandidates.push({
+      source: 'brief_output',
+      summary: `${briefLabel(briefSlot(task)!)} brief: ${actions.length} structured action${actions.length === 1 ? '' : 's'}`,
+      content: [
+        `Scheduled task: ${scheduleTitle(task.prompt)}`,
+        `Last status: ${task.last_status || 'unknown'}`,
+        actions.length ? `Actions:\n${actions.map((a) => `- [${a.severity}] ${a.detail}`).join('\n')}` : '',
+        `Output:\n${task.last_result.slice(0, 2500)}`,
+      ].filter(Boolean).join('\n'),
+      topics: ['brief', briefSlot(task)!, 'attention'],
+      confidence: actions.some((a) => a.confidence >= 0.8) ? 0.78 : 0.58,
+    });
+  }
+
+  const decisionsDir = path.join(PROJECT_ROOT, '..', 'workspace', 'decisions');
+  if (fs.existsSync(decisionsDir)) {
+    const files = fs.readdirSync(decisionsDir).filter((f) => /\.md$/i.test(f)).slice(0, 80);
+    for (const file of files) {
+      const full = path.join(decisionsDir, file);
+      try {
+        const content = fs.readFileSync(full, 'utf-8').slice(0, 5000);
+        decisionCandidates.push({
+          source: 'decision',
+          summary: `Decision: ${file.replace(/\.md$/i, '')}`,
+          content: `Source: ${full}\n${content}`,
+          topics: ['decision', 'architecture'],
+          confidence: 0.9,
+        });
+      } catch {
+        // skip unreadable decisions
+      }
+    }
+  }
+
+  return [
+    ...missionCandidates.slice(0, 20),
+    ...briefCandidates.slice(0, 10),
+    ...decisionCandidates.slice(0, 20),
+  ]
+    .filter((candidate) => !memoryExistsBySourceAndSummary(chatId, candidate.source, candidate.summary))
+    .slice(0, 50);
+}
+
 function currentProvider(): LlmProviderName {
   return normalizeLlmProvider(LLM_PROVIDER);
 }
@@ -964,6 +1105,14 @@ function killSwitchFlag(name: string, dflt: boolean): boolean {
 
 type BriefSlot = 'morning' | 'midday' | 'evening' | 'other';
 type AttentionSeverity = 'high' | 'medium' | 'low';
+
+interface StructuredBriefAction {
+  title: string;
+  detail: string;
+  severity: AttentionSeverity;
+  sourceCategory: string;
+  confidence: number;
+}
 
 const TERMINAL_MISSION_STATUSES = new Set(['completed', 'failed', 'partial', 'cancelled']);
 
@@ -1025,8 +1174,63 @@ function actionableBriefDetail(cleaned: string): string {
   return actionable.replace(/^(inbox|calendar|today|overdue|actions?|follow.?up):\s*/i, '').trim();
 }
 
-function extractAttentionItems(text: string, limit = 4): string[] {
-  const out: string[] = [];
+function normalizeStructuredAction(input: any): StructuredBriefAction | null {
+  if (!input || typeof input !== 'object') return null;
+  const rawTitle = typeof input.title === 'string' ? input.title.trim() : '';
+  const rawDetail = typeof input.detail === 'string' ? input.detail.trim()
+    : typeof input.action === 'string' ? input.action.trim()
+      : typeof input.summary === 'string' ? input.summary.trim()
+        : '';
+  if (!rawDetail || isNonActionBriefLine(rawDetail)) return null;
+  const category = typeof input.sourceCategory === 'string' ? input.sourceCategory.trim()
+    : typeof input.category === 'string' ? input.category.trim()
+      : 'brief';
+  const severityRaw = typeof input.severity === 'string' ? input.severity.toLowerCase() : '';
+  const severity: AttentionSeverity = severityRaw === 'high' || severityRaw === 'medium' || severityRaw === 'low'
+    ? severityRaw
+    : severityForText(rawDetail);
+  const confidence = typeof input.confidence === 'number' && Number.isFinite(input.confidence)
+    ? Math.max(0, Math.min(1, input.confidence))
+    : 0.8;
+  return {
+    title: rawTitle || category || 'Brief action',
+    detail: rawDetail.length > 260 ? `${rawDetail.slice(0, 257)}...` : rawDetail,
+    severity,
+    sourceCategory: category || 'brief',
+    confidence,
+  };
+}
+
+function extractJsonBriefActions(text: string): StructuredBriefAction[] {
+  const candidates: string[] = [];
+  for (const match of text.matchAll(/```(?:json)?\s*ATTENTION_ACTIONS\s*([\s\S]*?)```/gi)) {
+    candidates.push(match[1].trim());
+  }
+  for (const match of text.matchAll(/ATTENTION_ACTIONS\s*:\s*(\[[\s\S]*?\])/gi)) {
+    candidates.push(match[1].trim());
+  }
+
+  const out: StructuredBriefAction[] = [];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const rows = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.actions) ? parsed.actions : [];
+      for (const row of rows) {
+        const action = normalizeStructuredAction(row);
+        if (action) out.push(action);
+      }
+    } catch {
+      // Fall back to line extraction below.
+    }
+  }
+  return out;
+}
+
+function extractStructuredBriefActions(text: string, limit = 4): StructuredBriefAction[] {
+  const explicit = extractJsonBriefActions(text);
+  if (explicit.length > 0) return explicit.slice(0, limit);
+
+  const out: StructuredBriefAction[] = [];
   const seen = new Set<string>();
 
   for (const line of text.split(/\r?\n/)) {
@@ -1043,11 +1247,21 @@ function extractAttentionItems(text: string, limit = 4): string[] {
     const key = detail.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(detail.length > 260 ? `${detail.slice(0, 257)}...` : detail);
+    out.push({
+      title: 'Brief action',
+      detail: detail.length > 260 ? `${detail.slice(0, 257)}...` : detail,
+      severity: severityForText(detail),
+      sourceCategory: (cleaned.match(/^([^:]{2,32}):/)?.[1] || 'brief').toLowerCase(),
+      confidence: 0.55,
+    });
     if (out.length >= limit) break;
   }
 
   return out;
+}
+
+function extractAttentionItems(text: string, limit = 4): string[] {
+  return extractStructuredBriefActions(text, limit).map((action) => action.detail);
 }
 
 function buildHomeBriefs(tasks: ScheduledTask[]) {
@@ -1102,8 +1316,9 @@ function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[
   for (const brief of buildHomeBriefs(tasks)) {
     if (!brief) continue;
     const currentSourceKeys = new Set<string>();
-    for (const detail of brief.attentionItems) {
-      const sourceKey = attentionSourceKey('brief', brief.taskId, detail);
+    for (const action of extractStructuredBriefActions(brief.content)) {
+      const detail = action.detail;
+      const sourceKey = attentionSourceKey('brief', brief.taskId, `${action.sourceCategory}:${detail}`);
       currentSourceKeys.add(sourceKey);
       if (briefDetailCoveredByMission(detail, missions)) {
         const existing = getAttentionItemBySourceKey(sourceKey);
@@ -1117,7 +1332,7 @@ function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[
         sourceKey,
         title: `${brief.label} brief`,
         detail,
-        severity: severityForText(detail),
+        severity: action.severity,
         href: '/home',
       });
     }
@@ -2850,14 +3065,27 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   app.get('/api/brain/status', (c) => {
     const chatId = dashboardChatId(c);
     const stats = getDashboardMemoryStats(chatId);
+    const config = openBrainConfigState();
+    const ingestion = collectBrainIngestionCandidates(chatId);
     return c.json({
       backend: BRAIN,
       openBrain: {
-        enabled: BRAIN === 'ob1',
-        configured: openBrainConfigured(),
+        enabled: config.active,
+        configured: config.configured,
+        ready: config.ready,
+        missing: config.missing,
         functionName: OB1_BRAIN_FUNCTION,
         supabaseConfigured: !!OB1_SUPABASE_URL,
         accessKeyConfigured: !!MCP_ACCESS_KEY,
+      },
+      localFallback: true,
+      ingestion: {
+        pending: ingestion.length,
+        sources: {
+          missionManifests: ingestion.filter((i) => i.source === 'mission_manifest').length,
+          briefOutputs: ingestion.filter((i) => i.source === 'brief_output').length,
+          decisions: ingestion.filter((i) => i.source === 'decision').length,
+        },
       },
       mutationsEnabled: killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true),
       sqlite: {
@@ -2867,32 +3095,38 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         pinned: stats.pinned,
         avgSalience: stats.avgSalience,
       },
-      notes: BRAIN === 'ob1'
-        ? 'OpenBrain is the active capture/retrieval backend. SQLite remains visible for local history and fallback.'
-        : 'SQLite is the active memory backend. OpenBrain/OB1 is configured by BRAIN=ob1 plus OB1_SUPABASE_URL and MCP_ACCESS_KEY.',
+      notes: config.ready
+        ? 'OpenBrain is configured and active. Captures are mirrored locally so the dashboard graph remains inspectable.'
+        : `OpenBrain is not ready. Dashboard search/capture is using the local SQLite brain mirror. Missing: ${config.missing.join(', ') || 'none'}.`,
     });
   });
 
   app.get('/api/brain/search', async (c) => {
     const query = (c.req.query('query') || c.req.query('q') || '').trim();
     if (!query) return c.json({ ok: false, error: 'query required', results: [], raw: '' }, 400);
-    if (!openBrainConfigured()) {
-      return c.json({
-        ok: false,
-        error: 'OpenBrain search is not configured. Set BRAIN=ob1, OB1_SUPABASE_URL, MCP_ACCESS_KEY, and OB1_BRAIN_FUNCTION.',
-        results: [],
-        raw: '',
-      }, 400);
-    }
 
     const parsedLimit = parseInt(c.req.query('limit') || '8', 10);
     const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(20, parsedLimit)) : 8;
     const parsedThreshold = parseFloat(c.req.query('threshold') || '0.5');
     const threshold = Number.isFinite(parsedThreshold) ? Math.max(0, Math.min(1, parsedThreshold)) : 0.5;
 
+    const forceLocal = (c.req.query('backend') || '').toLowerCase() === 'sqlite';
+    if (forceLocal || !openBrainConfigured()) {
+      return c.json({
+        ok: true,
+        backend: 'sqlite',
+        query,
+        limit,
+        threshold,
+        results: localBrainSearch(dashboardChatId(c), query, limit),
+        raw: '',
+      });
+    }
+
     const raw = await searchThoughts({ query, limit, threshold });
     return c.json({
       ok: true,
+      backend: 'ob1',
       query,
       limit,
       threshold,
@@ -2905,12 +3139,6 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
       return c.json({ ok: false, error: 'Dashboard mutations are disabled by DASHBOARD_MUTATIONS_ENABLED=false' }, 423);
     }
-    if (!openBrainConfigured()) {
-      return c.json({
-        ok: false,
-        error: 'OpenBrain capture is not configured. Set BRAIN=ob1, OB1_SUPABASE_URL, MCP_ACCESS_KEY, and OB1_BRAIN_FUNCTION.',
-      }, 400);
-    }
 
     const body = await c.req.json().catch(() => ({}));
     const content = body && typeof body === 'object' && typeof (body as { content?: unknown }).content === 'string'
@@ -2919,8 +3147,63 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     if (!content) return c.json({ ok: false, error: 'content required' }, 400);
     if (content.length > 12_000) return c.json({ ok: false, error: 'content too long, max 12000 characters' }, 400);
 
+    const localId = saveLocalBrainCapture(dashboardChatId(c), content);
+    if ((body as { backend?: unknown }).backend === 'sqlite' || !openBrainConfigured()) {
+      return c.json({
+        ok: true,
+        backend: 'sqlite',
+        localMemoryId: localId,
+        confirmation: 'Captured to the local brain mirror. OpenBrain is not configured yet.',
+      });
+    }
+
     const result = await captureThought({ content });
-    return c.json(result);
+    return c.json({ ...result, backend: 'ob1', localMemoryId: localId });
+  });
+
+  app.get('/api/brain/sources', (c) => {
+    const chatId = dashboardChatId(c);
+    const candidates = collectBrainIngestionCandidates(chatId);
+    return c.json({
+      updatedAt: new Date().toISOString(),
+      pending: candidates.length,
+      candidates: candidates.slice(0, 20),
+    });
+  });
+
+  app.post('/api/brain/ingest', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled by DASHBOARD_MUTATIONS_ENABLED=false' }, 423);
+    }
+    const chatId = dashboardChatId(c);
+    const candidates = collectBrainIngestionCandidates(chatId);
+    const openBrainReady = openBrainConfigured();
+    let localSaved = 0;
+    let remoteCaptured = 0;
+    const errors: string[] = [];
+    for (const candidate of candidates) {
+      saveStructuredMemory(chatId, candidate.content, candidate.summary, [], candidate.topics, candidate.confidence, candidate.source, AGENT_ID);
+      localSaved++;
+      if (openBrainReady && remoteCaptured < 20) {
+        try {
+          await captureThought({
+            content: `[source=${candidate.source}] [confidence=${candidate.confidence.toFixed(2)}]\n${candidate.content}`,
+          });
+          remoteCaptured++;
+        } catch (err: any) {
+          errors.push(err?.message || String(err));
+          break;
+        }
+      }
+    }
+    return c.json({
+      ok: errors.length === 0,
+      backend: openBrainReady ? 'ob1' : 'sqlite',
+      localSaved,
+      remoteCaptured,
+      skippedExisting: 0,
+      errors,
+    }, errors.length === 0 ? 200 : 207);
   });
 
   // System health
@@ -3170,6 +3453,111 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           error: mutationsEnabled ? null : 'Dashboard mutations are disabled.',
         },
       ],
+    });
+  });
+
+  app.get('/api/reliability/status', (c) => {
+    const now = Math.floor(Date.now() / 1000);
+    const outbox = getOutboxStats();
+    const staleCode = checkStale();
+    const scheduled = getAllScheduledTasks();
+    const staleScheduled = scheduled
+      .filter((task) => task.status === 'running' && (task.started_at || 0) < now - 30 * 60)
+      .map((task) => ({
+        id: task.id,
+        title: scheduleTitle(task.prompt),
+        agentId: task.agent_id,
+        ageSeconds: now - (task.started_at || now),
+        href: '/agents',
+      }));
+    const failedScheduled = scheduled
+      .filter((task) => task.last_status === 'failed' || task.last_status === 'timeout')
+      .slice(0, 20)
+      .map((task) => ({
+        id: task.id,
+        title: scheduleTitle(task.prompt),
+        agentId: task.agent_id,
+        status: task.last_status,
+        lastRun: task.last_run,
+        detail: task.last_result?.slice(0, 500) || '',
+        href: '/agents',
+      }));
+    const staleMissions = listStaleMissionTasks(now).map((task) => ({
+      id: task.id,
+      title: task.title,
+      agentId: task.assigned_agent,
+      status: task.status,
+      ageSeconds: now - (task.started_at || task.completed_at || task.created_at),
+      notifyOnDone: task.notify_on_done === 1,
+      delivered: !!task.delivered_at,
+      attempts: task.notify_attempt_count,
+      href: `/mission?task=${encodeURIComponent(task.id)}`,
+    }));
+    const agentHealth = ['main', ...listAgentIds()].map((id) => {
+      const pidFile = id === 'main'
+        ? path.join(STORE_DIR, 'claudeclaw.pid')
+        : path.join(STORE_DIR, `agent-${id}.pid`);
+      let running = false;
+      if (fs.existsSync(pidFile)) {
+        try {
+          const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+          process.kill(pid, 0);
+          running = true;
+        } catch {
+          running = false;
+        }
+      }
+      let provider = currentProviderStatus().provider;
+      let providerError = currentProviderStatus().providerError;
+      let model = agentDefaultModel || MAIN_AGENT_MODEL;
+      if (id !== 'main') {
+        try {
+          const config = loadAgentConfig(id);
+          const status = providerStatusForAgent(id, config);
+          provider = status.provider;
+          providerError = status.providerError;
+          model = config.model || MAIN_AGENT_MODEL;
+        } catch (err: any) {
+          providerError = err?.message || 'Agent config unreadable';
+        }
+      }
+      return { id, running, provider, model, providerError };
+    });
+
+    const issues = [
+      ...staleScheduled.map((item) => ({ kind: 'stuck_worker', severity: 'high', title: item.title, detail: `${item.agentId} running ${Math.floor(item.ageSeconds / 60)}m`, href: item.href })),
+      ...failedScheduled.map((item) => ({ kind: 'failed_schedule', severity: 'high', title: item.title, detail: `${item.status}: ${item.detail}`, href: item.href })),
+      ...staleMissions.map((item) => ({ kind: 'stale_mission', severity: item.status === 'running' ? 'high' : 'medium', title: item.title, detail: `${item.status} with ${item.agentId || 'unassigned'}`, href: item.href })),
+      ...(outbox.deadLettered > 0 ? [{ kind: 'telegram_dead_letter', severity: 'high', title: 'Telegram dead letters', detail: `${outbox.deadLettered} row(s) dead-lettered`, href: '/reliability' }] : []),
+      ...(outbox.oldestUnsentAgeSeconds && outbox.oldestUnsentAgeSeconds > 10 * 60 ? [{ kind: 'telegram_stale', severity: 'medium', title: 'Telegram outbox delayed', detail: `oldest unsent ${Math.floor(outbox.oldestUnsentAgeSeconds / 60)}m`, href: '/reliability' }] : []),
+      ...(staleCode.stale ? [{ kind: 'restart_needed', severity: 'medium', title: 'Restart needed', detail: `runtime ${shortSha(staleCode.runtimeSha)} behind disk ${shortSha(staleCode.diskSha)}`, href: '/agents' }] : []),
+      ...agentHealth.filter((a) => a.providerError).map((a) => ({ kind: 'provider_health', severity: 'high', title: `${a.id} provider`, detail: a.providerError || '', href: '/runtime' })),
+    ];
+
+    return c.json({
+      updatedAt: new Date().toISOString(),
+      ok: issues.length === 0,
+      summary: {
+        openIssues: issues.length,
+        stuckWorkers: staleScheduled.length,
+        failedSchedules: failedScheduled.length,
+        staleMissions: staleMissions.length,
+        telegramDeadLetters: outbox.deadLettered,
+        restartNeeded: staleCode.stale,
+      },
+      issues,
+      workers: { staleScheduled, failedScheduled },
+      missions: { stale: staleMissions },
+      telegram: outbox,
+      providers: agentHealth,
+      restart: {
+        needed: staleCode.stale,
+        runtimeSha: shortSha(RUNTIME_BUILD_META.sha),
+        diskSha: shortSha(staleCode.diskSha),
+        branch: staleCode.diskMeta.branch,
+        builtAt: RUNTIME_BUILD_META.builtAt,
+        uptimeSeconds: Math.floor((Date.now() - RUNTIME_STARTED_AT) / 1000),
+      },
     });
   });
 

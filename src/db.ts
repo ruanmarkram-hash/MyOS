@@ -1102,6 +1102,13 @@ export function saveStructuredMemory(
   return result.lastInsertRowid as number;
 }
 
+export function memoryExistsBySourceAndSummary(chatId: string, source: string, summary: string): boolean {
+  const row = db.prepare(
+    `SELECT 1 FROM memories WHERE chat_id = ? AND source = ? AND summary = ? LIMIT 1`,
+  ).get(chatId, source, summary) as { 1: number } | undefined;
+  return !!row;
+}
+
 const STOP_WORDS = new Set([
   'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
   'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
@@ -2860,6 +2867,21 @@ export function getMissionTaskHistory(limit = 30, offset = 0): { tasks: MissionT
      ORDER BY completed_at DESC LIMIT ? OFFSET ?`,
   ).all(limit, offset) as MissionTask[];
   return { tasks, total };
+}
+
+export function listStaleMissionTasks(now = Math.floor(Date.now() / 1000)): MissionTask[] {
+  return db.prepare(
+    `SELECT * FROM mission_tasks
+     WHERE (
+       status = 'running' AND started_at IS NOT NULL AND started_at < ?
+     ) OR (
+       status = 'queued' AND assigned_agent IS NOT NULL AND created_at < ?
+     ) OR (
+       status IN ('completed', 'failed', 'partial') AND notify_on_done = 1 AND delivered_at IS NULL AND notify_attempt_count >= 5
+     )
+     ORDER BY COALESCE(started_at, completed_at, created_at) ASC
+     LIMIT 50`,
+  ).all(now - 45 * 60, now - 2 * 3600) as MissionTask[];
 }
 
 export function resetStuckMissionTasks(agentId: string): number {

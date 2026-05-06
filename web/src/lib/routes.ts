@@ -1,7 +1,7 @@
 import {
   Home, LayoutGrid, Users, MessageSquare,
   Brain, BrainCircuit, Network, Activity, ShieldCheck,
-  Radio, Cpu,
+  Radio, Cpu, Siren,
   Mic, Settings, FileText, Inbox,
 } from 'lucide-preact';
 import type { ComponentChildren } from 'preact';
@@ -24,6 +24,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/agents',     label: 'Agents',          section: 'workspace',    icon: Users,         shortcut: 'g a' },
   { path: '/chat',       label: 'Chat',            section: 'workspace',    icon: MessageSquare, shortcut: 'g c' },
   { path: '/runtime',    label: 'Runtime Stack',   section: 'workspace',    icon: Cpu,           shortcut: 'g r' },
+  { path: '/reliability', label: 'Reliability',     section: 'workspace',    icon: Siren                    },
 
   { path: '/brain',      label: 'Brain',           section: 'intelligence', icon: BrainCircuit,  shortcut: 'g b' },
   { path: '/memories',   label: 'Memories',        section: 'intelligence', icon: Brain,         shortcut: 'g e' },

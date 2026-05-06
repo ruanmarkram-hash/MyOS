@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, getMissionManifest, getMissionReview, getMissionTask, updateTaskAfterRun } from './db.js';
+import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, getMissionManifest, getMissionReview, getMissionTask, saveStructuredMemory, updateTaskAfterRun } from './db.js';
 import { buildDashboardApp, configuredReviewExportEmail, configuredReviewExportFromEmail, createReviewEmailAttachment } from './dashboard.js';
 import type { Hono } from 'hono';
 
@@ -169,6 +169,18 @@ describe('GET /api/brain/search', () => {
     const body = await jsonOf(res);
     expect(body).toMatchObject({ ok: false, error: expect.stringContaining('query') });
   });
+
+  it('falls back to local SQLite search when OpenBrain is not configured', async () => {
+    saveStructuredMemory('', 'Action: Follow up Lucas contact form.', 'Lucas contact form needs follow up', ['Lucas'], ['brief'], 0.8, 'contract');
+    const res = await get('/api/brain/search?query=Lucas&backend=sqlite');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      ok: true,
+      backend: 'sqlite',
+      results: expect.any(Array),
+    });
+  });
 });
 
 describe('POST /api/brain/capture', () => {
@@ -210,6 +222,44 @@ describe('POST /api/brain/capture', () => {
     expect(res.status).toBe(400);
     const body = await jsonOf(res);
     expect(body).toMatchObject({ ok: false, error: expect.stringContaining('content') });
+  });
+
+  it('captures locally when OpenBrain is not configured', async () => {
+    const res = await app.request('/api/brain/capture' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'local brain capture contract thought', backend: 'sqlite' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      ok: true,
+      backend: 'sqlite',
+      localMemoryId: expect.any(Number),
+    });
+  });
+});
+
+describe('GET /api/reliability/status', () => {
+  it('returns mission, worker, telegram, provider, and restart signals', async () => {
+    const res = await get('/api/reliability/status');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body).toMatchObject({
+      ok: expect.any(Boolean),
+      summary: expect.objectContaining({
+        openIssues: expect.any(Number),
+        stuckWorkers: expect.any(Number),
+        staleMissions: expect.any(Number),
+        telegramDeadLetters: expect.any(Number),
+        restartNeeded: expect.any(Boolean),
+      }),
+      workers: expect.any(Object),
+      missions: expect.any(Object),
+      telegram: expect.any(Object),
+      providers: expect.any(Array),
+      restart: expect.any(Object),
+    });
   });
 });
 

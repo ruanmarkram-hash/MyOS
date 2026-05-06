@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import { Database, Search, Send, Share2 } from 'lucide-preact';
+import { Database, Search, Send, Share2, RefreshCcw } from 'lucide-preact';
 import { PageHeader, Tab } from '@/components/PageHeader';
 import { PageState } from '@/components/PageState';
 import { Pill } from '@/components/Pill';
@@ -15,9 +15,20 @@ interface BrainStatus {
   openBrain: {
     enabled: boolean;
     configured: boolean;
+    ready: boolean;
+    missing: string[];
     functionName: string;
     supabaseConfigured: boolean;
     accessKeyConfigured: boolean;
+  };
+  localFallback: boolean;
+  ingestion: {
+    pending: number;
+    sources: {
+      missionManifests: number;
+      briefOutputs: number;
+      decisions: number;
+    };
   };
   mutationsEnabled: boolean;
   sqlite: {
@@ -49,6 +60,9 @@ interface BrainSearchResult {
   topics: string[];
   people: string[];
   content: string;
+  source?: string;
+  confidence?: number;
+  rawPreview?: string;
 }
 
 interface BrainSearchResponse {
@@ -59,11 +73,14 @@ interface BrainSearchResponse {
   results: BrainSearchResult[];
   raw: string;
   error?: string;
+  backend?: 'sqlite' | 'ob1';
 }
 
 interface CaptureResponse {
   ok: boolean;
   confirmation: string;
+  backend?: 'sqlite' | 'ob1';
+  localMemoryId?: number;
   error?: string;
 }
 
@@ -109,7 +126,7 @@ export function Brain() {
 
       {status.data && (
         <div class="flex-1 overflow-y-auto p-6">
-          {tab === 'overview' && <Overview status={status.data} total={memories.data?.total ?? 0} clusters={clusters} />}
+          {tab === 'overview' && <Overview status={status.data} total={memories.data?.total ?? 0} clusters={clusters} refresh={() => { status.refresh(); memories.refresh(); }} />}
           {tab === 'search' && <BrainSearch configured={status.data.openBrain.configured} />}
           {tab === 'capture' && <BrainCapture configured={status.data.openBrain.configured} mutationsEnabled={status.data.mutationsEnabled} />}
           {tab === 'graph' && <BrainGraph memories={memoryRows} clusters={clusters} />}
@@ -119,14 +136,54 @@ export function Brain() {
   );
 }
 
-function Overview({ status, total, clusters }: { status: BrainStatus; total: number; clusters: TopicCluster[] }) {
+function Overview({ status, total, clusters, refresh }: { status: BrainStatus; total: number; clusters: TopicCluster[]; refresh: () => void }) {
+  const [ingesting, setIngesting] = useState(false);
+  const [ingestNote, setIngestNote] = useState<string | null>(null);
+
+  async function ingest() {
+    if (ingesting) return;
+    setIngesting(true);
+    setIngestNote(null);
+    try {
+      const result = await apiPost<{ localSaved: number; remoteCaptured: number; errors?: string[] }>('/api/brain/ingest');
+      setIngestNote(`${result.localSaved} local records ingested${result.remoteCaptured ? ` · ${result.remoteCaptured} OpenBrain captures` : ''}${result.errors?.length ? ` · ${result.errors[0]}` : ''}`);
+      refresh();
+    } catch (err: any) {
+      setIngestNote(err?.body?.error || err?.message || String(err));
+    } finally {
+      setIngesting(false);
+    }
+  }
+
   return (
     <div class="space-y-4">
       <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
         <MetricCard icon={<Database size={16} />} label="Active backend" value={status.backend === 'ob1' ? 'OpenBrain' : 'SQLite'} />
-        <MetricCard icon={<Search size={16} />} label="OpenBrain" value={status.openBrain.configured ? 'configured' : 'not configured'} />
+        <MetricCard icon={<Search size={16} />} label="OpenBrain" value={status.openBrain.ready ? 'ready' : 'local fallback'} />
         <MetricCard icon={<Share2 size={16} />} label="Topic clusters" value={String(clusters.length)} />
         <MetricCard icon={<Send size={16} />} label="SQLite memories" value={String(total || status.sqlite.totalMemories)} />
+      </div>
+
+      <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Ingestion</div>
+            <div class="text-[13px] text-[var(--color-text)]">{status.ingestion.pending} pending source records</div>
+            <div class="text-[11px] text-[var(--color-text-muted)] mt-1">
+              {status.ingestion.sources.missionManifests} missions · {status.ingestion.sources.briefOutputs} briefs · {status.ingestion.sources.decisions} decisions
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={ingest}
+            disabled={ingesting || status.ingestion.pending === 0}
+            class="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+          >
+            <RefreshCcw size={14} />
+            {ingesting ? 'Ingesting' : 'Ingest'}
+          </button>
+        </div>
+        {ingestNote && <div class="mt-3 text-[11px] text-[var(--color-text-muted)]">{ingestNote}</div>}
       </div>
 
       <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
@@ -190,14 +247,14 @@ function BrainSearch({ configured }: { configured: boolean }) {
           <button
             type="button"
             onClick={runSearch}
-            disabled={!configured || !query.trim() || loading}
+            disabled={!query.trim() || loading}
             class="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
           >
             <Search size={14} />
             {loading ? 'Searching' : 'Search'}
           </button>
         </div>
-        {!configured && <div class="mt-2 text-[11px] text-[var(--color-status-failed)]">OpenBrain is not configured in this runtime.</div>}
+        {!configured && <div class="mt-2 text-[11px] text-[var(--color-text-muted)]">OpenBrain is not configured. Search will use the local brain mirror.</div>}
         {error && <div class="mt-2 text-[11px] text-[var(--color-status-failed)]">{error}</div>}
       </div>
 
@@ -214,10 +271,12 @@ function BrainSearch({ configured }: { configured: boolean }) {
                 <div class="flex items-center gap-2 min-w-0">
                   <Pill tone="accent">{hit.match}</Pill>
                   {hit.type && <Pill>{hit.type}</Pill>}
+                  {hit.confidence !== undefined && <Pill tone="neutral">{Math.round(hit.confidence * 100)}% confidence</Pill>}
                 </div>
                 <span class="text-[10px] text-[var(--color-text-faint)] shrink-0">{hit.date}</span>
               </div>
               <div class="text-[13px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap">{hit.content}</div>
+              {hit.source && <div class="mt-2 text-[10.5px] text-[var(--color-text-faint)]">source: {hit.source}</div>}
               {hit.topics.length > 0 && (
                 <div class="flex flex-wrap gap-1 mt-3">
                   {hit.topics.map((topic) => <TopicPill key={topic} topic={topic} />)}
@@ -267,14 +326,14 @@ function BrainCapture({ configured, mutationsEnabled }: { configured: boolean; m
           <button
             type="button"
             onClick={capture}
-            disabled={!configured || !mutationsEnabled || !content.trim() || saving || content.trim().length > 12000}
+            disabled={!mutationsEnabled || !content.trim() || saving || content.trim().length > 12000}
             class="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
           >
             <Send size={14} />
             {saving ? 'Capturing' : 'Capture'}
           </button>
         </div>
-        {!configured && <div class="mt-2 text-[11px] text-[var(--color-status-failed)]">OpenBrain capture is not configured in this runtime.</div>}
+        {!configured && <div class="mt-2 text-[11px] text-[var(--color-text-muted)]">OpenBrain is not configured. Captures will land in the local brain mirror.</div>}
         {configured && !mutationsEnabled && <div class="mt-2 text-[11px] text-[var(--color-status-failed)]">Dashboard mutations are disabled in this runtime.</div>}
         {result && (
           <div class={'mt-3 text-[12px] leading-relaxed ' + (result.ok ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-status-failed)]')}>
@@ -303,6 +362,19 @@ function BrainGraph({ memories, clusters }: { memories: Memory[]; clusters: Topi
     <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4 min-h-[560px]">
       <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4 overflow-hidden">
         <div class="relative h-[520px] rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
+          <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
+            {buildGraphEdges(clusters.slice(0, 18)).map((edge) => (
+              <line
+                key={`${edge.a.topic}-${edge.b.topic}`}
+                x1={edge.a.x}
+                y1={edge.a.y}
+                x2={edge.b.x}
+                y2={edge.b.y}
+                stroke="color-mix(in srgb, var(--color-accent) 28%, transparent)"
+                stroke-width={Math.min(0.7, 0.18 + edge.weight * 0.08)}
+              />
+            ))}
+          </svg>
           {clusters.slice(0, 18).map((cluster, index) => (
             <GraphCluster
               key={cluster.topic}
@@ -332,6 +404,34 @@ function BrainGraph({ memories, clusters }: { memories: Memory[]; clusters: Topi
   );
 }
 
+function clusterPoint(index: number, total: number) {
+  const angle = (index / Math.max(1, total)) * Math.PI * 2 - Math.PI / 2;
+  const ring = index % 2 === 0 ? 185 : 125;
+  return {
+    x: 50 + Math.cos(angle) * (ring / 5.2),
+    y: 50 + Math.sin(angle) * (ring / 5.2),
+  };
+}
+
+function buildGraphEdges(clusters: TopicCluster[]) {
+  const total = Math.min(18, clusters.length);
+  const rows: Array<{ a: TopicCluster & { x: number; y: number }; b: TopicCluster & { x: number; y: number }; weight: number }> = [];
+  const memoryIds = clusters.map((cluster) => new Set(cluster.memories.map((memory) => memory.id)));
+  for (let i = 0; i < total; i++) {
+    for (let j = i + 1; j < total; j++) {
+      let shared = 0;
+      for (const id of memoryIds[i]) if (memoryIds[j].has(id)) shared++;
+      if (shared === 0) continue;
+      rows.push({
+        a: { ...clusters[i], ...clusterPoint(i, total) },
+        b: { ...clusters[j], ...clusterPoint(j, total) },
+        weight: shared,
+      });
+    }
+  }
+  return rows.sort((a, b) => b.weight - a.weight).slice(0, 32);
+}
+
 function buildTopicClusters(memories: Memory[]): TopicCluster[] {
   const map = new Map<string, { memories: Memory[]; importance: number; salience: number }>();
   for (const memory of memories) {
@@ -357,10 +457,7 @@ function buildTopicClusters(memories: Memory[]): TopicCluster[] {
 }
 
 function GraphCluster({ cluster, index, total, color }: { cluster: TopicCluster; index: number; total: number; color: string }) {
-  const angle = (index / Math.max(1, total)) * Math.PI * 2 - Math.PI / 2;
-  const ring = index % 2 === 0 ? 185 : 125;
-  const x = 50 + Math.cos(angle) * (ring / 5.2);
-  const y = 50 + Math.sin(angle) * (ring / 5.2);
+  const { x, y } = clusterPoint(index, total);
   const size = Math.max(54, Math.min(124, 42 + cluster.count * 9));
   return (
     <div

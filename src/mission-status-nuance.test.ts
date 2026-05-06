@@ -17,6 +17,7 @@ import {
   formatNotifyMessage,
   type MissionTerminalState,
 } from './mission-notify.js';
+import { buildMissionManifest } from './mission-manifest.js';
 
 function makeRepo(): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'mason-status-'));
@@ -111,5 +112,20 @@ describe('mission status nuance: notify formatting per verdict', () => {
   it('partial format defaults commitCount to 0 when missing', () => {
     expect(formatNotifyMessage(base, 'partial'))
       .toContain('committed 0 changes');
+  });
+});
+
+describe('mission manifest routing', () => {
+  it('sorts clean completions that explicitly say no human action is required', () => {
+    const manifest = buildMissionManifest({
+      status: 'completed',
+      title: 'Clean smoke',
+      prompt: 'complete cleanly',
+      result: 'Completed cleanly. No deliverable and no human action required.',
+    });
+
+    expect(manifest.route).toBe('sorted');
+    expect(manifest.nextAction).toBeNull();
+    expect(manifest.deliverables).toEqual([]);
   });
 });

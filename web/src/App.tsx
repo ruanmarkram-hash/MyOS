@@ -10,6 +10,7 @@ import { Memories } from '@/pages/Memories';
 import { HiveMind } from '@/pages/HiveMind';
 import { Agents } from '@/pages/Agents';
 import { RuntimeStack } from '@/pages/RuntimeStack';
+import { Reliability } from '@/pages/Reliability';
 import { Scheduled } from '@/pages/Scheduled';
 import { Audit } from '@/pages/Audit';
 import { Usage } from '@/pages/Usage';
@@ -38,6 +39,7 @@ export function App() {
             <Route path="/agents"><Agents /></Route>
             <Route path="/chat"><Chat /></Route>
             <Route path="/runtime"><RuntimeStack /></Route>
+            <Route path="/reliability"><Reliability /></Route>
             <Route path="/brain"><Brain /></Route>
             <Route path="/memories"><Memories /></Route>
             <Route path="/hive"><HiveMind /></Route>

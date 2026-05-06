@@ -43,6 +43,7 @@ const HUMAN_ACTION_PATTERN = new RegExp([
 ].join('|'), 'i');
 
 const DELIVERABLE_HINT_PATTERN = /(deliverable|handoff|review pack|prepared|draft|response|audit|compliance|support plan|restrictive practice|charter|inquiry|letter|policy|document)/i;
+const NO_HUMAN_ACTION_PATTERN = /\b(?:no|none|without)\s+(?:human\s+|manual\s+|your\s+|ruan\s+)?(?:action|review|approval|follow[- ]?up|intervention)\s+(?:required|needed|pending)|\bno\s+(?:deliverable|human action|manual action|review)\b/i;
 
 function compactText(text: string, limit: number): string {
   const cleaned = text.replace(/\s+/g, ' ').trim();
@@ -114,6 +115,7 @@ function extractBlockers(text: string, status: string, error: string | null | un
 
 function inferNextAction(text: string, status: string, deliverables: MissionManifestDeliverable[], blockers: string[]): string | null {
   if (status === 'failed' || status === 'partial') return blockers[0] || 'Review failure and decide retry, archive, or reassign.';
+  if (NO_HUMAN_ACTION_PATTERN.test(text) && deliverables.length === 0) return null;
   if (HUMAN_ACTION_PATTERN.test(text)) return 'Review and take the requested action.';
   if (deliverables.length > 0 || DELIVERABLE_HINT_PATTERN.test(text)) return 'Review the deliverable.';
   return null;
@@ -133,7 +135,7 @@ export function buildMissionManifest(input: {
   const nextAction = inferNextAction(outcomeText, input.status, deliverables, blockers);
   const route: MissionManifestRoute =
     input.status === 'failed' || input.status === 'partial' ? 'needs_triage'
-    : nextAction || deliverables.length > 0 || DELIVERABLE_HINT_PATTERN.test(outcomeText) ? 'needs_review'
+    : nextAction || deliverables.length > 0 || (!NO_HUMAN_ACTION_PATTERN.test(outcomeText) && DELIVERABLE_HINT_PATTERN.test(outcomeText)) ? 'needs_review'
     : input.status === 'completed' ? 'sorted'
     : 'done';
 
