@@ -163,6 +163,16 @@ input, textarea, select {
   .metric-card .metric-value {
     font-size: 14px;
   }
+
+  .metric-card .metric-actions {
+    gap: 0.375rem;
+  }
+
+  .metric-card .metric-actions button {
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: center;
+  }
 }
 
 @media (max-width: 520px) {

@@ -233,12 +233,12 @@ export function HomeDashboard() {
               tone={stackIssues.length ? 'medium' : 'done'}
               onClick={() => navigate('/runtime')}
               action={
-                <div class="shrink-0 flex items-center gap-1.5">
+                <div class="metric-actions flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); void switchMainProvider(); }}
                     disabled={switchingProvider || restartingMain}
-                    class="px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-elevated)] text-[10.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-40"
+                    class="min-h-7 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-elevated)] text-[10.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-40"
                   >
                     {switchingProvider ? 'Switching...' : `Switch to ${health.data.provider === 'codex' ? 'claude' : 'codex'}`}
                   </button>
@@ -246,7 +246,7 @@ export function HomeDashboard() {
                     type="button"
                     onClick={(e) => { e.stopPropagation(); void restartMainRuntime(); }}
                     disabled={restartingMain}
-                    class="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-elevated)] text-[10.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-40"
+                    class="inline-flex min-h-7 items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-elevated)] text-[10.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-40"
                     title="Restart main runtime"
                   >
                     <RotateCcw size={11} class={restartingMain ? 'animate-spin' : ''} />
@@ -411,11 +411,9 @@ function Metric({
         <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">{label}</div>
         <div class={tone === 'done' ? 'text-[var(--color-status-done)]' : tone === 'medium' ? 'text-[var(--color-priority-medium)]' : 'text-[var(--color-text-muted)]'}>{icon}</div>
       </div>
-      <div class="flex items-start justify-between gap-2">
-        <div class="metric-value text-[15px] sm:text-[19px] font-semibold text-[var(--color-text)] truncate min-w-0" title={value}>{value}</div>
-        {action}
-      </div>
+      <div class="metric-value text-[15px] sm:text-[19px] font-semibold text-[var(--color-text)] truncate min-w-0" title={value}>{value}</div>
       <div class="metric-detail text-[10.5px] sm:text-[11px] text-[var(--color-text-muted)] truncate mt-1" title={detail}>{detail}</div>
+      {action && <div class="mt-3">{action}</div>}
     </div>
   );
 }
