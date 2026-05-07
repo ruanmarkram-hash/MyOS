@@ -21,6 +21,7 @@ import { homedir } from 'node:os';
 import Database from 'better-sqlite3';
 import pg from 'pg';
 import { parseTurnPairs, stripInjectedContext } from './brain-watcher-parser.mjs';
+import { embed, vecLit, EMBED_DIM, EMBED_MODEL_NAME } from './lib/embed.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
 const ROOT = '/Users/sc/HQ';
@@ -35,13 +36,14 @@ const MIN_TURN_CHARS = 200;
 const IMPORTANCE_FLOOR = 0.4;
 const CHUNK_CHARS = 4000;
 const CHUNK_OVERLAP = 400;
-const EMBED_DIM = 1536;
+// Embedder is BGE-M3 (1024d) via local llama.cpp — see scripts/lib/embed.mjs.
+// Do not reintroduce a Gemini 1536d embed path; the OB1 thoughts.embedding
+// column is vector(1024) and any 1536d insert is silently dropped.
 
 const JSONL_CONCURRENCY = 8;
 const VAULT_CONCURRENCY = 4;
 
 const GEMINI_FLASH_MODEL = 'gemini-2.5-flash';
-const GEMINI_EMBED_MODEL = 'gemini-embedding-001';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 const VAULT_SKIP_DIRS = new Set(['.git', 'node_modules', '.obsidian', 'dist', '.next', '.cache', '__pycache__', '.vitepress', 'build']);
@@ -73,25 +75,6 @@ function log(msg) {
 function fingerprint(text) {
   return createHash('sha256').update(text.toLowerCase().trim().replace(/\s+/g, ' '), 'utf8').digest('hex');
 }
-function vecLit(v) { return '[' + v.join(',') + ']'; }
-
-async function embed(text, retries = 2) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const r = await fetch(`${GEMINI_BASE}/models/${GEMINI_EMBED_MODEL}:embedContent?key=${GEMINI_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: { parts: [{ text: text.slice(0, 10000) }] }, outputDimensionality: EMBED_DIM }),
-      });
-      if (!r.ok) { if (i === retries - 1) return null; await new Promise((res) => setTimeout(res, 500 * Math.pow(2, i))); continue; }
-      const j = await r.json();
-      const v = j?.embedding?.values;
-      if (Array.isArray(v) && v.length === EMBED_DIM) return v;
-      return null;
-    } catch { if (i === retries - 1) return null; await new Promise((res) => setTimeout(res, 500 * Math.pow(2, i))); }
-  }
-  return null;
-}
 
 async function insertThought({ content, metadata, createdAtSec }) {
   const fp = fingerprint(content);
@@ -99,12 +82,18 @@ async function insertThought({ content, metadata, createdAtSec }) {
   if (existing.rowCount > 0) return 'duplicate';
   const emb = await embed(content);
   if (!emb) return 'embed_fail';
+  const enrichedMeta = {
+    ...metadata,
+    embedding_model: EMBED_MODEL_NAME,
+    embedding_provider: 'llamacpp',
+    embedding_dimensions: EMBED_DIM,
+  };
   const res = await pool.query(
     `INSERT INTO thoughts (content, content_fingerprint, metadata, embedding, created_at)
      VALUES ($1, $2, $3::jsonb, $4::vector, to_timestamp($5))
      ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL DO NOTHING
      RETURNING id`,
-    [content, fp, JSON.stringify(metadata), vecLit(emb), createdAtSec]
+    [content, fp, JSON.stringify(enrichedMeta), vecLit(emb), createdAtSec]
   );
   return res.rowCount > 0 ? 'inserted' : 'duplicate';
 }

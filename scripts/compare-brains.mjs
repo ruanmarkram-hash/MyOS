@@ -5,6 +5,7 @@
 
 import { writeFileSync, readFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
+import { embed as embedShared } from './lib/embed.mjs';
 
 process.env.BRAIN = 'ob1';
 
@@ -41,21 +42,8 @@ const env = Object.fromEntries(
     })
 );
 
-const GEMINI_KEY = env.GOOGLE_API_KEY;
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
-
 async function embed(text) {
-  const r = await fetch(
-    `${GEMINI_BASE}/models/gemini-embedding-001:embedContent?key=${GEMINI_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: { parts: [{ text }] }, outputDimensionality: 1536 }),
-    }
-  );
-  if (!r.ok) throw new Error(`embed ${r.status}`);
-  const j = await r.json();
-  return j.embedding.values;
+  return embedShared(text, { throwOnFail: true });
 }
 
 const sqlite = new Database(DB_PATH, { readonly: true });
