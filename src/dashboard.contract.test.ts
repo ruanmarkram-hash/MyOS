@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { _initTestDatabase, _setMissionCompletedAtForTest, completeMissionTask, createMissionTask, createScheduledTask, getMissionManifest, getMissionReview, getMissionTask, saveStructuredMemory, updateTaskAfterRun } from './db.js';
+import { _initTestDatabase, _setMissionCompletedAtForTest, completeMissionTask, createMissionTask, createScheduledTask, getAllScheduledTasks, getMissionManifest, getMissionReview, getMissionTask, getTelegramOutboxRow, insertOperationNotification, insertTelegramOutbox, markTaskRunning, markTelegramOutboxDeadLettered, saveStructuredMemory, updateTaskAfterRun } from './db.js';
 import { buildDashboardApp, configuredReviewExportEmail, configuredReviewExportFromEmail, createReviewEmailAttachment } from './dashboard.js';
 import type { Hono } from 'hono';
 
@@ -323,14 +323,63 @@ describe('GET /api/reliability/status', () => {
         stuckWorkers: expect.any(Number),
         staleMissions: expect.any(Number),
         telegramDeadLetters: expect.any(Number),
+        overdueOperations: expect.any(Number),
         restartNeeded: expect.any(Boolean),
       }),
       workers: expect.any(Object),
       missions: expect.any(Object),
       telegram: expect.any(Object),
+      operations: expect.any(Object),
       providers: expect.any(Array),
       restart: expect.any(Object),
     });
+  });
+
+  it('returns actionable stale workers, outbox rows, and overdue operations', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('rel-schedule-stuck', 'Run stuck schedule', '* * * * *', now + 3600, 'warden');
+    markTaskRunning('rel-schedule-stuck');
+    createScheduledTask('rel-schedule-failed', 'Run failed schedule', '* * * * *', now + 3600, 'warden');
+    updateTaskAfterRun('rel-schedule-failed', now + 3600, 'failure body', 'failed');
+
+    const outboxId = insertTelegramOutbox('main', 'chat', JSON.stringify({ method: 'sendMessage', args: {} }));
+    markTelegramOutboxDeadLettered(outboxId, 'boom');
+    insertOperationNotification({
+      agentId: 'main',
+      chatId: 'chat',
+      operationId: 'rel-overdue-op',
+      fireAt: now - 600,
+      payload: 'check back',
+    });
+
+    const res = await get('/api/reliability/status');
+    const body = await jsonOf(res);
+    expect(body.telegram.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: outboxId, status: 'dead-lettered', canRetry: true }),
+    ]));
+    expect(body.operations.overdue).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operationId: 'rel-overdue-op', canCancel: true }),
+    ]));
+  });
+
+  it('resets a stuck scheduled task and retries a dead-lettered outbox row', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('rel-reset-schedule', 'Run reset schedule', '* * * * *', now + 3600, 'warden');
+    markTaskRunning('rel-reset-schedule');
+    const reset = await app.request('/api/reliability/schedules/rel-reset-schedule/reset' + Q, { method: 'POST' });
+    expect(reset.status).toBe(200);
+    expect(getAllScheduledTasks().find((task) => task.id === 'rel-reset-schedule')?.status).toBe('active');
+
+    const outboxId = insertTelegramOutbox('main', 'chat', JSON.stringify({ method: 'sendMessage', args: {} }));
+    markTelegramOutboxDeadLettered(outboxId, 'boom');
+    const retry = await app.request(`/api/reliability/outbox/${outboxId}/retry` + Q, { method: 'POST' });
+    expect(retry.status).toBe(200);
+    expect(getTelegramOutboxRow(outboxId)?.status).toBe('pending');
+
+    const pendingId = insertTelegramOutbox('main', 'chat', JSON.stringify({ method: 'sendMessage', args: {} }));
+    const dead = await app.request(`/api/reliability/outbox/${pendingId}/dead-letter` + Q, { method: 'POST' });
+    expect(dead.status).toBe(200);
+    expect(getTelegramOutboxRow(pendingId)?.status).toBe('dead-lettered');
   });
 });
 

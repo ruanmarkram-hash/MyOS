@@ -1577,6 +1577,13 @@ export function clearScheduledTaskAttention(id: string, result = 'Cleared from H
   return update.changes > 0;
 }
 
+export function resetScheduledTaskRun(id: string): boolean {
+  const update = db.prepare(
+    `UPDATE scheduled_tasks SET status = 'active', started_at = NULL WHERE id = ? AND status = 'running'`,
+  ).run(id);
+  return update.changes > 0;
+}
+
 export function resetStuckTasks(agentId: string): number {
   const result = db.prepare(
     `UPDATE scheduled_tasks SET status = 'active', started_at = NULL WHERE status = 'running' AND agent_id = ?`,
@@ -2913,6 +2920,13 @@ export function resetStuckMissionTasks(agentId: string): number {
   return result.changes;
 }
 
+export function resetMissionTaskRun(id: string): boolean {
+  const result = db.prepare(
+    `UPDATE mission_tasks SET status = 'queued', started_at = NULL WHERE id = ? AND status = 'running'`,
+  ).run(id);
+  return result.changes > 0;
+}
+
 // ── Meet Sessions (Pika video meeting skill) ────────────────────────
 
 export type MeetProvider = 'pika' | 'recall' | 'daily';
@@ -3430,6 +3444,44 @@ export function getTelegramOutboxRow(id: number): TelegramOutboxRow | null {
   return row ?? null;
 }
 
+export function listProblemTelegramOutbox(limit = 25): TelegramOutboxRow[] {
+  return db.prepare(
+    `SELECT * FROM telegram_outbox
+     WHERE status IN ('pending', 'in_flight', 'failed', 'dead-lettered')
+     ORDER BY
+       CASE status WHEN 'dead-lettered' THEN 0 WHEN 'failed' THEN 1 WHEN 'in_flight' THEN 2 ELSE 3 END,
+       COALESCE(last_attempt_at, created_at) DESC
+     LIMIT ?`,
+  ).all(limit) as TelegramOutboxRow[];
+}
+
+export function retryTelegramOutboxRow(id: number): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'pending',
+         next_retry_at = ?,
+         lease_expires_at = NULL,
+         last_error = NULL
+     WHERE id = ? AND status IN ('failed', 'dead-lettered', 'pending')`,
+  ).run(now, id);
+  return result.changes > 0;
+}
+
+export function deadLetterTelegramOutboxRow(id: number, reason = 'Manually dead-lettered from Reliability dashboard.'): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'dead-lettered',
+         next_retry_at = NULL,
+         lease_expires_at = NULL,
+         last_attempt_at = ?,
+         last_error = ?
+     WHERE id = ? AND status IN ('pending', 'failed')`,
+  ).run(now, reason.slice(0, 500), id);
+  return result.changes > 0;
+}
+
 export function countTelegramOutboxByStatus(): Record<TelegramOutboxStatus, number> {
   const rows = db.prepare(
     `SELECT status, COUNT(*) AS n FROM telegram_outbox GROUP BY status`,
@@ -3534,6 +3586,15 @@ export function getDueOperationNotifications(now?: number): OperationNotificatio
   ).all(cutoff) as OperationNotificationRow[];
 }
 
+export function listOverdueOperationNotifications(now = Math.floor(Date.now() / 1000), limit = 25): OperationNotificationRow[] {
+  return db.prepare(
+    `SELECT * FROM operation_notifications
+       WHERE status = 'pending' AND fire_at <= ?
+       ORDER BY fire_at ASC
+       LIMIT ?`,
+  ).all(now, limit) as OperationNotificationRow[];
+}
+
 export function getOperationNotification(id: number): OperationNotificationRow | undefined {
   return db.prepare('SELECT * FROM operation_notifications WHERE id = ?')
     .get(id) as OperationNotificationRow | undefined;
@@ -3606,6 +3667,16 @@ export function cancelOperationNotificationsByOpId(operationId: string): number 
        WHERE operation_id = ? AND status = 'pending'`,
   ).run(now, operationId);
   return info.changes;
+}
+
+export function cancelOperationNotificationById(id: number): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `UPDATE operation_notifications
+       SET status = 'cancelled', cancelled_at = ?
+       WHERE id = ? AND status = 'pending'`,
+  ).run(now, id);
+  return info.changes > 0;
 }
 
 /** @internal — test seam, lets a test claim back a row to retry. */

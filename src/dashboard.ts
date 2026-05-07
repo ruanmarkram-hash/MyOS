@@ -13,6 +13,7 @@ import {
   pauseScheduledTask,
   resumeScheduledTask,
   clearScheduledTaskAttention,
+  resetScheduledTaskRun,
   getAttentionItem,
   getAttentionItemBySourceKey,
   listOpenAttentionItems,
@@ -52,6 +53,7 @@ import {
   getUnassignedMissionTasks,
   getMissionTaskHistory,
   listStaleMissionTasks,
+  resetMissionTaskRun,
   upsertMissionReview,
   updateMissionReviewState,
   getAuditLog,
@@ -72,6 +74,11 @@ import {
   type ScheduledTask,
   type AttentionItem,
   getOutboxStats,
+  listProblemTelegramOutbox,
+  retryTelegramOutboxRow,
+  deadLetterTelegramOutboxRow,
+  listOverdueOperationNotifications,
+  cancelOperationNotificationById,
 } from './db.js';
 import { generateContent, parseJsonResponse } from './gemini.js';
 import { getSecurityStatus, getScrubbedSdkEnv } from './security.js';
@@ -4378,6 +4385,28 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   app.get('/api/reliability/status', (c) => {
     const now = Math.floor(Date.now() / 1000);
     const outbox = getOutboxStats();
+    const outboxRows = listProblemTelegramOutbox(25).map((row) => ({
+      id: row.id,
+      agentId: row.agent_id,
+      status: row.status,
+      attempts: row.attempt_count,
+      lastError: row.last_error,
+      ageSeconds: now - row.created_at,
+      nextRetryAt: row.next_retry_at,
+      lastAttemptAt: row.last_attempt_at,
+      payloadPreview: row.payload.replace(/\s+/g, ' ').slice(0, 180),
+      canRetry: ['failed', 'dead-lettered', 'pending'].includes(row.status),
+      canDeadLetter: ['pending', 'failed'].includes(row.status),
+    }));
+    const overdueOperations = listOverdueOperationNotifications(now, 25).map((row) => ({
+      id: row.id,
+      agentId: row.agent_id,
+      operationId: row.operation_id,
+      fireAt: row.fire_at,
+      overdueSeconds: now - row.fire_at,
+      payloadPreview: row.payload.replace(/\s+/g, ' ').slice(0, 180),
+      canCancel: true,
+    }));
     const staleCode = checkStale();
     const scheduled = getAllScheduledTasks();
     const staleScheduled = scheduled
@@ -4387,7 +4416,8 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         title: scheduleTitle(task.prompt),
         agentId: task.agent_id,
         ageSeconds: now - (task.started_at || now),
-        href: '/agents',
+        href: '/scheduled',
+        actions: { reset: true, open: '/scheduled' },
       }));
     const failedScheduled = scheduled
       .filter((task) => task.last_status === 'failed' || task.last_status === 'timeout')
@@ -4399,7 +4429,8 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         status: task.last_status,
         lastRun: task.last_run,
         detail: task.last_result?.slice(0, 500) || '',
-        href: '/agents',
+        href: '/scheduled',
+        actions: { clear: true, open: '/scheduled' },
       }));
     const staleMissions = listStaleMissionTasks(now).map((task) => ({
       id: task.id,
@@ -4411,6 +4442,13 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       delivered: !!task.delivered_at,
       attempts: task.notify_attempt_count,
       href: `/mission?task=${encodeURIComponent(task.id)}`,
+      actions: {
+        reset: task.status === 'running',
+        review: ['completed', 'failed', 'partial'].includes(task.status),
+        open: task.status === 'running' || task.status === 'queued'
+          ? `/mission?task=${encodeURIComponent(task.id)}`
+          : `/review?task=${encodeURIComponent(task.id)}`,
+      },
     }));
     const agentHealth = ['main', ...listAgentIds()].map((id) => {
       const pidFile = id === 'main'
@@ -4449,6 +4487,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       ...staleMissions.map((item) => ({ kind: 'stale_mission', severity: item.status === 'running' ? 'high' : 'medium', title: item.title, detail: `${item.status} with ${item.agentId || 'unassigned'}`, href: item.href })),
       ...(outbox.deadLettered > 0 ? [{ kind: 'telegram_dead_letter', severity: 'high', title: 'Telegram dead letters', detail: `${outbox.deadLettered} row(s) dead-lettered`, href: '/reliability' }] : []),
       ...(outbox.oldestUnsentAgeSeconds && outbox.oldestUnsentAgeSeconds > 10 * 60 ? [{ kind: 'telegram_stale', severity: 'medium', title: 'Telegram outbox delayed', detail: `oldest unsent ${Math.floor(outbox.oldestUnsentAgeSeconds / 60)}m`, href: '/reliability' }] : []),
+      ...overdueOperations.map((item) => ({ kind: 'operation_notification', severity: 'medium', title: `Operation ${item.operationId}`, detail: `overdue ${Math.floor(item.overdueSeconds / 60)}m`, href: '/reliability' })),
       ...(staleCode.stale ? [{ kind: 'restart_needed', severity: 'medium', title: 'Restart needed', detail: `runtime ${shortSha(staleCode.runtimeSha)} behind disk ${shortSha(staleCode.diskSha)}`, href: '/agents' }] : []),
       ...agentHealth.filter((a) => a.providerError).map((a) => ({ kind: 'provider_health', severity: 'high', title: `${a.id} provider`, detail: a.providerError || '', href: '/runtime' })),
     ];
@@ -4462,12 +4501,14 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         failedSchedules: failedScheduled.length,
         staleMissions: staleMissions.length,
         telegramDeadLetters: outbox.deadLettered,
+        overdueOperations: overdueOperations.length,
         restartNeeded: staleCode.stale,
       },
       issues,
       workers: { staleScheduled, failedScheduled },
       missions: { stale: staleMissions },
-      telegram: outbox,
+      telegram: { ...outbox, rows: outboxRows },
+      operations: { overdue: overdueOperations },
       providers: agentHealth,
       restart: {
         needed: staleCode.stale,
@@ -4478,6 +4519,60 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         uptimeSeconds: Math.floor((Date.now() - RUNTIME_STARTED_AT) / 1000),
       },
     });
+  });
+
+  app.post('/api/reliability/schedules/:id/reset', (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+    const ok = resetScheduledTaskRun(c.req.param('id'));
+    return c.json({ ok, reset: ok });
+  });
+
+  app.post('/api/reliability/schedules/:id/clear-failure', (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+    const ok = clearScheduledTaskAttention(c.req.param('id'), 'Cleared from Reliability dashboard.');
+    return c.json({ ok, cleared: ok });
+  });
+
+  app.post('/api/reliability/missions/:id/reset', (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+    const ok = resetMissionTaskRun(c.req.param('id'));
+    return c.json({ ok, reset: ok });
+  });
+
+  app.post('/api/reliability/outbox/:id/retry', (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+    const id = parseInt(c.req.param('id'), 10);
+    if (!Number.isFinite(id)) return c.json({ ok: false, error: 'Invalid outbox id' }, 400);
+    const ok = retryTelegramOutboxRow(id);
+    return c.json({ ok, retried: ok });
+  });
+
+  app.post('/api/reliability/outbox/:id/dead-letter', (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+    const id = parseInt(c.req.param('id'), 10);
+    if (!Number.isFinite(id)) return c.json({ ok: false, error: 'Invalid outbox id' }, 400);
+    const ok = deadLetterTelegramOutboxRow(id);
+    return c.json({ ok, deadLettered: ok });
+  });
+
+  app.post('/api/reliability/operations/:id/cancel', (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
+    const id = parseInt(c.req.param('id'), 10);
+    if (!Number.isFinite(id)) return c.json({ ok: false, error: 'Invalid operation notification id' }, 400);
+    const ok = cancelOperationNotificationById(id);
+    return c.json({ ok, cancelled: ok });
   });
 
   app.post('/api/provider/switch', async (c) => {
