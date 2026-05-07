@@ -157,15 +157,87 @@ function parseCookieHeader(header: string | null | undefined): Record<string, st
   return out;
 }
 
+function dashboardCookieSecurityFlag(c: any): string {
+  const forwardedProto = c.req.header('x-forwarded-proto') || '';
+  const reqProtocol = new URL(c.req.url).protocol;
+  return forwardedProto.split(',')[0]?.trim() === 'https' || reqProtocol === 'https:' ? '; Secure' : '';
+}
+
 function setDashboardAuthCookie(c: any): void {
   c.header(
     'Set-Cookie',
-    `${DASHBOARD_AUTH_COOKIE}=${dashboardCookieValue()}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
+    `${DASHBOARD_AUTH_COOKIE}=${dashboardCookieValue()}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400${dashboardCookieSecurityFlag(c)}`,
+  );
+}
+
+function clearDashboardAuthCookie(c: any): void {
+  c.header(
+    'Set-Cookie',
+    `${DASHBOARD_AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${dashboardCookieSecurityFlag(c)}`,
   );
 }
 
 function dashboardChatId(c: any): string {
   return c.req.query('chatId') || ALLOWED_CHAT_ID || '';
+}
+
+function htmlEscape(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeDashboardNext(raw: string | null | undefined): string {
+  if (!raw || !raw.startsWith('/')) return MISSION_CONTROL_V2 ? '/home' : '/v2/home';
+  if (raw.startsWith('//')) return MISSION_CONTROL_V2 ? '/home' : '/v2/home';
+  if (raw.startsWith('/api/') || raw === '/login' || raw.startsWith('/login?') || raw === '/logout') {
+    return MISSION_CONTROL_V2 ? '/home' : '/v2/home';
+  }
+  return raw;
+}
+
+function renderDashboardLogin(next = '', error = ''): string {
+  const safeNext = safeDashboardNext(next);
+  const escapedError = htmlEscape(error);
+  const escapedNext = htmlEscape(safeNext);
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>ClaudeClaw Login</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0e0e10; --card:#1a1a1c; --border:#2a2a30; --text:#e8e8e6; --muted:#9a9a98; --accent:#8b8af0; --danger:#ef4444; }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100dvh; display:grid; place-items:center; padding:24px; background:var(--bg); color:var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    main { width:min(420px, 100%); border:1px solid var(--border); background:var(--card); border-radius:8px; padding:24px; }
+    h1 { margin:0 0 6px; font-size:22px; letter-spacing:0; }
+    p { margin:0 0 18px; color:var(--muted); font-size:13px; line-height:1.45; }
+    label { display:block; margin:0 0 6px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+    input { width:100%; border:1px solid var(--border); background:#111114; color:var(--text); border-radius:6px; padding:11px 12px; font:inherit; }
+    button { width:100%; margin-top:14px; border:0; border-radius:6px; padding:11px 12px; background:var(--accent); color:white; font:inherit; font-weight:700; cursor:pointer; }
+    .error { margin:0 0 12px; color:var(--danger); font-size:13px; }
+    .hint { margin-top:14px; margin-bottom:0; font-size:12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ClaudeClaw</h1>
+    <p>Sign in to Mission Control. This stores access in an HttpOnly browser cookie so you can use the dashboard without keeping the token in the URL.</p>
+    ${escapedError ? `<div class="error">${escapedError}</div>` : ''}
+    <form method="post" action="/login">
+      <input type="hidden" name="next" value="${escapedNext}" />
+      <label for="token">Dashboard token</label>
+      <input id="token" name="token" type="password" autocomplete="current-password" autofocus required />
+      <button type="submit">Sign in</button>
+    </form>
+    <p class="hint">Use this on your phone through the secure tunnel, then bookmark the dashboard after login.</p>
+  </main>
+</body>
+</html>`;
 }
 
 function queueMainRestart(source: string): boolean {
@@ -2333,14 +2405,29 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       await next();
       return;
     }
+    if (decodedReqPath === '/login' || decodedReqPath === '/logout') {
+      await next();
+      return;
+    }
     const token = c.req.query('token');
     const cookies = parseCookieHeader(c.req.header('cookie'));
     const cookieOk = cookies[DASHBOARD_AUTH_COOKIE] === dashboardCookieValue();
     const tokenOk = !!DASHBOARD_TOKEN && !!token && token === DASHBOARD_TOKEN;
     if (!DASHBOARD_TOKEN || (!tokenOk && !cookieOk)) {
+      if (c.req.method === 'GET' && !decodedReqPath.startsWith('/api/')) {
+        const url = new URL(c.req.url);
+        return c.redirect(`/login?next=${encodeURIComponent(url.pathname + url.search)}`, 302);
+      }
       return c.json({ error: 'Unauthorized' }, 401);
     }
-    if (tokenOk) setDashboardAuthCookie(c);
+    if (tokenOk) {
+      setDashboardAuthCookie(c);
+      if (c.req.method === 'GET' && !decodedReqPath.startsWith('/api/')) {
+        const url = new URL(c.req.url);
+        url.searchParams.delete('token');
+        return c.redirect(url.pathname + url.search, 302);
+      }
+    }
     await next();
   });
 
@@ -2462,6 +2549,27 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const url = new URL(c.req.url);
     return c.redirect(`${MISSION_CONTROL_V2 ? '' : '/v2'}/home${url.search}`, 302);
   }
+
+  app.get('/login', (c) => {
+    const next = safeDashboardNext(c.req.query('next'));
+    return c.html(renderDashboardLogin(next));
+  });
+
+  app.post('/login', async (c) => {
+    const body = await c.req.parseBody();
+    const token = typeof body.token === 'string' ? body.token.trim() : '';
+    const next = safeDashboardNext(typeof body.next === 'string' ? body.next : undefined);
+    if (!DASHBOARD_TOKEN || token !== DASHBOARD_TOKEN) {
+      return c.html(renderDashboardLogin(next, 'Invalid dashboard token.'), 401);
+    }
+    setDashboardAuthCookie(c);
+    return c.redirect(next, 303);
+  });
+
+  app.post('/logout', (c) => {
+    clearDashboardAuthCookie(c);
+    return c.redirect('/login', 303);
+  });
 
   if (MISSION_CONTROL_V2) {
     // v2 owns root. Legacy reachable at /legacy for cutover comparison.

@@ -85,14 +85,73 @@ describe('auth gate', () => {
     expect(res.status).toBe(200);
   });
 
+  it('redirects browser GETs without auth to the login page', async () => {
+    const res = await getNoToken('/v2/home');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/login?next=');
+  });
+
+  it('serves the dashboard login page without a token', async () => {
+    const res = await getNoToken('/login');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('Sign in to Mission Control');
+  });
+
+  it('sets the auth cookie from the login form and redirects to a safe next path', async () => {
+    const body = new URLSearchParams({ token: TOKEN, next: '/v2/home' });
+    const res = await app.request('/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/v2/home');
+    expect(res.headers.get('set-cookie')).toContain('claudeclaw_dashboard=');
+  });
+
+  it('marks the auth cookie secure behind an HTTPS tunnel', async () => {
+    const body = new URLSearchParams({ token: TOKEN, next: '/v2/home' });
+    const res = await app.request('/login', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-forwarded-proto': 'https',
+      },
+      body,
+    });
+    expect(res.headers.get('set-cookie')).toContain('Secure');
+  });
+
+  it('rejects unsafe login next redirects', async () => {
+    const body = new URLSearchParams({ token: TOKEN, next: 'https://evil.example/' });
+    const res = await app.request('/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/v2/home');
+  });
+
+  it('strips token query params from browser deep links after setting the cookie', async () => {
+    const res = await app.request('/v2/home?token=' + TOKEN);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/v2/home');
+    expect(res.headers.get('set-cookie')).toContain('claudeclaw_dashboard=');
+  });
+
   it('redirects root-level v2 deep links to the mounted v2 app', async () => {
-    const res = await get('/home');
+    const first = await get('/api/health');
+    const cookie = first.headers.get('set-cookie')?.split(';')[0] || '';
+    const res = await app.request('/home', { headers: { cookie } });
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toContain('/v2/home');
   });
 
   it('redirects the deprecated dedicated mobile route to the normal app', async () => {
-    const res = await get('/v2/mobile');
+    const first = await get('/api/health');
+    const cookie = first.headers.get('set-cookie')?.split(';')[0] || '';
+    const res = await app.request('/v2/mobile', { headers: { cookie } });
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toContain('/v2/home');
   });

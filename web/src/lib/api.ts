@@ -24,6 +24,7 @@ export const dashboardToken = cachedToken;
 export const chatId = cachedChatId;
 
 function withToken(path: string): string {
+  if (!dashboardToken) return path;
   const sep = path.includes('?') ? '&' : '?';
   return `${path}${sep}token=${encodeURIComponent(dashboardToken)}`;
 }
