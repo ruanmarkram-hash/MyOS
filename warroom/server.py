@@ -171,7 +171,6 @@ def make_transport(port: int, audio_in_sr: int = 16000, audio_out_sr: int = 2400
             audio_out_enabled=True,
             audio_in_sample_rate=audio_in_sr,
             audio_out_sample_rate=audio_out_sr,
-            vad_analyzer=None,
             serializer=ProtobufFrameSerializer(),
         ),
     )
@@ -719,6 +718,9 @@ async def run_legacy_mode(tts_provider: str | None = None):
 
     if provider == "elevenlabs":
         import aiohttp
+        from pipecat.audio.vad.silero import SileroVADAnalyzer
+        from pipecat.audio.vad.vad_analyzer import VADParams
+        from pipecat.processors.audio.vad_processor import VADProcessor
         from pipecat.services.elevenlabs.stt import ElevenLabsSTTService
         from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 
@@ -740,6 +742,17 @@ async def run_legacy_mode(tts_provider: str | None = None):
                 use_speaker_boost=True,
             ),
         )
+        vad = VADProcessor(
+            vad_analyzer=SileroVADAnalyzer(
+                sample_rate=16000,
+                params=VADParams(
+                    confidence=0.55,
+                    start_secs=0.15,
+                    stop_secs=0.45,
+                    min_volume=0.3,
+                ),
+            ),
+        )
     else:
         from pipecat.services.deepgram.stt import DeepgramSTTService
         from pipecat.services.cartesia.tts import CartesiaTTSService
@@ -747,18 +760,16 @@ async def run_legacy_mode(tts_provider: str | None = None):
         http_session = None
         stt = DeepgramSTTService(api_key=os.environ["DEEPGRAM_API_KEY"])
         tts = CartesiaTTSService(api_key=os.environ["CARTESIA_API_KEY"], voice_id=default_voice_id)
+        vad = None
 
     router = AgentRouter()
     bridge = ClaudeAgentBridge()
 
-    pipeline = Pipeline([
-        transport.input(),
-        stt,
-        router,
-        bridge,
-        tts,
-        transport.output(),
-    ])
+    processors = [transport.input()]
+    if vad is not None:
+        processors.append(vad)
+    processors.extend([stt, router, bridge, tts, transport.output()])
+    pipeline = Pipeline(processors)
 
     task = PipelineTask(
         pipeline,
@@ -766,6 +777,8 @@ async def run_legacy_mode(tts_provider: str | None = None):
             allow_interruptions=True,
             enable_metrics=True,
         ),
+        idle_timeout_secs=None,
+        cancel_on_idle_timeout=False,
     )
 
     @transport.event_handler("on_client_disconnected")
