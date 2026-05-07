@@ -97,7 +97,7 @@ import {
   suggestBotNames,
   isAgentRunning,
 } from './agent-create.js';
-import { processMessageFromDashboard } from './bot.js';
+import { getMainModelOverride, processMessageFromDashboard } from './bot.js';
 import { getDashboardHtml } from './dashboard-html.js';
 import {
   listEditableFiles,
@@ -4973,7 +4973,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const mainStats = getAgentTokenStats('main');
     const mainProviderStatus = providerStatusForAgent('main', null);
     const mainSessionId = getSession(chatId, 'main', mainProviderStatus.provider);
-    const mainRuntime = providerRuntime(mainProviderStatus.provider, agentDefaultModel || MAIN_AGENT_MODEL, mainSessionId);
+    const mainRuntime = providerRuntime(mainProviderStatus.provider, getMainModelOverride() || agentDefaultModel || MAIN_AGENT_MODEL, mainSessionId);
     const allAgents = [
       {
         id: 'main',

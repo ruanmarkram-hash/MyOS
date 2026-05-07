@@ -1973,6 +1973,24 @@ describe('PATCH /api/agents/:id/model', () => {
       restartRequired: false,
     });
   });
+
+  it('main model override is reflected by the agents list', async () => {
+    const res = await app.request('/api/agents/main/model' + Q, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5' }),
+    });
+    expect(res.status).toBe(200);
+
+    const agentsRes = await get('/api/agents');
+    expect(agentsRes.status).toBe(200);
+    const body = await jsonOf(agentsRes);
+    const main = body.agents.find((agent: { id: string }) => agent.id === 'main');
+    expect(main).toMatchObject({
+      model: 'claude-haiku-4-5',
+      configuredModel: 'claude-haiku-4-5',
+    });
+  });
 });
 
 describe('PATCH /api/agents/:id/provider', () => {
