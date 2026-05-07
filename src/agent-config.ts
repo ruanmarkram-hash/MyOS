@@ -5,6 +5,8 @@ import yaml from 'js-yaml';
 import { CLAUDECLAW_CONFIG, PROJECT_ROOT } from './config.js';
 import { readEnvFile } from './env.js';
 
+export const AGENT_ID_RE = /^[a-z0-9_-]+$/i;
+
 export interface AgentConfig {
   name: string;
   description: string;
@@ -36,6 +38,12 @@ export function resolveAgentDir(agentId: string): string {
     return externalDir;
   }
   return path.join(PROJECT_ROOT, 'agents', agentId);
+}
+
+export function agentExists(agentId: string): boolean {
+  if (!AGENT_ID_RE.test(agentId)) return false;
+  if (agentId === 'main') return true;
+  return fs.existsSync(path.join(resolveAgentDir(agentId), 'agent.yaml'));
 }
 
 /**

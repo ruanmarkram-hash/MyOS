@@ -1079,6 +1079,27 @@ describe('GET /api/mission/history', () => {
   });
 });
 
+describe('GET /api/agents/:id/avatar', () => {
+  it('serves bundled main avatar with cache headers', async () => {
+    const res = await get('/api/agents/main/avatar');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('image/png');
+    expect(res.headers.get('etag')).toContain('W/');
+  });
+
+  it('returns JSON for invalid avatar ids', async () => {
+    const res = await get('/api/agents/bad.agent/avatar');
+    expect(res.status).toBe(400);
+    expect(await jsonOf(res)).toMatchObject({ error: 'invalid id' });
+  });
+
+  it('returns JSON when avatar agent does not exist', async () => {
+    const res = await get('/api/agents/not-real-agent/avatar');
+    expect(res.status).toBe(404);
+    expect(await jsonOf(res)).toMatchObject({ error: 'agent not found' });
+  });
+});
+
 describe('GET /api/review/inbox', () => {
   it('smoke-tests the mission loop: clean completion, real deliverable, and failure routing', async () => {
     const deliverablePath = '/tmp/claudeclaw-loop-smoke-deliverable.md';

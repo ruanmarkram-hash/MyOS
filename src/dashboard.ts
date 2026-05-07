@@ -84,7 +84,7 @@ import {
 import { generateContent, parseJsonResponse } from './gemini.js';
 import { getSecurityStatus, getScrubbedSdkEnv } from './security.js';
 import { readEnvFile } from './env.js';
-import { listAgentIds, loadAgentConfig, setAgentModel, setAgentProvider, type AgentConfig } from './agent-config.js';
+import { AGENT_ID_RE, agentExists, listAgentIds, loadAgentConfig, resolveAgentDir, setAgentModel, setAgentProvider, type AgentConfig } from './agent-config.js';
 import {
   listTemplates,
   validateAgentId,
@@ -240,6 +240,25 @@ function renderDashboardLogin(next = '', error = ''): string {
   </main>
 </body>
 </html>`;
+}
+
+function resolveDashboardAvatar(agentId: string, context: 'default' | 'meet'): string | null {
+  const mutablePath = agentId === 'main'
+    ? path.join(STORE_DIR, 'avatars', 'main.png')
+    : path.join(resolveAgentDir(agentId), 'avatar.png');
+  if (fs.existsSync(mutablePath)) return mutablePath;
+  const meetPath = path.join(PROJECT_ROOT, 'warroom', 'avatars', `${agentId}-meet.png`);
+  if (context === 'meet' && fs.existsSync(meetPath)) return meetPath;
+  const bundledPath = path.join(PROJECT_ROOT, 'warroom', 'avatars', `${agentId}.png`);
+  if (fs.existsSync(bundledPath)) return bundledPath;
+  return null;
+}
+
+function imageContentType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.webp') return 'image/webp';
+  return 'image/png';
 }
 
 function queueMainRestart(source: string): boolean {
@@ -4856,6 +4875,28 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   });
 
   // ── Agent endpoints ──────────────────────────────────────────────────
+
+  app.get('/api/agents/:id/avatar', (c) => {
+    const agentId = c.req.param('id');
+    if (!AGENT_ID_RE.test(agentId)) return c.json({ error: 'invalid id' }, 400);
+    if (!agentExists(agentId)) return c.json({ error: 'agent not found' }, 404);
+    const context = c.req.query('context') === 'meet' ? 'meet' : 'default';
+    const avatarPath = resolveDashboardAvatar(agentId, context);
+    if (!avatarPath) return new Response(null, { status: 204 });
+
+    const stat = fs.statSync(avatarPath);
+    const etag = `W/"${Math.floor(stat.mtimeMs)}-${stat.size}"`;
+    if (c.req.header('if-none-match') === etag) return new Response(null, { status: 304 });
+
+    const data = fs.readFileSync(avatarPath);
+    return new Response(data, {
+      headers: {
+        'Content-Type': imageContentType(avatarPath),
+        'Cache-Control': 'public, max-age=3600',
+        ETag: etag,
+      },
+    });
+  });
 
   // List all configured agents with status
   app.get('/api/agents', (c) => {
