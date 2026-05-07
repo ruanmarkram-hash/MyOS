@@ -6,13 +6,14 @@ and emits TTS-ready text frames with the correct agent voice.
 The bridge invokes:
     node PROJECT_ROOT/dist/agent-voice-bridge.js --agent AGENT_ID --message "TEXT"
 
-It reads the agent's response from stdout and switches the Cartesia TTS
-voice before emitting the response as a TextFrame.
+It reads the agent's response from stdout and switches the TTS voice before
+emitting the response as a TextFrame.
 """
 
 import asyncio
 import json
 import logging
+import os
 from typing import Optional
 
 from pipecat.frames.frames import TextFrame, TTSUpdateSettingsFrame
@@ -32,6 +33,29 @@ BRIDGE_SCRIPT = PROJECT_ROOT / "dist" / "agent-voice-bridge.js"
 
 # Agent order for round-robin broadcasts
 BROADCAST_ORDER = ["main", "research", "comms", "content", "ops"]
+
+
+def _looks_like_cartesia_id(value: str) -> bool:
+    return len(value) == 36 and value.count("-") == 4
+
+
+def _select_voice_id(agent_id: str) -> str:
+    provider = (os.environ.get("WARROOM_TTS_PROVIDER") or os.environ.get("WARROOM_MODE") or "").strip().lower()
+    voice_config = AGENT_VOICES.get(agent_id) or AGENT_VOICES.get(DEFAULT_AGENT) or {}
+
+    if provider == "elevenlabs":
+        return (
+            voice_config.get("elevenlabs_voice_id")
+            or os.environ.get("ELEVENLABS_VOICE_ID")
+            or (voice_config.get("voice_id") if not _looks_like_cartesia_id(voice_config.get("voice_id", "")) else "")
+            or ""
+        )
+
+    return (
+        voice_config.get("cartesia_voice_id")
+        or (voice_config.get("voice_id") if _looks_like_cartesia_id(voice_config.get("voice_id", "")) else "")
+        or ""
+    )
 
 
 class ClaudeAgentBridge(FrameProcessor):
@@ -81,8 +105,7 @@ class ClaudeAgentBridge(FrameProcessor):
         # entry is a dict missing `voice_id` (legit in live mode which
         # only tracks `gemini_voice`). Either case would raise TypeError
         # or KeyError mid-response and crash the bridge silently.
-        voice_config = AGENT_VOICES.get(agent_id) or AGENT_VOICES.get(DEFAULT_AGENT) or {}
-        voice_id = voice_config.get("voice_id", "")
+        voice_id = _select_voice_id(agent_id)
 
         # Only send a voice-switch frame if we have a voice AND it actually changed
         if voice_id and voice_id != self._current_voice:

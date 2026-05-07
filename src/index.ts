@@ -310,6 +310,15 @@ async function main(): Promise<void> {
             'GOOGLE_API_KEY',
             'DEEPGRAM_API_KEY',
             'CARTESIA_API_KEY',
+            'ELEVENLABS_API_KEY',
+            'WARROOM_MODE',
+            'WARROOM_TTS_PROVIDER',
+            'ELEVENLABS_STT_MODEL',
+            'ELEVENLABS_MODEL',
+            'ELEVENLABS_STABILITY',
+            'ELEVENLABS_SIMILARITY_BOOST',
+            'WARROOM_VOICES_PATH',
+            'CLAUDECLAW_CONFIG',
           ]);
           // Round-4 structural fix: no natural pass-through. Warroom
           // doesn't need ANTHROPIC_API_KEY directly, but if .env doesn't

@@ -1,7 +1,7 @@
 """
 War Room Voice Server for ClaudeClaw.
 
-Two modes, selected by the WARROOM_MODE environment variable:
+Three modes, selected by the WARROOM_MODE environment variable:
 
   live   (default)   Gemini Live native-audio model + tool-calling.
                      WebSocket → user aggregator → Gemini Live → assistant aggregator → WebSocket.
@@ -11,21 +11,30 @@ Two modes, selected by the WARROOM_MODE environment variable:
 
   legacy             The original stitched STT → router → Claude-bridge → TTS chain.
                      Higher latency, but every utterance goes through the full Claude Code
-                     stack with skills/MCP. Kept around so you can toggle back without
-                     reverting the file.
+                     stack with skills/MCP. Uses Cartesia unless WARROOM_TTS_PROVIDER is
+                     set to elevenlabs.
+
+  elevenlabs         The stitched ElevenLabs STT → router → Claude-bridge →
+                     ElevenLabs TTS chain. This is the OS-owned voice path, with
+                     per-agent voice IDs from
+                     CLAUDECLAW_CONFIG/warroom/voices.json.
 
 Usage:
     python warroom/server.py
 
 Environment variables:
-    WARROOM_MODE         "live" (default) or "legacy"
+    WARROOM_MODE         "live" (default), "legacy", or "elevenlabs"
     WARROOM_PORT         port to listen on (default: 7860)
     WARROOM_LIVE_MODEL   Gemini Live model id (default: whatever Pipecat ships)
     WARROOM_LIVE_VOICE   Gemini Live voice name (default: "Charon")
+    WARROOM_TTS_PROVIDER "elevenlabs" or "cartesia" for legacy stitched mode
+    ELEVENLABS_STT_MODEL ElevenLabs STT model (default: "scribe_v1")
+    ELEVENLABS_MODEL     ElevenLabs TTS model (default: "eleven_turbo_v2_5")
 
     GOOGLE_API_KEY       required for live mode
-    DEEPGRAM_API_KEY     required for legacy mode
+    DEEPGRAM_API_KEY     required for Cartesia legacy mode
     CARTESIA_API_KEY     required for legacy mode
+    ELEVENLABS_API_KEY   required for ElevenLabs stitched mode
 """
 
 import sys
@@ -104,6 +113,26 @@ logger = logging.getLogger("warroom.server")
 
 
 # ─── Shared helpers ────────────────────────────────────────────────────────
+
+def _looks_like_cartesia_id(value: str) -> bool:
+    return len(value) == 36 and value.count("-") == 4
+
+
+def select_tts_voice_id(agent_id: str, provider: str) -> str:
+    entry = AGENT_VOICES.get(agent_id) or AGENT_VOICES.get(DEFAULT_AGENT) or {}
+    legacy_voice = entry.get("voice_id", "")
+    if provider == "elevenlabs":
+        return (
+            entry.get("elevenlabs_voice_id")
+            or os.environ.get("ELEVENLABS_VOICE_ID")
+            or (legacy_voice if not _looks_like_cartesia_id(legacy_voice) else "")
+            or ""
+        )
+    return (
+        entry.get("cartesia_voice_id")
+        or (legacy_voice if _looks_like_cartesia_id(legacy_voice) else "")
+        or "a0e99841-438c-4a64-b679-ae501e7d6091"
+    )
 
 def load_env():
     env_path = PROJECT_ROOT / ".env"
@@ -660,29 +689,64 @@ async def run_live_mode():
     logger.info("War Room session ended.")
 
 
-# ─── Mode 2: Legacy stitched pipeline ──────────────────────────────────────
+# ─── Mode 2: Stitched pipeline ─────────────────────────────────────────────
 
-async def run_legacy_mode():
-    """Original Deepgram → router → Claude bridge → Cartesia pipeline."""
-    from pipecat.services.cartesia.tts import CartesiaTTSService
-    from pipecat.services.deepgram.stt import DeepgramSTTService
+async def run_legacy_mode(tts_provider: str | None = None):
+    """Deepgram → router → Claude bridge → TTS pipeline."""
     from router import AgentRouter
     from agent_bridge import ClaudeAgentBridge
 
-    check_required_keys({
-        "DEEPGRAM_API_KEY": "Deepgram (speech-to-text)",
-        "CARTESIA_API_KEY": "Cartesia (text-to-speech)",
-    })
+    provider = (tts_provider or os.environ.get("WARROOM_TTS_PROVIDER") or "cartesia").strip().lower()
+    if provider not in {"cartesia", "elevenlabs"}:
+        logger.warning("Unknown WARROOM_TTS_PROVIDER=%r; using cartesia", provider)
+        provider = "cartesia"
+
+    if provider == "elevenlabs":
+        required = {"ELEVENLABS_API_KEY": "ElevenLabs (speech-to-text and text-to-speech)"}
+    else:
+        required = {"DEEPGRAM_API_KEY": "Deepgram (speech-to-text)"}
+        required["CARTESIA_API_KEY"] = "Cartesia (text-to-speech)"
+    check_required_keys(required)
 
     port = int(os.environ.get("WARROOM_PORT", "7860"))
 
-    default_voice = AGENT_VOICES.get(DEFAULT_AGENT, {})
-    default_voice_id = default_voice.get("voice_id", "a0e99841-438c-4a64-b679-ae501e7d6091")
+    default_voice_id = select_tts_voice_id(DEFAULT_AGENT, provider)
+    if not default_voice_id:
+        logger.error("No %s voice ID configured for default agent %s", provider, DEFAULT_AGENT)
+        sys.exit(1)
 
     transport = make_transport(port)
 
-    stt = DeepgramSTTService(api_key=os.environ["DEEPGRAM_API_KEY"])
-    tts = CartesiaTTSService(api_key=os.environ["CARTESIA_API_KEY"], voice_id=default_voice_id)
+    if provider == "elevenlabs":
+        import aiohttp
+        from pipecat.services.elevenlabs.stt import ElevenLabsSTTService
+        from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+
+        http_session = aiohttp.ClientSession()
+        eleven_stt_model = os.environ.get("ELEVENLABS_STT_MODEL", "scribe_v1")
+        eleven_model = os.environ.get("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
+        stt = ElevenLabsSTTService(
+            api_key=os.environ["ELEVENLABS_API_KEY"],
+            aiohttp_session=http_session,
+            model=eleven_stt_model,
+        )
+        tts = ElevenLabsTTSService(
+            api_key=os.environ["ELEVENLABS_API_KEY"],
+            settings=ElevenLabsTTSService.Settings(
+                voice=default_voice_id,
+                model=eleven_model,
+                stability=float(os.environ.get("ELEVENLABS_STABILITY", "0.5")),
+                similarity_boost=float(os.environ.get("ELEVENLABS_SIMILARITY_BOOST", "0.75")),
+                use_speaker_boost=True,
+            ),
+        )
+    else:
+        from pipecat.services.deepgram.stt import DeepgramSTTService
+        from pipecat.services.cartesia.tts import CartesiaTTSService
+
+        http_session = None
+        stt = DeepgramSTTService(api_key=os.environ["DEEPGRAM_API_KEY"])
+        tts = CartesiaTTSService(api_key=os.environ["CARTESIA_API_KEY"], voice_id=default_voice_id)
 
     router = AgentRouter()
     bridge = ClaudeAgentBridge()
@@ -710,12 +774,16 @@ async def run_legacy_mode():
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        logger.info("Client connected (legacy mode)")
+        logger.info("Client connected (%s mode)", provider)
 
-    print_ready(port, "legacy")
+    print_ready(port, provider if provider == "elevenlabs" else "legacy")
     runner = PipelineRunner(handle_sigterm=True)
-    logger.info("War Room LEGACY mode on ws://0.0.0.0:%d", port)
-    await runner.run(task)
+    logger.info("War Room STITCHED mode on ws://0.0.0.0:%d (tts=%s)", port, provider)
+    try:
+        await runner.run(task)
+    finally:
+        if http_session is not None:
+            await http_session.close()
     logger.info("War Room session ended.")
 
 
@@ -726,11 +794,13 @@ async def run_warroom():
     mode = os.environ.get("WARROOM_MODE", "live").strip().lower()
     if mode == "legacy":
         await run_legacy_mode()
+    elif mode == "elevenlabs":
+        await run_legacy_mode(tts_provider="elevenlabs")
     elif mode == "live":
         await run_live_mode()
     else:
         logger.error(
-            "Unknown WARROOM_MODE=%r. Expected 'live' or 'legacy'. Defaulting to 'live'.",
+            "Unknown WARROOM_MODE=%r. Expected 'live', 'legacy', or 'elevenlabs'. Defaulting to 'live'.",
             mode,
         )
         await run_live_mode()

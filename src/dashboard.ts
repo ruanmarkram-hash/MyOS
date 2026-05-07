@@ -5,7 +5,7 @@ import { serve } from '@hono/node-server';
 
 import fs from 'fs';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel, LLM_PROVIDER, BRAIN, OB1_SUPABASE_URL, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION, OB1_GRAPH_FUNCTION, EMBEDDING_PROVIDER, LLAMACPP_EMBEDDING_URL, LLAMACPP_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODEL_PATH, CODEX_HAIKU_MODEL, CODEX_SONNET_MODEL, CODEX_OPUS_MODEL } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel, LLM_PROVIDER, BRAIN, OB1_SUPABASE_URL, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION, OB1_GRAPH_FUNCTION, EMBEDDING_PROVIDER, LLAMACPP_EMBEDDING_URL, LLAMACPP_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODEL_PATH, CODEX_HAIKU_MODEL, CODEX_SONNET_MODEL, CODEX_OPUS_MODEL, CLAUDECLAW_CONFIG } from './config.js';
 import crypto from 'crypto';
 import {
   getAllScheduledTasks,
@@ -3329,13 +3329,34 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   });
 
   // ── War Room voice configuration ──
-  // warroom/voices.json carries two voice identifiers per agent:
-  //   - gemini_voice:     Gemini Live's built-in voice name (used in live mode)
-  //   - voice_id:         Cartesia voice id (used in legacy stitched mode)
-  // The Python server reads this file on startup. After editing via the
-  // dashboard, POST /api/warroom/voices/apply kickstarts the main agent so
-  // its child warroom process respawns with the new config.
-  const WARROOM_VOICES_PATH = path.join(PROJECT_ROOT, 'warroom', 'voices.json');
+  // The repo file is a generic fallback. Personal ElevenLabs voice IDs live
+  // outside git in CLAUDECLAW_CONFIG/warroom/voices.json unless
+  // WARROOM_VOICES_PATH explicitly points somewhere else.
+  type WarroomVoiceEntry = {
+    voice_id?: string;
+    elevenlabs_voice_id?: string;
+    cartesia_voice_id?: string;
+    gemini_voice?: string;
+    name?: string;
+  };
+  type ElevenLabsCatalogEntry = {
+    voice_id: string;
+    name: string;
+    category?: string;
+    labels?: Record<string, string>;
+  };
+  const WARROOM_VOICES_TEMPLATE_PATH = path.join(PROJECT_ROOT, 'warroom', 'voices.json');
+  function cleanEnvValue(value?: string): string {
+    return (value || '').split('#')[0].trim().replace(/^['"]|['"]$/g, '');
+  }
+  function looksLikeCartesiaVoiceId(value?: string): boolean {
+    return typeof value === 'string' && value.length === 36 && value.split('-').length === 5;
+  }
+  function warroomVoicesPath(): string {
+    const env = readEnvFile(['WARROOM_VOICES_PATH']);
+    const override = cleanEnvValue(env.WARROOM_VOICES_PATH);
+    return override || path.join(CLAUDECLAW_CONFIG, 'warroom', 'voices.json');
+  }
 
   // Full Gemini Live voice catalog with one-word style descriptors. Matches
   // the 30 voices supported by the gemini-2.5-flash-native-audio-preview model
@@ -3383,16 +3404,32 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     'Fenrir', 'Laomedeia', 'Achird', 'Sulafat', 'Vindemiatrix',
   ];
 
-  function readVoicesFile(): Record<string, { voice_id?: string; gemini_voice?: string; name?: string }> {
+  function readJsonFile<T>(filePath: string, fallback: T): T {
     try {
-      return JSON.parse(fs.readFileSync(WARROOM_VOICES_PATH, 'utf-8'));
+      return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
     } catch {
-      return {};
+      return fallback;
     }
   }
 
+  function readVoicesFile(): Record<string, WarroomVoiceEntry> {
+    const template = readJsonFile<Record<string, WarroomVoiceEntry>>(WARROOM_VOICES_TEMPLATE_PATH, {});
+    const personal = readJsonFile<Record<string, WarroomVoiceEntry>>(warroomVoicesPath(), {});
+    const merged: Record<string, WarroomVoiceEntry> = { ...template };
+    for (const [agent, entry] of Object.entries(personal)) {
+      merged[agent] = { ...(merged[agent] || {}), ...entry };
+    }
+    return merged;
+  }
+
+  function readPersonalVoicesFile(): Record<string, WarroomVoiceEntry> {
+    return readJsonFile<Record<string, WarroomVoiceEntry>>(warroomVoicesPath(), {});
+  }
+
   function writeVoicesFile(obj: Record<string, unknown>) {
-    fs.writeFileSync(WARROOM_VOICES_PATH, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
+    const target = warroomVoicesPath();
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
   }
 
   function pickDefaultGeminiVoice(used: Set<string>): string {
@@ -3402,7 +3439,49 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     return NEW_AGENT_VOICE_POOL[0];
   }
 
-  app.get('/api/warroom/voices', (c) => {
+  async function fetchElevenLabsCatalog(apiKey: string): Promise<ElevenLabsCatalogEntry[]> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch('https://api.elevenlabs.io/v1/voices', {
+        headers: { 'xi-api-key': apiKey },
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`ElevenLabs returned ${res.status}`);
+      const data = await res.json() as { voices?: Array<any> };
+      return (data.voices || [])
+        .filter((v) => typeof v?.voice_id === 'string' && typeof v?.name === 'string')
+        .map((v) => ({
+          voice_id: v.voice_id,
+          name: v.name,
+          category: typeof v.category === 'string' ? v.category : undefined,
+          labels: v.labels && typeof v.labels === 'object' ? v.labels : undefined,
+        }));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  app.get('/api/warroom/voices', async (c) => {
+    const env = readEnvFile([
+      'ELEVENLABS_API_KEY',
+      'ELEVENLABS_VOICE_ID',
+      'WARROOM_MODE',
+      'WARROOM_TTS_PROVIDER',
+    ]);
+    const mode = cleanEnvValue(env.WARROOM_MODE) || 'live';
+    const ttsProvider = cleanEnvValue(env.WARROOM_TTS_PROVIDER) || (mode === 'elevenlabs' ? 'elevenlabs' : mode === 'live' ? 'gemini-live' : 'cartesia');
+    const globalElevenVoice = cleanEnvValue(env.ELEVENLABS_VOICE_ID);
+    let elevenlabsCatalog: ElevenLabsCatalogEntry[] = [];
+    let elevenlabsCatalogError: string | null = null;
+    if (env.ELEVENLABS_API_KEY) {
+      try {
+        elevenlabsCatalog = await fetchElevenLabsCatalog(env.ELEVENLABS_API_KEY);
+      } catch (err) {
+        elevenlabsCatalogError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
     const configured = readVoicesFile();
     // Return one row per known agent. Agents missing from voices.json get
     // a default Gemini voice suggestion from the pool so the UI can show
@@ -3422,18 +3501,28 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         usedGeminiVoices.add(geminiVoice);
         isDefault = true;
       }
+      const voiceId = entry.elevenlabs_voice_id || (!looksLikeCartesiaVoiceId(entry.voice_id) ? entry.voice_id : '') || globalElevenVoice || '';
+      const elevenVoice = elevenlabsCatalog.find((v) => v.voice_id === voiceId);
       return {
         agent,
         gemini_voice: geminiVoice,
-        voice_id: entry.voice_id || '',
-        name: entry.name || '',
+        voice_id: voiceId,
+        elevenlabs_name: elevenVoice?.name || '',
+        name: entry.name || elevenVoice?.name || '',
         is_default: isDefault,
+        voice_id_default: !entry.voice_id && !!globalElevenVoice,
       };
     });
     return c.json({
       ok: true,
       voices: rows,
       gemini_catalog: GEMINI_VOICE_CATALOG,
+      elevenlabs_catalog: elevenlabsCatalog,
+      elevenlabs_catalog_error: elevenlabsCatalogError,
+      elevenlabs_configured: !!env.ELEVENLABS_API_KEY,
+      tts_provider: ttsProvider,
+      mode,
+      voices_path: warroomVoicesPath(),
     });
   });
 
@@ -3445,7 +3534,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       return c.json({ ok: false, error: 'updates must be a non-empty array of {agent, gemini_voice?, voice_id?, name?}' }, 400);
     }
 
-    const configured = readVoicesFile();
+    const configured = readPersonalVoicesFile();
     const errors: string[] = [];
     for (const u of updates) {
       if (!u.agent || typeof u.agent !== 'string') {
@@ -3465,7 +3554,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           errors.push(`${u.agent}: voice_id must be a string`);
           continue;
         }
-        entry.voice_id = u.voice_id;
+        entry.elevenlabs_voice_id = u.voice_id;
       }
       if (u.name !== undefined) {
         if (typeof u.name !== 'string') {
