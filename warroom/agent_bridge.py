@@ -1,13 +1,13 @@
 """
 ClaudeAgentBridge: a Pipecat FrameProcessor that takes routed messages,
 calls the appropriate ClaudeClaw agent via the Node.js voice bridge,
-and emits TTS-ready text frames with the correct agent voice.
+and emits TTS-ready speech frames with the correct agent voice.
 
 The bridge invokes:
     node PROJECT_ROOT/dist/agent-voice-bridge.js --agent AGENT_ID --message "TEXT"
 
 It reads the agent's response from stdout and switches the TTS voice before
-emitting the response as a TextFrame.
+emitting the response as a TTSSpeakFrame.
 """
 
 import asyncio
@@ -17,7 +17,7 @@ import os
 import uuid
 from typing import Optional
 
-from pipecat.frames.frames import OutputTransportMessageUrgentFrame, TextFrame, TTSUpdateSettingsFrame
+from pipecat.frames.frames import OutputTransportMessageUrgentFrame, TTSSpeakFrame, TTSUpdateSettingsFrame
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 
 from config import PROJECT_ROOT, AGENT_VOICES, DEFAULT_AGENT
@@ -65,7 +65,7 @@ def _select_voice_id(agent_id: str) -> str:
 
 class ClaudeAgentBridge(FrameProcessor):
     """Receives AgentRouteFrames, calls the Claude agent, and emits
-    voice-switched TextFrames for TTS output."""
+    voice-switched speech frames for TTS output."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -120,13 +120,13 @@ class ClaudeAgentBridge(FrameProcessor):
             self._current_voice = voice_id
 
         await self._emit_transcript_event(agent_id, text)
-        await self.push_frame(TextFrame(text=text))
+        await self.push_frame(TTSSpeakFrame(text=text, append_to_context=False))
 
     async def _emit_transcript_event(self, agent_id: str, text: str):
         """Send spoken agent text to the browser transcript.
 
-        The WebSocket transport only turns audio into playback. TextFrame is
-        consumed by TTS and does not automatically surface in the browser's
+        The WebSocket transport only turns audio into playback. Speech frames
+        are consumed by TTS and do not automatically surface in the browser's
         onBotTranscript callback, so send an explicit RTVI-style server message
         before the audio starts.
         """
