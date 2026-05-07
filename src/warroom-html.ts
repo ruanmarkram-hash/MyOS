@@ -1055,6 +1055,7 @@ async function reloadMeetingAfterRespawn(statusLabel, targetAgent) {
     var wsUrl = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws/warroom';
     var WebSocketTransport = window.PipecatWarRoom.WebSocketTransport;
     var PipecatClient = window.PipecatWarRoom.PipecatClient;
+    transportReadySent = false;
     currentTransport = new WebSocketTransport({ wsUrl: wsUrl });
     pipecatClient = new PipecatClient({
       transport: currentTransport,
@@ -1062,6 +1063,7 @@ async function reloadMeetingAfterRespawn(statusLabel, targetAgent) {
       enableCam: false,
       callbacks: {
         onConnected: function() {
+          readyMicForSending();
           document.getElementById('micBtn').disabled = false;
           document.getElementById('micBtn').classList.add('recording');
           document.getElementById('statusText').textContent = 'meeting active (' + statusLabel + ')';
@@ -1210,6 +1212,7 @@ var pipecatClient = null;
 // the server never sees an orderly disconnect until the next Start
 // Meeting click kicks the stale client slot.
 var currentTransport = null;
+var transportReadySent = false;
 
 // Pending "connection timed out" safety timer. We want exactly ONE of
 // these alive at a time, and we need to cancel it as soon as the server
@@ -1238,6 +1241,25 @@ function forceCloseTransport(t) {
       try { sock.close(1000, 'client ended meeting'); } catch (e) {}
     }
   }
+}
+
+function markTransportReady() {
+  if (!currentTransport || transportReadySent) return;
+  if (typeof currentTransport.sendReadyMessage !== 'function') return;
+  try {
+    currentTransport.sendReadyMessage();
+    transportReadySent = true;
+  } catch (e) {
+    console.warn('[WarRoom] Failed to mark transport ready:', e);
+  }
+}
+
+function readyMicForSending() {
+  markTransportReady();
+  if (pipecatClient && typeof pipecatClient.enableMic === 'function') {
+    try { pipecatClient.enableMic(true); } catch (e) {}
+  }
+  micActive = true;
 }
 
 // Format an error for display. Pipecat's callbacks sometimes pass plain
@@ -1378,6 +1400,7 @@ async function togglePin(agentId) {
       var wsUrl = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws/warroom';
       var WebSocketTransport = window.PipecatWarRoom.WebSocketTransport;
       var PipecatClient = window.PipecatWarRoom.PipecatClient;
+      transportReadySent = false;
       currentTransport = new WebSocketTransport({ wsUrl: wsUrl });
       pipecatClient = new PipecatClient({
         transport: currentTransport,
@@ -1386,6 +1409,7 @@ async function togglePin(agentId) {
         callbacks: {
           onConnected: function() {
             console.log('[WarRoom] Reconnected to Pipecat server as', statusLabel);
+            readyMicForSending();
             document.getElementById('micBtn').disabled = false;
             document.getElementById('micBtn').classList.add('recording');
             document.getElementById('statusText').textContent = 'meeting active (' + statusLabel + ')';
@@ -1676,7 +1700,7 @@ async function toggleMeeting() {
         btn.className = 'btn end';
         btn.disabled = false;
         document.getElementById('micBtn').disabled = false;
-        micActive = true;
+        readyMicForSending();
         document.getElementById('micBtn').classList.add('recording');
         document.getElementById('statusText').textContent = 'meeting active';
 
@@ -1705,6 +1729,7 @@ async function toggleMeeting() {
       var connectAttempts = 0;
       var retryTimerHandle = null;
       function buildClient() {
+        transportReadySent = false;
         currentTransport = new WebSocketTransport({ wsUrl: wsUrl });
         return new PipecatClient({
           transport: currentTransport,
@@ -1734,6 +1759,7 @@ async function toggleMeeting() {
                 try {
                   var WebSocketTransport = window.PipecatWarRoom.WebSocketTransport;
                   var PipecatClient = window.PipecatWarRoom.PipecatClient;
+                  transportReadySent = false;
                   currentTransport = new WebSocketTransport({ wsUrl: wsUrl });
                   pipecatClient = new PipecatClient({
                     transport: currentTransport,
@@ -1741,6 +1767,7 @@ async function toggleMeeting() {
                     enableCam: false,
                     callbacks: {
                       onConnected: function() {
+                        readyMicForSending();
                         document.getElementById('statusText').textContent = 'meeting active (reconnected)';
                         document.getElementById('micBtn').disabled = false;
                         document.getElementById('micBtn').classList.add('recording');
@@ -1828,6 +1855,7 @@ async function toggleMeeting() {
           if (currentTransport) {
             try { forceCloseTransport(currentTransport); } catch (e) {}
             currentTransport = null;
+            transportReadySent = false;
           }
         }
         pipecatClient = buildClient();
@@ -1921,6 +1949,7 @@ async function toggleMeeting() {
     if (currentTransport) {
       try { forceCloseTransport(currentTransport); } catch(e) {}
       currentTransport = null;
+      transportReadySent = false;
     }
 
     // meetingStartTime is null until activateMeeting() fires. If the
@@ -1940,7 +1969,11 @@ function toggleMic() {
   if (!pipecatClient) return;
   micActive = !micActive;
   var btn = document.getElementById('micBtn');
-  pipecatClient.enableMic(micActive);
+  if (micActive) {
+    readyMicForSending();
+  } else {
+    pipecatClient.enableMic(false);
+  }
   if (micActive) {
     btn.classList.add('recording');
     document.getElementById('statusText').textContent = 'listening...';

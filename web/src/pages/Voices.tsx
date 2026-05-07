@@ -33,6 +33,7 @@ export function Voices() {
   const [provider, setProvider] = useState('gemini-live');
   const [voicesPath, setVoicesPath] = useState('');
   const [elevenError, setElevenError] = useState<string | null>(null);
+  const isElevenLabsActive = provider === 'elevenlabs';
 
   async function load() {
     try {
@@ -171,7 +172,7 @@ export function Voices() {
               </span>
             </div>
             <div class="mt-2 text-[10px] text-[var(--color-text-faint)] truncate">
-              Personal voice IDs save to <code class="font-mono">{voicesPath}</code>. Gemini voices remain as the native-audio fallback.
+              Personal voice IDs save to <code class="font-mono">{voicesPath}</code>. {isElevenLabsActive ? 'ElevenLabs is the active voice path. Gemini fallback is stored but hidden here.' : 'Gemini native audio is active.'}
             </div>
           </div>
           <div class="space-y-1.5">
@@ -183,7 +184,8 @@ export function Voices() {
                 <div
                   key={r.agent}
                   class={[
-                    'grid gap-3 px-4 py-3 rounded-lg border transition-colors md:grid-cols-[180px_minmax(260px,1fr)_180px]',
+                    'grid gap-3 px-4 py-3 rounded-lg border transition-colors',
+                    isElevenLabsActive ? 'md:grid-cols-[180px_minmax(320px,1fr)]' : 'md:grid-cols-[180px_minmax(260px,1fr)_180px]',
                     isDirty
                       ? 'bg-[var(--color-accent-soft)] border-[var(--color-accent)]'
                       : 'bg-[var(--color-card)] border-[var(--color-border)]',
@@ -227,19 +229,26 @@ export function Voices() {
                       placeholder="Display label"
                       class="w-full bg-transparent border border-[var(--color-border)] rounded px-2 py-1 text-[11px] text-[var(--color-text-muted)] outline-none focus:border-[var(--color-accent)]"
                     />
+                    {isElevenLabsActive && (
+                      <div class="text-[10px] text-[var(--color-text-faint)] truncate">
+                        Gemini fallback: {effective(r.agent, 'gemini_voice') || 'unset'}
+                      </div>
+                    )}
                   </div>
 
-                  <select
-                    value={effective(r.agent, 'gemini_voice')}
-                    onChange={(e) => updateEdit(r.agent, { gemini_voice: (e.target as HTMLSelectElement).value })}
-                    class="w-full bg-[var(--color-elevated)] border border-[var(--color-border)] rounded px-2 py-1.5 text-[12px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-                  >
-                    {catalog.map((c) => (
-                      <option key={c.name} value={c.name}>
-                        Gemini {c.name} — {c.style}
-                      </option>
-                    ))}
-                  </select>
+                  {!isElevenLabsActive && (
+                    <select
+                      value={effective(r.agent, 'gemini_voice')}
+                      onChange={(e) => updateEdit(r.agent, { gemini_voice: (e.target as HTMLSelectElement).value })}
+                      class="w-full bg-[var(--color-elevated)] border border-[var(--color-border)] rounded px-2 py-1.5 text-[12px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+                    >
+                      {catalog.map((c) => (
+                        <option key={c.name} value={c.name}>
+                          Gemini {c.name} - {c.style}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               );
             })}
