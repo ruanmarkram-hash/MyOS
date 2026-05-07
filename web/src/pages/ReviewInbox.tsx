@@ -90,6 +90,7 @@ export function ReviewInbox() {
   const agentList = agents.data?.agents ?? [];
   const allItems = inbox.data?.items ?? [];
   const actionItems = allItems.filter((item) => item.kind !== 'sorted');
+  const decisionItems = actionItems.filter((item) => item.review.status === 'needs_review' || item.review.status === 'needs_triage');
   const sortedItems = allItems.filter((item) => item.kind === 'sorted');
   const grouped = groupItems(actionItems);
 
@@ -183,9 +184,9 @@ export function ReviewInbox() {
       {inbox.data && (
         <div class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
           <div class="grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3">
-            <Metric label="Needs your action" value={String(actionItems.length)} />
+            <Metric label="Needs your action" value={String(decisionItems.length)} />
             <Metric label="Needs triage" value={String((grouped.needs_triage ?? []).length)} />
-            <Metric label="Waiting follow-up" value={String((grouped.waiting_followup ?? []).length)} />
+            <Metric label="Waiting agent" value={String((grouped.waiting_followup ?? []).length)} />
             <Metric label="Sorted ✓" value={String(sortedItems.length)} />
           </div>
 

@@ -1046,6 +1046,39 @@ describe('GET /api/review/inbox', () => {
     expect(getMissionTask(body.task.id)?.prompt).toContain('Parent mission: m-review-fail');
   });
 
+  it('appends updated instructions when reusing an existing queued follow-up mission', async () => {
+    createMissionTask('m-review-reuse-parent', 'Fix reused follow-up', 'original prompt', 'mason', 'dashboard', 6);
+    completeMissionTask('m-review-reuse-parent', null, 'failed', 'Initial blocker.');
+
+    const first = await app.request('/api/review/tasks/m-review-reuse-parent/follow-up' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        assigned_agent: 'mason',
+        mode: 'retry',
+        instructions: 'First retry instruction.',
+      }),
+    });
+    expect(first.status).toBe(201);
+    const firstBody = await jsonOf(first);
+
+    const second = await app.request('/api/review/tasks/m-review-reuse-parent/follow-up' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        assigned_agent: 'mason',
+        mode: 'retry',
+        instructions: 'Second steering note before Mason starts.',
+      }),
+    });
+    expect(second.status).toBe(200);
+    const secondBody = await jsonOf(second);
+    expect(secondBody).toMatchObject({ ok: true, reused: true });
+    expect(secondBody.task.id).toBe(firstBody.task.id);
+    expect(getMissionTask(firstBody.task.id)?.prompt).toContain('First retry instruction.');
+    expect(getMissionTask(firstBody.task.id)?.prompt).toContain('Second steering note before Mason starts.');
+  });
+
   it('surfaces failed missions for triage even without magic action wording', async () => {
     createMissionTask('m-review-generic-fail', 'Generic failed mission', 'try a thing', 'mason', 'mason', 4);
     completeMissionTask('m-review-generic-fail', null, 'failed', 'Something went wrong. Check the logs and try again.');

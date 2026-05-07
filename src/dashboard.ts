@@ -3353,6 +3353,8 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         if (existingFollowup.status !== 'running' && existingFollowup.assigned_agent !== assignedAgent) {
           reassignMissionTask(existingFollowup.id, assignedAgent);
         }
+        const extraInstructions = (body.instructions || '').trim().slice(0, 6000);
+        if (extraInstructions) appendMissionTaskInstruction(existingFollowup.id, extraInstructions);
         return c.json({ ok: true, task: getMissionTask(existingFollowup.id), review: existingReview, reused: true });
       }
     }
