@@ -679,6 +679,31 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(item.detail).toContain('Confidence: 91%');
   });
 
+  it('auto-routes structured attention that explicitly does not need Ruan', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-autofix-route', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-autofix-route',
+      now + 86400,
+      'ATTENTION_ACTIONS: [{"title":"Fix CalDAV module","detail":"Scripts unavailable: missing caldav module. Install the dependency and rerun the Reminders digest smoke test.","severity":"high","sourceCategory":"runtime","suggested_agent":"mason","requires_ruan":false,"confidence":0.93}]',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items.map((item: any) => item.detail)).not.toEqual(expect.arrayContaining([
+      expect.stringContaining('missing caldav module'),
+    ]));
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        assigned_agent: 'mason',
+        created_by: 'autofix',
+        prompt: expect.stringContaining('Auto-routed Needs Attention item.'),
+      }),
+    ]));
+  });
+
   it('promotes auth and unavailable failures from briefs into durable attention items', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-auth', 'Morning brief', '0 9 * * *', now + 3600, 'main');

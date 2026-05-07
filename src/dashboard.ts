@@ -150,6 +150,7 @@ import {
 import { parseSearchText } from './brain/adapter.js';
 import { checkStale, RUNTIME_BUILD_META, RUNTIME_STARTED_AT, shortSha } from './build-meta.js';
 import { computeNextRun } from './scheduler.js';
+import { runAttentionAutofixSweep } from './attention-autofix.js';
 
 const MAIN_AGENT_MODEL = 'claude-opus-4-7';
 const DASHBOARD_AUTH_COOKIE = 'claudeclaw_dashboard';
@@ -2163,6 +2164,7 @@ function completedMissionHasFollowUp(mission: MissionTask, missions: MissionTask
 function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
   syncReportAttentionItems(tasks, missions);
   syncTerminalMissionAttentionItems(missions);
+  runAttentionAutofixSweep(50);
   const canonicalFollowUps = canonicalFollowUpIds(missions);
   const items: Array<{
     id: string;

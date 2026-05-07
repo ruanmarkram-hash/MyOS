@@ -33,6 +33,7 @@ import {
   fastForwardMainTo,
   type MissionWorktree,
 } from './mission-worktree.js';
+import { runAttentionAutofixSweep } from './attention-autofix.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -126,6 +127,20 @@ export function initScheduler(send: Sender, agentId = 'main'): void {
       logger.warn({ err }, 'operation-notify tick failed');
     });
   }, 30_000);
+
+  if (agentId === 'main' && process.env.VITEST !== 'true' && process.env.NODE_ENV !== 'test') {
+    const attentionSweep = setInterval(() => {
+      try {
+        const result = runAttentionAutofixSweep(50);
+        if (result.routed > 0 || result.archived > 0) {
+          logger.info(result, 'attention-autofix sweep completed');
+        }
+      } catch (err) {
+        logger.warn({ err }, 'attention-autofix sweep failed');
+      }
+    }, 5 * 60_000);
+    attentionSweep.unref?.();
+  }
 
   logger.info({ agentId }, 'Scheduler started (tasks 60s, outbox 5s, op-notifications 30s)');
 }
