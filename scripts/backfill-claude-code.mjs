@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import Database from 'better-sqlite3';
 import pg from 'pg';
+import { embed, vecLit, EMBED_DIM, EMBED_MODEL_NAME } from './lib/embed.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
 const ROOT = '/Users/sc/HQ';
@@ -29,9 +30,8 @@ const CONCURRENCY = 25;
 const MIN_TURN_CHARS = 200;
 const IMPORTANCE_FLOOR = 0.4;
 const GEMINI_FLASH_MODEL = 'gemini-2.5-flash';
-const GEMINI_EMBED_MODEL = 'gemini-embedding-001';
-const EMBED_DIM = 1536;
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+// Embeddings handled by scripts/lib/embed.mjs (BGE-M3, 1024d via local llama.cpp).
 
 // Parse args
 const args = process.argv.slice(2);
@@ -246,52 +246,25 @@ async function extract(userText, asstText, retries = 3) {
   return null;
 }
 
-async function embed(text, retries = 2) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const r = await fetch(
-        `${GEMINI_BASE}/models/${GEMINI_EMBED_MODEL}:embedContent?key=${GEMINI_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            content: { parts: [{ text }] },
-            outputDimensionality: EMBED_DIM,
-          }),
-        }
-      );
-      if (!r.ok) {
-        if (i === retries - 1) return null;
-        await new Promise((res) => setTimeout(res, 500 * Math.pow(2, i)));
-        continue;
-      }
-      const j = await r.json();
-      const v = j?.embedding?.values;
-      if (Array.isArray(v) && v.length === EMBED_DIM) return v;
-      return null;
-    } catch {
-      if (i === retries - 1) return null;
-      await new Promise((res) => setTimeout(res, 500 * Math.pow(2, i)));
-    }
-  }
-  return null;
-}
-
 function fingerprint(text) {
   const norm = text.toLowerCase().trim().replace(/\s+/g, ' ');
   return createHash('sha256').update(norm, 'utf8').digest('hex');
 }
 
-function vecLit(v) { return '[' + v.join(',') + ']'; }
-
 async function insertThought({ summary, embedding, metadata, createdAtSec }) {
+  const enrichedMeta = {
+    ...metadata,
+    embedding_model: EMBED_MODEL_NAME,
+    embedding_provider: 'llamacpp',
+    embedding_dimensions: EMBED_DIM,
+  };
   const sql = `
     INSERT INTO thoughts (content, content_fingerprint, metadata, embedding, created_at)
     VALUES ($1, $2, $3::jsonb, $4::vector, to_timestamp($5))
     ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL DO NOTHING
     RETURNING id
   `;
-  const res = await pool.query(sql, [summary, fingerprint(summary), JSON.stringify(metadata), vecLit(embedding), createdAtSec]);
+  const res = await pool.query(sql, [summary, fingerprint(summary), JSON.stringify(enrichedMeta), vecLit(embedding), createdAtSec]);
   return res.rowCount > 0;
 }
 

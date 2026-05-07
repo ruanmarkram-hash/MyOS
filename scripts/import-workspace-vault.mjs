@@ -13,13 +13,12 @@ import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import pg from 'pg';
+import { embed, vecLit, EMBED_DIM, EMBED_MODEL_NAME } from './lib/embed.mjs';
 
 const ROOT = '/Users/sc/HQ';
 const VAULT = join(homedir(), 'workspace');
 const CHUNK_CHARS = 4000;           // aim for ~1000 tokens per chunk
 const CHUNK_OVERLAP = 400;
-const EMBED_DIM = 1536;
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const CONCURRENCY = parseInt(process.env.IMPORT_CONCURRENCY || '6', 10);
 
 const SKIP_DIRS = new Set([
@@ -37,7 +36,6 @@ const env = Object.fromEntries(
     .filter((l) => l && !l.startsWith('#') && l.includes('='))
     .map((l) => { const i = l.indexOf('='); return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^["']|["']$/g, '')]; })
 );
-const GEMINI_KEY = env.GOOGLE_API_KEY;
 const PG_URL = env.OB1_SUPABASE_DB_URL;
 
 const pool = new pg.Pool({ connectionString: PG_URL, max: 8 });
@@ -90,42 +88,29 @@ function chunkText(text, path) {
 function fingerprint(text) {
   return createHash('sha256').update(text.toLowerCase().trim().replace(/\s+/g, ' '), 'utf8').digest('hex');
 }
-function vecLit(v) { return '[' + v.join(',') + ']'; }
-
-async function embed(text, retries = 2) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const r = await fetch(`${GEMINI_BASE}/models/gemini-embedding-001:embedContent?key=${GEMINI_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: { parts: [{ text: text.slice(0, 10000) }] }, outputDimensionality: EMBED_DIM }),
-      });
-      if (!r.ok) { if (i === retries - 1) return null; await new Promise((res) => setTimeout(res, 500 * Math.pow(2, i))); continue; }
-      const j = await r.json();
-      const v = j?.embedding?.values;
-      if (Array.isArray(v) && v.length === EMBED_DIM) return v;
-      return null;
-    } catch { if (i === retries - 1) return null; await new Promise((res) => setTimeout(res, 500 * Math.pow(2, i))); }
-  }
-  return null;
-}
 
 async function insertThought({ content, metadata, createdAtSec }) {
   const fp = fingerprint(content);
-  // Pre-check: skip embed call if fingerprint already exists (avoids wasted Gemini spend + rate-limit hits on rerun)
+  // Pre-check: skip embed call if fingerprint already exists (avoids wasted spend + rate-limit hits on rerun)
   const existing = await pool.query('SELECT 1 FROM thoughts WHERE content_fingerprint = $1 LIMIT 1', [fp]);
   if (existing.rowCount > 0) return 'duplicate';
 
   const emb = await embed(content);
   if (!emb) return 'embed_fail';
 
+  const enrichedMeta = {
+    ...metadata,
+    embedding_model: EMBED_MODEL_NAME,
+    embedding_provider: 'llamacpp',
+    embedding_dimensions: EMBED_DIM,
+  };
   const sql = `
     INSERT INTO thoughts (content, content_fingerprint, metadata, embedding, created_at)
     VALUES ($1, $2, $3::jsonb, $4::vector, to_timestamp($5))
     ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL DO NOTHING
     RETURNING id
   `;
-  const res = await pool.query(sql, [content, fp, JSON.stringify(metadata), vecLit(emb), createdAtSec]);
+  const res = await pool.query(sql, [content, fp, JSON.stringify(enrichedMeta), vecLit(emb), createdAtSec]);
   return res.rowCount > 0 ? 'inserted' : 'duplicate';
 }
 

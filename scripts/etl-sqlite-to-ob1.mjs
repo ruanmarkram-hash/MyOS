@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Phase 3 ETL: Copy SQLite memories + conversation_log into OB1 thoughts table.
-// - Embeds content with Gemini (gemini-embedding-001, 1536d)
+// - Embeds content via scripts/lib/embed.mjs (BGE-M3, 1024d, local llama.cpp)
 // - Writes directly to Supabase via pg client (preserves original created_at)
 // - Uses ON CONFLICT (content_fingerprint) to dedupe
 
@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 import pg from 'pg';
+import { embed as embedShared, vecLit, EMBED_DIM, EMBED_MODEL_NAME } from './lib/embed.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const envText = readFileSync(new URL('../.env', import.meta.url), 'utf-8');
@@ -24,13 +25,9 @@ const env = Object.fromEntries(
 
 const DB_PATH = `${ROOT}store/claudeclaw.db`;
 const PG_URL = env.OB1_SUPABASE_DB_URL;
-const GEMINI_KEY = env.GOOGLE_API_KEY;
-const EMBED_DIM = 1536;
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const BATCH = 10;
 
 if (!PG_URL) throw new Error('OB1_SUPABASE_DB_URL not set');
-if (!GEMINI_KEY) throw new Error('GOOGLE_API_KEY not set');
 
 const sqlite = new Database(DB_PATH, { readonly: true });
 const pgClient = new pg.Client({ connectionString: PG_URL });
@@ -42,29 +39,11 @@ function fingerprint(text) {
 }
 
 async function embed(text) {
-  const r = await fetch(
-    `${GEMINI_BASE}/models/gemini-embedding-001:embedContent?key=${GEMINI_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        content: { parts: [{ text }] },
-        outputDimensionality: EMBED_DIM,
-      }),
-    }
-  );
-  if (!r.ok) throw new Error(`embed ${r.status}: ${await r.text().catch(() => '')}`);
-  const j = await r.json();
-  const v = j?.embedding?.values;
-  if (!Array.isArray(v) || v.length !== EMBED_DIM) {
-    throw new Error(`embed shape: len=${v?.length}`);
-  }
+  const v = await embedShared(text, { throwOnFail: true });
   return v;
 }
 
-function vecLiteral(v) {
-  return '[' + v.join(',') + ']';
-}
+const vecLiteral = vecLit;
 
 async function upsertBatch(rows) {
   // rows: [{ content, fingerprint, metadata, embedding, created_at }]
