@@ -200,7 +200,7 @@ export function Reliability() {
                       meta={`${row.agentId} · ${row.attempts} attempts · ${Math.floor(row.ageSeconds / 60)}m old`}
                       detail={row.lastError || row.payloadPreview}
                       tone={row.status === 'dead-lettered' || row.status === 'failed' ? 'failed' : 'medium'}
-                      busy={busy[`outbox-retry-${row.id}`]}
+                      busy={busy[`outbox-retry-${row.id}`] || busy[`outbox-dead-${row.id}`]}
                       actions={[
                         ...(row.canRetry ? [{ label: 'Retry', icon: <RotateCcw size={12} />, onClick: () => act(`outbox-retry-${row.id}`, 'Retrying...', `/api/reliability/outbox/${row.id}/retry`) }] : []),
                         ...(row.canDeadLetter ? [{ label: 'Dead-letter', icon: <XCircle size={12} />, onClick: () => act(`outbox-dead-${row.id}`, 'Dead-lettering...', `/api/reliability/outbox/${row.id}/dead-letter`) }] : []),
