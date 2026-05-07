@@ -52,6 +52,35 @@ scripts/waste-reminder.sh
 start-main.sh
 WARROOM_TEST_PLAN.md
 
+# Working docs / planning artifacts. Keep scratch planning out of the
+# public OS repo even when it is created in the repo root during a sprint.
+/PLAN*.md
+/SHIP*.md
+/TESTING*.md
+/AUDIT*.md
+/REPORT*.md
+/CHECKLIST*.md
+/REDTEAM*.md
+/SMOKE*.md
+/SCRATCH*.md
+/NOTES*.md
+/test_plan.md
+/update_plan.md
+/execute_plan_prompt.md
+/*_tldr.md
+/*_TLDR.md
+/PR[0-9]*_NOTES*.md
+/PR[0-9]*_TESTING*.md
+/docs/*-results.md
+/docs/*-smoke.md
+/docs/redteam-*.md
+/docs/scratch-*.md
+/docs/internal/
+/scripts/diagrams-test.json
+/scripts/diagrams-retry.json
+/scripts/diagrams-fix.json
+/scripts/diagrams-scratch*.json
+
 # War Room dev/test artifacts
 warroom/test-audio*.wav
 warroom/test_harness.py
