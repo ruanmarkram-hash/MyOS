@@ -1640,7 +1640,7 @@ export function updateTaskAfterRun(
   ).run(now, nextRun, result.slice(0, 4000), lastStatus, id);
 }
 
-export function clearScheduledTaskAttention(id: string, result = 'Cleared from Home Needs Attention.'): boolean {
+export function clearScheduledTaskAttention(id: string, result = 'Cleared from Home Needs Attention.', includeRunning = false): boolean {
   const now = Math.floor(Date.now() / 1000);
   const update = db.prepare(
     `UPDATE scheduled_tasks
@@ -1649,8 +1649,8 @@ export function clearScheduledTaskAttention(id: string, result = 'Cleared from H
          last_result = ?,
          last_status = 'success',
          started_at = NULL
-	     WHERE id = ? AND status != 'running'`,
-  ).run(now, result.slice(0, 4000), id);
+	     WHERE id = ? AND (? = 1 OR status != 'running')`,
+  ).run(now, result.slice(0, 4000), id, includeRunning ? 1 : 0);
   return update.changes > 0;
 }
 
@@ -1776,6 +1776,37 @@ export function markAttentionAssigned(id: string, missionId: string, agentId: st
      WHERE id = ?`,
   ).run(missionId, agentId, now, id);
   return getAttentionItem(id);
+}
+
+export function claimOpenAttentionItem(id: string): AttentionItem | null {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare(
+    `UPDATE attention_items
+     SET status = 'assigned', assigned_agent = 'autofix', updated_at = ?, resolved_at = NULL
+     WHERE id = ? AND status = 'open'`,
+  ).run(now, id);
+  if (result.changes === 0) return null;
+  return getAttentionItem(id);
+}
+
+export function releaseAutofixAttentionClaim(id: string): AttentionItem | null {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE attention_items
+     SET status = 'open', assigned_agent = NULL, updated_at = ?
+     WHERE id = ? AND status = 'assigned' AND assigned_agent = 'autofix' AND linked_mission_id IS NULL`,
+  ).run(now, id);
+  return getAttentionItem(id);
+}
+
+export function archiveOpenAttentionItem(id: string): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare(
+    `UPDATE attention_items
+     SET status = 'archived', updated_at = ?, resolved_at = ?
+     WHERE id = ? AND status = 'open'`,
+  ).run(now, now, id);
+  return result.changes > 0;
 }
 
 export function updateAttentionStatus(id: string, status: AttentionItemStatus): AttentionItem | null {

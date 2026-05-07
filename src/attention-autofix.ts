@@ -1,14 +1,24 @@
 import crypto from 'crypto';
 
 import {
+  archiveOpenAttentionItem,
+  claimOpenAttentionItem,
+  clearScheduledTaskAttention,
   createMissionTask,
+  getAllScheduledTasks,
+  getMissionReview,
   getMissionTask,
   listOpenAttentionItems,
   markAttentionAssigned,
+  releaseAutofixAttentionClaim,
   updateAttentionStatus,
+  upsertAttentionItem,
+  upsertMissionReview,
   type AttentionItem,
+  type ScheduledTask,
 } from './db.js';
 import { listAgentIds } from './agent-config.js';
+import { isEnabled } from './kill-switches.js';
 import { logger } from './logger.js';
 
 type AutofixDecision =
@@ -24,6 +34,68 @@ export interface AttentionAutofixSweepResult {
 
 const BUILTIN_AGENTS = new Set(['main', 'charter', 'ember', 'marlow', 'mason', 'warden']);
 const TERMINAL_MISSION_STATUSES = new Set(['completed', 'failed', 'partial', 'cancelled']);
+
+function attentionSourceKey(sourceKind: string, sourceId: string, text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim().toLowerCase();
+  const hash = crypto.createHash('sha1').update(normalized).digest('hex').slice(0, 16);
+  return `${sourceKind}:${sourceId}:${hash}`;
+}
+
+function compactCommandTitle(command: string): string {
+  const cleaned = command.replace(/^python3\s+/, '').replace(/^bash\s+/, '').trim();
+  const parts = cleaned.split('/');
+  const file = parts[parts.length - 1] || cleaned;
+  return file.replace(/\.(py|sh)$/i, '').replace(/[-_]/g, ' ');
+}
+
+function scheduleTitle(prompt: string): string {
+  const firstLine = prompt.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || prompt.trim();
+  const beforeMode = firstLine.split('--- SILENT MODE:')[0].trim();
+  const execute = beforeMode.match(/Execute exactly:\s*(.+)$/i);
+  if (execute?.[1]) return compactCommandTitle(execute[1]);
+  const run = beforeMode.match(/Run:\s*(.+)$/i);
+  if (run?.[1]) return compactCommandTitle(run[1]);
+  return beforeMode.length > 180 ? beforeMode.slice(0, 177) + '...' : beforeMode;
+}
+
+export function syncScheduledAttentionItems(tasks: ScheduledTask[] = getAllScheduledTasks()): void {
+  const now = Math.floor(Date.now() / 1000);
+  const currentSourceKeys = new Set<string>();
+
+  for (const task of tasks) {
+    const isStuckRunning = task.status === 'running' && (task.started_at || 0) < now - 30 * 60;
+    if (isStuckRunning) {
+      const sourceKey = attentionSourceKey('schedule', task.id, `stuck:${task.started_at || 0}`);
+      currentSourceKeys.add(sourceKey);
+      upsertAttentionItem({
+        sourceKind: 'schedule',
+        sourceId: task.id,
+        sourceKey,
+        title: scheduleTitle(task.prompt),
+        detail: `Scheduled job still running after ${Math.floor((now - (task.started_at || now)) / 60)}m`,
+        severity: 'high',
+        href: '/scheduled',
+      });
+    } else if (task.last_status === 'failed' || task.last_status === 'timeout') {
+      const sourceKey = attentionSourceKey('schedule', task.id, `last-status:${task.last_run || 0}:${task.last_status}`);
+      currentSourceKeys.add(sourceKey);
+      upsertAttentionItem({
+        sourceKind: 'schedule',
+        sourceId: task.id,
+        sourceKey,
+        title: scheduleTitle(task.prompt),
+        detail: `Last run ${task.last_status}${task.last_result ? `: ${task.last_result.slice(0, 180)}` : ''}`,
+        severity: 'high',
+        href: '/scheduled',
+      });
+    }
+  }
+
+  for (const stale of listOpenAttentionItems(200)) {
+    if (stale.source_kind !== 'schedule') continue;
+    if (!currentSourceKeys.has(stale.source_key)) updateAttentionStatus(stale.id, 'archived');
+  }
+}
 
 function validAgentIds(): Set<string> {
   try {
@@ -87,7 +159,7 @@ export function classifyAttentionItem(item: AttentionItem): AutofixDecision {
   }
 
   const inferred = inferAgent(text);
-  if (inferred && agents.has(inferred) && (item.source_kind === 'mission' || explicitlyNoRuan(text))) {
+  if (inferred && agents.has(inferred) && (item.source_kind === 'mission' || item.source_kind === 'schedule' || explicitlyNoRuan(text))) {
     return { action: 'route', agentId: inferred, reason: 'agent-owned issue with no human blocker detected' };
   }
 
@@ -126,14 +198,19 @@ function priorityForAttention(item: AttentionItem): number {
 
 export function runAttentionAutofixSweep(limit = 50): AttentionAutofixSweepResult {
   const result: AttentionAutofixSweepResult = { routed: 0, archived: 0, kept: 0 };
+  if (!isEnabled('DASHBOARD_MUTATIONS_ENABLED')) return result;
+  syncScheduledAttentionItems();
 
   for (const item of listOpenAttentionItems(limit)) {
     const decision = classifyAttentionItem(item);
 
     if (decision.action === 'archive') {
-      updateAttentionStatus(item.id, 'archived');
-      result.archived++;
-      logger.info({ attentionId: item.id, reason: decision.reason }, 'attention-autofix: archived item');
+      if (archiveOpenAttentionItem(item.id)) {
+        result.archived++;
+        logger.info({ attentionId: item.id, reason: decision.reason }, 'attention-autofix: archived item');
+      } else {
+        result.kept++;
+      }
       continue;
     }
 
@@ -145,18 +222,52 @@ export function runAttentionAutofixSweep(limit = 50): AttentionAutofixSweepResul
         continue;
       }
 
+      if (item.source_kind === 'mission') {
+        const existingReview = getMissionReview(item.source_id);
+        if (existingReview?.review_status === 'waiting_followup' && existingReview.followup_task_id) {
+          const existingFollowup = getMissionTask(existingReview.followup_task_id);
+          if (existingFollowup && !TERMINAL_MISSION_STATUSES.has(existingFollowup.status)) {
+            markAttentionAssigned(item.id, existingFollowup.id, existingFollowup.assigned_agent ?? decision.agentId);
+            result.routed++;
+            continue;
+          }
+        }
+      }
+
+      const claim = claimOpenAttentionItem(item.id);
+      if (!claim) {
+        result.kept++;
+        continue;
+      }
+
       const missionId = crypto.randomBytes(4).toString('hex');
-      createMissionTask(
-        missionId,
-        missionTitleForAttention(item),
-        missionPromptForAttention(item, decision.reason),
-        decision.agentId,
-        'autofix',
-        priorityForAttention(item),
-      );
-      markAttentionAssigned(item.id, missionId, decision.agentId);
-      result.routed++;
-      logger.info({ attentionId: item.id, missionId, agentId: decision.agentId, reason: decision.reason }, 'attention-autofix: routed item');
+      try {
+        createMissionTask(
+          missionId,
+          missionTitleForAttention(item),
+          missionPromptForAttention(item, decision.reason),
+          decision.agentId,
+          'autofix',
+          priorityForAttention(item),
+        );
+        markAttentionAssigned(item.id, missionId, decision.agentId);
+        if (item.source_kind === 'mission' && getMissionTask(item.source_id)) {
+          upsertMissionReview({
+            taskId: item.source_id,
+            reviewStatus: 'waiting_followup',
+            resolution: 'delegated',
+            followupTaskId: missionId,
+          });
+        }
+        if (item.source_kind === 'schedule') {
+          clearScheduledTaskAttention(item.source_id, `Assigned auto-fix mission ${missionId} from Needs Attention.`, true);
+        }
+        result.routed++;
+        logger.info({ attentionId: item.id, missionId, agentId: decision.agentId, reason: decision.reason }, 'attention-autofix: routed item');
+      } catch (err) {
+        releaseAutofixAttentionClaim(item.id);
+        throw err;
+      }
       continue;
     }
 

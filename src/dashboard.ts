@@ -151,6 +151,7 @@ import { parseSearchText } from './brain/adapter.js';
 import { checkStale, RUNTIME_BUILD_META, RUNTIME_STARTED_AT, shortSha } from './build-meta.js';
 import { computeNextRun } from './scheduler.js';
 import { runAttentionAutofixSweep } from './attention-autofix.js';
+import { isEnabled } from './kill-switches.js';
 
 const MAIN_AGENT_MODEL = 'claude-opus-4-7';
 const DASHBOARD_AUTH_COOKIE = 'claudeclaw_dashboard';
@@ -1997,8 +1998,9 @@ function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[
 }
 
 function durableAttentionToHome(item: AttentionItem) {
+  const scheduleType = item.detail.startsWith('Scheduled job still running') ? 'stuck' : 'last-status';
   return {
-    id: `attention:${item.id}`,
+    id: item.source_kind === 'schedule' ? `schedule:${item.source_id}:${scheduleType}` : `attention:${item.id}`,
     source: item.source_kind,
     severity: item.severity,
     title: item.title,
@@ -2162,9 +2164,11 @@ function completedMissionHasFollowUp(mission: MissionTask, missions: MissionTask
 }
 
 function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
-  syncReportAttentionItems(tasks, missions);
-  syncTerminalMissionAttentionItems(missions);
-  runAttentionAutofixSweep(50);
+  if (isEnabled('DASHBOARD_MUTATIONS_ENABLED')) {
+    syncReportAttentionItems(tasks, missions);
+    syncTerminalMissionAttentionItems(missions);
+    runAttentionAutofixSweep(50);
+  }
   const canonicalFollowUps = canonicalFollowUpIds(missions);
   const items: Array<{
     id: string;
@@ -2213,36 +2217,6 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
         agentId: mission.assigned_agent,
         taskId: mission.id,
         href: '/mission',
-      });
-    }
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  for (const task of tasks) {
-    if (task.status === 'running' && (task.started_at || 0) < now - 30 * 60) {
-      items.push({
-        id: `schedule:${task.id}:stuck`,
-        source: 'schedule',
-        severity: 'high',
-        title: scheduleTitle(task.prompt),
-        detail: `Scheduled job still running after ${Math.floor((now - (task.started_at || now)) / 60)}m`,
-        createdAt: task.started_at || task.created_at,
-        agentId: task.agent_id,
-        taskId: task.id,
-        href: '/scheduled',
-      });
-    }
-    if (task.last_status === 'failed' || task.last_status === 'timeout') {
-      items.push({
-        id: `schedule:${task.id}:last-status`,
-        source: 'schedule',
-        severity: 'high',
-        title: scheduleTitle(task.prompt),
-        detail: `Last run ${task.last_status}${task.last_result ? `: ${task.last_result.slice(0, 180)}` : ''}`,
-        createdAt: task.last_run || task.created_at,
-        agentId: task.agent_id,
-        taskId: task.id,
-        href: '/scheduled',
       });
     }
   }

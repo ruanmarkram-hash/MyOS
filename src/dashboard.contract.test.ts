@@ -17,6 +17,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { _initTestDatabase, _setMissionCompletedAtForTest, cleanupOldMissionTasks, completeMissionTask, createMissionTask, createScheduledTask, getAllScheduledTasks, getAttentionItemBySourceKey, getMissionManifest, getMissionReview, getMissionTask, getTelegramOutboxRow, insertOperationNotification, insertTelegramOutbox, markTaskRunning, markTelegramOutboxDeadLettered, saveStructuredMemory, updateTaskAfterRun, upsertAttentionItem, upsertMissionReview } from './db.js';
+import { runAttentionAutofixSweep } from './attention-autofix.js';
 import { buildDashboardApp, configuredReviewExportEmail, configuredReviewExportFromEmail, createReviewEmailAttachment } from './dashboard.js';
 import type { Hono } from 'hono';
 
@@ -704,6 +705,37 @@ describe('GET /api/home dashboard endpoints', () => {
     ]));
   });
 
+  it('auto-routes terminal mission failures into a linked review follow-up', async () => {
+    createMissionTask('m-autofix-terminal', 'Fix frontend build failure', 'fix build', 'mason', 'dashboard', 8);
+    completeMissionTask('m-autofix-terminal', null, 'failed', 'TypeScript build failed: missing dependency.');
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items.map((item: any) => item.title)).not.toContain('Fix frontend build failure');
+
+    const review = getMissionReview('m-autofix-terminal');
+    expect(review).toMatchObject({
+      review_status: 'waiting_followup',
+      resolution: 'delegated',
+    });
+    expect(review?.followup_task_id).toBeTruthy();
+
+    const followup = getMissionTask(review!.followup_task_id!);
+    expect(followup).toMatchObject({
+      assigned_agent: 'mason',
+      created_by: 'autofix',
+      status: 'queued',
+    });
+    expect(followup?.prompt).toContain('Auto-routed Needs Attention item.');
+    expect(getAttentionItemBySourceKey('mission:m-autofix-terminal:terminal')).toMatchObject({
+      status: 'assigned',
+      linked_mission_id: review?.followup_task_id,
+    });
+
+    await get('/api/home/attention');
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks.filter((task: any) => task.created_by === 'autofix' && task.prompt.includes('m-autofix-terminal'))).toHaveLength(1);
+  });
+
   it('promotes auth and unavailable failures from briefs into durable attention items', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-auth', 'Morning brief', '0 9 * * *', now + 3600, 'main');
@@ -726,7 +758,7 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(body.items.filter((item: any) => item.source === 'brief').every((item: any) => item.id.startsWith('attention:'))).toBe(true);
   });
 
-  it('uses the script filename as the title for failed command schedules', async () => {
+  it('uses the script filename as the auto-routed mission title for failed command schedules', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask(
       'schedule-command-title',
@@ -740,13 +772,61 @@ describe('GET /api/home dashboard endpoints', () => {
     const res = await get('/api/home/attention');
     expect(res.status).toBe(200);
     const body = await jsonOf(res);
-    expect(body.items).toEqual(expect.arrayContaining([
+    expect(body.items.map((item: any) => item.id)).not.toContain('schedule:schedule-command-title:last-status');
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'schedule:schedule-command-title:last-status',
         title: 'route remittances',
-        source: 'schedule',
+        assigned_agent: 'mason',
+        created_by: 'autofix',
       }),
     ]));
+  });
+
+  it('background auto-fix materializes and routes failed command schedules without opening Home first', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask(
+      'schedule-background-command',
+      'Execute exactly: python3 ~/workspace/operations/engine-room/skills/msgraph/route_remittances.py',
+      '*/30 * * * *',
+      now + 3600,
+      'main',
+    );
+    updateTaskAfterRun('schedule-background-command', now + 86400, 'Shell command exit 1', 'failed');
+
+    const result = runAttentionAutofixSweep(50);
+    expect(result.routed).toBe(1);
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'route remittances',
+        assigned_agent: 'mason',
+        created_by: 'autofix',
+      }),
+    ]));
+  });
+
+  it('does not duplicate auto-fix missions when a schedule is stuck with an old failed status', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask(
+      'schedule-stuck-and-failed',
+      'Execute exactly: python3 ~/workspace/operations/engine-room/skills/msgraph/route_remittances.py',
+      '*/30 * * * *',
+      now + 3600,
+      'main',
+    );
+    updateTaskAfterRun('schedule-stuck-and-failed', now + 86400, 'Shell command exit 1', 'failed');
+    markTaskRunning('schedule-stuck-and-failed');
+
+    const result = runAttentionAutofixSweep(50);
+    expect(result.routed).toBe(1);
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks.filter((task: any) => (
+      task.created_by === 'autofix'
+      && task.prompt.includes('schedule-stuck-and-failed')
+    ))).toHaveLength(1);
   });
 
   it('resolves a mission attention item by updating the source mission', async () => {
@@ -794,7 +874,7 @@ describe('GET /api/home dashboard endpoints', () => {
   it('carries steering instructions when assigning a scheduled attention item', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('schedule-steering', 'Run a full workspace health audit', '0 * * * *', now - 3600, 'warden');
-    updateTaskAfterRun('schedule-steering', now + 3600, 'Last run failed: credential drift', 'failed');
+    updateTaskAfterRun('schedule-steering', now + 3600, 'Requires Ruan: yes. Credential drift needs review before retry.', 'failed');
 
     const before = await jsonOf(await get('/api/home/attention'));
     const item = before.items.find((entry: any) => entry.id === 'schedule:schedule-steering:last-status');
