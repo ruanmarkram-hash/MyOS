@@ -17,6 +17,7 @@ vi.mock('./env.js', () => ({
 }));
 
 vi.mock('./config.js', () => ({
+  AGENT_ID: 'main',
   AGENT_MAX_TURNS: 30,
   LLM_PROVIDER: 'claude',
   PROJECT_ROOT: testPaths.projectRoot,
