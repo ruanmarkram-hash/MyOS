@@ -447,6 +447,7 @@ function reviewFileHref(filePath: string): string {
 
 function extractMissionDeliverables(task: MissionTask): ReviewDeliverable[] {
   const text = [task.result || '', task.error || ''].filter(Boolean).join('\n');
+  const manifest = getMissionManifest(task);
   const deliverables: ReviewDeliverable[] = [];
   const seen = new Set<string>();
 
@@ -489,6 +490,11 @@ function extractMissionDeliverables(task: MissionTask): ReviewDeliverable[] {
       sizeBytes: null,
     });
   };
+
+  for (const deliverable of manifest.deliverables) {
+    if (deliverable.kind === 'file') addFile(deliverable.target);
+    else if (deliverable.kind === 'url') addUrl(deliverable.target);
+  }
 
   const sendFileRe = /\[SEND_(?:FILE|PHOTO):([^\]|]+)(?:\|[^\]]*)?\]/g;
   let match: RegExpExecArray | null;
@@ -1921,6 +1927,41 @@ function completedMissionDetail(mission: MissionTask): string {
   return useful.length > 220 ? `${useful.slice(0, 217)}...` : useful;
 }
 
+function terminalMissionAttentionDetail(mission: MissionTask): string {
+  const manifest = getMissionManifest(mission);
+  const blocker = manifest.blockers.find(Boolean);
+  if (blocker) return blocker.length > 700 ? `${blocker.slice(0, 697)}...` : blocker;
+  if (mission.status === 'partial') return manifest.nextAction || 'Mission landed partial work and needs review.';
+  return mission.error || manifest.summary || 'Mission failed and needs triage.';
+}
+
+function syncTerminalMissionAttentionItems(missions: MissionTask[]): void {
+  for (const mission of missions) {
+    if (mission.status !== 'failed' && mission.status !== 'partial') continue;
+    const sourceKey = `mission:${mission.id}:terminal`;
+    const review = getMissionReview(mission.id);
+    if (review && ['archived', 'resolved'].includes(review.review_status)) {
+      const existing = getAttentionItemBySourceKey(sourceKey);
+      if (existing?.status === 'open') updateAttentionStatus(existing.id, 'archived');
+      continue;
+    }
+    if (review?.review_status === 'waiting_followup') {
+      const existing = getAttentionItemBySourceKey(sourceKey);
+      if (existing?.status === 'open') updateAttentionStatus(existing.id, 'assigned');
+      continue;
+    }
+    upsertAttentionItem({
+      sourceKind: 'mission',
+      sourceId: mission.id,
+      sourceKey,
+      title: mission.title,
+      detail: terminalMissionAttentionDetail(mission),
+      severity: mission.status === 'failed' ? 'high' : 'medium',
+      href: `/review?task=${encodeURIComponent(mission.id)}`,
+    });
+  }
+}
+
 function normalizedAttentionTitle(title: string): string {
   return title.replace(/^follow up:\s*/i, '').trim().toLowerCase();
 }
@@ -1968,6 +2009,7 @@ function completedMissionHasFollowUp(mission: MissionTask, missions: MissionTask
 
 function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
   syncReportAttentionItems(tasks, missions);
+  syncTerminalMissionAttentionItems(missions);
   const canonicalFollowUps = canonicalFollowUpIds(missions);
   const items: Array<{
     id: string;
@@ -2003,18 +2045,8 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
       });
     } else if (review && ['archived', 'resolved', 'waiting_followup'].includes(review.review_status)) {
       continue;
-    } else if ((mission.status === 'failed' || mission.status === 'partial') && (mission.completed_at || 0) > Date.now() / 1000 - 8 * 3600) {
-      items.push({
-        id: `mission:${mission.id}:terminal`,
-        source: 'mission',
-        severity: mission.status === 'failed' ? 'high' : 'medium',
-        title: mission.title,
-        detail: mission.status === 'failed' ? (mission.error || 'Mission failed') : 'Mission landed partial work and needs review',
-        createdAt: mission.completed_at || mission.created_at,
-        agentId: mission.assigned_agent,
-        taskId: mission.id,
-        href: `/review?task=${encodeURIComponent(mission.id)}`,
-      });
+    } else if (mission.status === 'failed' || mission.status === 'partial') {
+      continue;
     } else if (completedMissionNeedsAttention(mission, Math.floor(Date.now() / 1000)) && !completedMissionHasFollowUp(mission, missions)) {
       items.push({
         id: `mission:${mission.id}:follow-up`,
@@ -3455,6 +3487,12 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
     let body: { format?: 'docx' | 'html' } = {};
     try { body = await c.req.json(); } catch { body = {}; }
+    if (!selectBestEmailDeliverable(task)) {
+      return c.json({
+        ok: false,
+        error: 'No actual deliverable file was found for this mission. The mission report remains visible in Review Inbox, but Email deliverable only sends a real worked file.',
+      }, 400);
+    }
     const exported = await createReviewEmailAttachment(task, body.format === 'html' ? 'html' : 'docx');
     try {
       await sendMissionTaskExportEmail(task, ownerEmail, fromEmail, exported);

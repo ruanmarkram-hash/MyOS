@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { _initTestDatabase, completeMissionTask, createMissionTask, createScheduledTask, getMissionManifest, getMissionReview, getMissionTask, saveStructuredMemory, updateTaskAfterRun } from './db.js';
+import { _initTestDatabase, _setMissionCompletedAtForTest, completeMissionTask, createMissionTask, createScheduledTask, getMissionManifest, getMissionReview, getMissionTask, saveStructuredMemory, updateTaskAfterRun } from './db.js';
 import { buildDashboardApp, configuredReviewExportEmail, configuredReviewExportFromEmail, createReviewEmailAttachment } from './dashboard.js';
 import type { Hono } from 'hono';
 
@@ -958,10 +958,54 @@ describe('GET /api/review/inbox', () => {
     const attentionBody = await jsonOf(await get('/api/home/attention'));
     expect(attentionBody.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'mission:m-loop-failed:terminal',
+        id: expect.stringMatching(/^attention:/),
+        source: 'mission',
+        title: 'Failed loop smoke',
         href: '/review?task=m-loop-failed',
       }),
     ]));
+  });
+
+  it('keeps old failed and partial missions in durable Needs Attention until reviewed', async () => {
+    const old = Math.floor(Date.now() / 1000) - 48 * 3600;
+    createMissionTask('m-old-failed-loop', 'Old failed loop', 'fail', 'mason', 'main', 8);
+    completeMissionTask('m-old-failed-loop', null, 'failed', 'Old failure still needs triage.');
+    _setMissionCompletedAtForTest('m-old-failed-loop', old, 'failed');
+
+    createMissionTask('m-old-partial-loop', 'Old partial loop', 'partial', 'mason', 'main', 7);
+    completeMissionTask('m-old-partial-loop', 'Partial work landed. Blocked: needs exact source file.', 'partial');
+    _setMissionCompletedAtForTest('m-old-partial-loop', old, 'partial');
+
+    const attentionBody = await jsonOf(await get('/api/home/attention'));
+    expect(attentionBody.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: expect.stringMatching(/^attention:/),
+        source: 'mission',
+        title: 'Old failed loop',
+        severity: 'high',
+        detail: expect.stringContaining('Old failure still needs triage'),
+        href: '/review?task=m-old-failed-loop',
+      }),
+      expect.objectContaining({
+        id: expect.stringMatching(/^attention:/),
+        source: 'mission',
+        title: 'Old partial loop',
+        severity: 'medium',
+        href: '/review?task=m-old-partial-loop',
+      }),
+    ]));
+  });
+
+  it('archives terminal mission attention when the source review is resolved', async () => {
+    createMissionTask('m-resolved-failed-loop', 'Resolved failed loop', 'fail', 'mason', 'main', 8);
+    completeMissionTask('m-resolved-failed-loop', null, 'failed', 'Transient failure.');
+
+    const before = await jsonOf(await get('/api/home/attention'));
+    expect(before.items.map((item: any) => item.title)).toContain('Resolved failed loop');
+
+    await app.request('/api/review/tasks/m-resolved-failed-loop/archive' + Q, { method: 'POST' });
+    const after = await jsonOf(await get('/api/home/attention'));
+    expect(after.items.map((item: any) => item.title)).not.toContain('Resolved failed loop');
   });
 
   it('returns completed mission deliverables for review', async () => {
@@ -1343,8 +1387,9 @@ describe('GET /api/review/inbox', () => {
     const body = await jsonOf(res);
     expect(body.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'mission:m-home-failed-visible:terminal',
+        id: expect.stringMatching(/^attention:/),
         source: 'mission',
+        title: 'Visible failed mission',
         severity: 'high',
         href: '/review?task=m-home-failed-visible',
       }),
@@ -1452,6 +1497,68 @@ describe('POST /api/review/tasks/:id/email', () => {
       format: 'pdf',
       originalPath: resolvedDeliverablePath,
     });
+  });
+
+  it('uses MISSION_RESULT_JSON deliverables as the source of truth for email attachments', async () => {
+    const deliverablePath = '/tmp/claudeclaw-contract-json-deliverable.docx';
+    fs.writeFileSync(deliverablePath, 'fake docx payload', { mode: 0o600 });
+    createMissionTask('m-review-json-file', 'JSON file deliverable', 'produce output', 'charter', 'dashboard', 6);
+    completeMissionTask(
+      'm-review-json-file',
+      [
+        'Mission report summary only.',
+        '```json',
+        JSON.stringify({
+          status: 'completed',
+          summary: 'Document produced.',
+          deliverables: [{ kind: 'file', target: deliverablePath, label: 'Worked document' }],
+          source_files: [],
+          blockers: [],
+          next_action: 'Review the document.',
+          follow_up_needed: false,
+          review_required: true,
+        }),
+        '```',
+      ].join('\n'),
+      'completed',
+    );
+    const task = getMissionTask('m-review-json-file')!;
+
+    const attachment = await createReviewEmailAttachment(task, 'docx');
+    expect(attachment).toMatchObject({
+      source: 'deliverable',
+      path: fs.realpathSync(deliverablePath),
+      originalPath: fs.realpathSync(deliverablePath),
+      format: 'docx',
+    });
+  });
+
+  it('refuses Email deliverable when no real deliverable file exists', async () => {
+    createMissionTask('m-review-no-file-email', 'No file email', 'produce output', 'mason', 'dashboard', 6);
+    completeMissionTask('m-review-no-file-email', 'Completed cleanly. No deliverable and no human action required.', 'completed');
+
+    const prevTo = process.env.REVIEW_EXPORT_EMAIL;
+    const prevFrom = process.env.REVIEW_EXPORT_SHARED_MAILBOX;
+    process.env.REVIEW_EXPORT_EMAIL = 'work@example.com';
+    process.env.REVIEW_EXPORT_SHARED_MAILBOX = 'sage@example.com';
+    try {
+      const res = await app.request('/api/review/tasks/m-review-no-file-email/email' + Q, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ format: 'docx' }),
+      });
+      expect(res.status).toBe(400);
+      const body = await jsonOf(res);
+      expect(body).toMatchObject({
+        ok: false,
+        error: expect.stringContaining('No actual deliverable file'),
+      });
+    } finally {
+      if (prevTo === undefined) delete process.env.REVIEW_EXPORT_EMAIL;
+      else process.env.REVIEW_EXPORT_EMAIL = prevTo;
+      if (prevFrom === undefined) delete process.env.REVIEW_EXPORT_SHARED_MAILBOX;
+      else process.env.REVIEW_EXPORT_SHARED_MAILBOX = prevFrom;
+    }
   });
 
   it('can extract and email a deliverable path that contains spaces', async () => {
