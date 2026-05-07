@@ -35,6 +35,15 @@ export class ApiError extends Error {
   }
 }
 
+export function apiErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const body = err.body as any;
+    return body?.error || body?.message || err.message;
+  }
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 export async function apiGet<T = unknown>(path: string): Promise<T> {
   const res = await fetch(withToken(path), { method: 'GET' });
   if (!res.ok) {

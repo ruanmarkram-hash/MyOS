@@ -5,10 +5,12 @@ import { PageHeader } from '@/components/PageHeader';
 import { Pill, StatusDot } from '@/components/Pill';
 import { PageState } from '@/components/PageState';
 import { Modal, Drawer } from '@/components/Modal';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { useFetch } from '@/lib/useFetch';
-import { apiPost, apiPatch, apiDelete, apiGet } from '@/lib/api';
+import { apiErrorMessage, apiPost, apiPatch, apiDelete, apiGet } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/format';
+import { pushToast } from '@/lib/toasts';
 
 interface MissionTask {
   id: string;
@@ -79,11 +81,14 @@ export function MissionControl() {
       const res = await apiPost<{ assigned: number }>('/api/mission/tasks/auto-assign-all');
       tasks.refresh();
       if (typeof res?.assigned === 'number') {
-        // Tiny inline feedback; toast system is a follow-up.
-        console.info(`Auto-assigned ${res.assigned} task${res.assigned === 1 ? '' : 's'}`);
+        pushToast({
+          tone: 'success',
+          title: 'Auto-assignment complete',
+          description: `${res.assigned} task${res.assigned === 1 ? '' : 's'} assigned.`,
+        });
       }
     } catch (err: any) {
-      alert('Auto-assign failed: ' + (err?.message || err));
+      pushToast({ tone: 'error', title: 'Auto-assign failed', description: apiErrorMessage(err) });
     } finally { setBulkAssigning(false); }
   }
 
@@ -245,7 +250,16 @@ function MobileMissionView({
           {filter === 'dispatch' && inbox.length > 0 && (
             <button
               type="button"
-              onClick={() => void apiPost('/api/mission/tasks/auto-assign-all').then(onChange).catch((err) => alert('Auto-assign failed: ' + (err?.message || err)))}
+              onClick={() => void apiPost<{ assigned: number }>('/api/mission/tasks/auto-assign-all')
+                .then((res) => {
+                  pushToast({
+                    tone: 'success',
+                    title: 'Auto-assignment complete',
+                    description: `${res.assigned} task${res.assigned === 1 ? '' : 's'} assigned.`,
+                  });
+                  onChange();
+                })
+                .catch((err) => pushToast({ tone: 'error', title: 'Auto-assign failed', description: apiErrorMessage(err) }))}
               class="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]"
             >
               <Wand2 size={12} /> Auto all
@@ -327,9 +341,10 @@ function AgentColumn({ agent, tasks, agents, onChange, navigate }: { agent: Agen
     try {
       const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${taskId}`, { assigned_agent: agent.id });
       if (!result.ok) throw new Error('Task is running or no longer exists');
+      pushToast({ tone: 'success', title: 'Task assigned', description: `Moved to ${agent.name || agent.id}.` });
       onChange();
     } catch (err: any) {
-      alert('Reassign failed: ' + (err?.message || err));
+      pushToast({ tone: 'error', title: 'Reassign failed', description: apiErrorMessage(err) });
     }
   }
 
@@ -384,6 +399,7 @@ function InboxCard({
   const [busy, setBusy] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [instruction, setInstruction] = useState('');
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   async function autoAssign() {
     setBusy('assign');
@@ -393,9 +409,10 @@ function InboxCard({
       }
       await apiPost(`/api/mission/tasks/${task.id}/auto-assign`);
       setInstruction('');
+      pushToast({ tone: 'success', title: 'Task assigned', description: 'Auto-assignment queued.' });
       onChange();
     }
-    catch (err: any) { alert('Auto-assign failed: ' + (err?.message || err)); }
+    catch (err: any) { pushToast({ tone: 'error', title: 'Auto-assign failed', description: apiErrorMessage(err) }); }
     finally { setBusy(null); }
   }
 
@@ -404,9 +421,10 @@ function InboxCard({
     try {
       await apiPatch(`/api/mission/tasks/${task.id}`, { assigned_agent: agentId, instruction: instruction.trim() || undefined });
       setInstruction('');
+      pushToast({ tone: 'success', title: 'Task assigned', description: `Moved to ${agentId}.` });
       onChange();
     }
-    catch (err: any) { alert('Assign failed: ' + (err?.message || err)); }
+    catch (err: any) { pushToast({ tone: 'error', title: 'Assign failed', description: apiErrorMessage(err) }); }
     finally { setBusy(null); }
   }
 
@@ -416,32 +434,37 @@ function InboxCard({
     try {
       await apiPatch(`/api/mission/tasks/${task.id}`, { instruction: instruction.trim() });
       setInstruction('');
+      pushToast({ tone: 'success', title: 'Instruction saved' });
       onChange();
     } catch (err: any) {
-      alert('Instruction failed: ' + (err?.message || err));
+      pushToast({ tone: 'error', title: 'Instruction failed', description: apiErrorMessage(err) });
     } finally {
       setBusy(null);
     }
   }
 
   async function remove() {
-    if (!confirm('Delete this task?')) return;
     setBusy('delete');
-    try { await apiDelete(`/api/mission/tasks/${task.id}`); onChange(); }
-    catch (err: any) { alert('Delete failed: ' + (err?.message || err)); }
+    try {
+      await apiDelete(`/api/mission/tasks/${task.id}`);
+      pushToast({ tone: 'success', title: 'Task deleted' });
+      onChange();
+    }
+    catch (err: any) { pushToast({ tone: 'error', title: 'Delete failed', description: apiErrorMessage(err) }); }
     finally { setBusy(null); }
   }
 
   return (
-    <div
-      draggable
-      onDragStart={(e) => { e.dataTransfer?.setData('text/plain', task.id); onDragStart(); }}
-      onDragEnd={onDragEnd}
-      class={[
-        'bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md p-2.5 transition-all',
-        isDragging ? 'opacity-40' : 'hover:border-[var(--color-border-strong)] cursor-grab',
-      ].join(' ')}
-    >
+    <>
+      <div
+        draggable
+        onDragStart={(e) => { e.dataTransfer?.setData('text/plain', task.id); onDragStart(); }}
+        onDragEnd={onDragEnd}
+        class={[
+          'bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md p-2.5 transition-all',
+          isDragging ? 'opacity-40' : 'hover:border-[var(--color-border-strong)] cursor-grab',
+        ].join(' ')}
+      >
       <div class="flex items-center gap-1.5 mb-1">
         <Pill tone="neutral">unassigned</Pill>
         <span class="ml-auto text-[10px] text-[var(--color-text-faint)] tabular-nums">
@@ -501,7 +524,7 @@ function InboxCard({
         </select>
         <button
           type="button"
-          onClick={remove}
+          onClick={() => setDeleteOpen(true)}
           disabled={busy !== null}
           class="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-status-failed)] transition-colors disabled:opacity-40"
           title="Delete"
@@ -509,7 +532,18 @@ function InboxCard({
           <Trash2 size={11} />
         </button>
       </div>
-    </div>
+      </div>
+      <ConfirmModal
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={() => void remove()}
+        title="Delete mission task?"
+        body={task.title}
+        detail="Only terminal or cancelled tasks can be deleted. Active tasks will stay in place."
+        confirmLabel="Delete"
+        destructive
+      />
+    </>
   );
 }
 
@@ -517,21 +551,29 @@ function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; age
   const [busy, setBusy] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [instruction, setInstruction] = useState('');
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const priorityTone = task.priority >= 7 ? 'high' : task.priority >= 4 ? 'medium' : 'low';
   const draggable = task.status !== 'running';
 
   async function cancel() {
     setBusy('cancel');
-    try { await apiPost(`/api/mission/tasks/${task.id}/cancel`); onChange(); }
-    catch (err: any) { alert('Cancel failed: ' + (err?.message || err)); }
+    try {
+      await apiPost(`/api/mission/tasks/${task.id}/cancel`);
+      pushToast({ tone: 'success', title: 'Task cancelled' });
+      onChange();
+    }
+    catch (err: any) { pushToast({ tone: 'error', title: 'Cancel failed', description: apiErrorMessage(err) }); }
     finally { setBusy(null); }
   }
 
   async function remove() {
-    if (!confirm('Delete this task?')) return;
     setBusy('delete');
-    try { await apiDelete(`/api/mission/tasks/${task.id}`); onChange(); }
-    catch (err: any) { alert('Delete failed: ' + (err?.message || err)); }
+    try {
+      await apiDelete(`/api/mission/tasks/${task.id}`);
+      pushToast({ tone: 'success', title: 'Task deleted' });
+      onChange();
+    }
+    catch (err: any) { pushToast({ tone: 'error', title: 'Delete failed', description: apiErrorMessage(err) }); }
     finally { setBusy(null); }
   }
 
@@ -542,9 +584,10 @@ function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; age
       const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { assigned_agent: agentId, instruction: instruction.trim() || undefined });
       if (!result.ok) throw new Error('Task is running or no longer exists');
       setInstruction('');
+      pushToast({ tone: 'success', title: 'Task reassigned', description: `Moved to ${agentId}.` });
       onChange();
     } catch (err: any) {
-      alert('Reassign failed: ' + (err?.message || err));
+      pushToast({ tone: 'error', title: 'Reassign failed', description: apiErrorMessage(err) });
     } finally {
       setBusy(null);
     }
@@ -557,25 +600,27 @@ function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; age
       const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { instruction: instruction.trim() });
       if (!result.ok) throw new Error('Task is running or no longer exists');
       setInstruction('');
+      pushToast({ tone: 'success', title: 'Instruction saved' });
       onChange();
     } catch (err: any) {
-      alert('Instruction failed: ' + (err?.message || err));
+      pushToast({ tone: 'error', title: 'Instruction failed', description: apiErrorMessage(err) });
     } finally {
       setBusy(null);
     }
   }
 
   return (
-    <div
-      draggable={draggable}
-      onDragStart={(e) => { if (draggable) e.dataTransfer?.setData('text/plain', task.id); }}
-      onClick={() => setExpanded((v) => !v)}
-      class={[
-        'bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md p-2.5 transition-colors',
-        draggable ? 'cursor-grab' : 'cursor-pointer',
-        'hover:border-[var(--color-border-strong)]',
-      ].join(' ')}
-    >
+    <>
+      <div
+        draggable={draggable}
+        onDragStart={(e) => { if (draggable) e.dataTransfer?.setData('text/plain', task.id); }}
+        onClick={() => setExpanded((v) => !v)}
+        class={[
+          'bg-[var(--color-elevated)] border border-[var(--color-border)] rounded-md p-2.5 transition-colors',
+          draggable ? 'cursor-grab' : 'cursor-pointer',
+          'hover:border-[var(--color-border-strong)]',
+        ].join(' ')}
+      >
       <div class="flex items-center gap-1.5 mb-1">
         <StatusDot tone={task.status as any} />
         <span class="text-[10px] text-[var(--color-text-faint)] tabular-nums uppercase tracking-wider">
@@ -631,7 +676,7 @@ function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; age
           {TERMINAL.includes(task.status) && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); remove(); }}
+              onClick={(e) => { e.stopPropagation(); setDeleteOpen(true); }}
               disabled={busy !== null}
               class="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-status-failed)] transition-colors disabled:opacity-40"
               title="Delete"
@@ -680,7 +725,18 @@ function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; age
           {task.error}
         </div>
       )}
-    </div>
+      </div>
+      <ConfirmModal
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={() => void remove()}
+        title="Delete mission task?"
+        body={task.title}
+        detail="This archives linked review and attention state when the task is safe to delete."
+        confirmLabel="Delete"
+        destructive
+      />
+    </>
   );
 }
 
@@ -697,9 +753,10 @@ function MobileTaskRow({ task, agents, onChange, navigate }: { task: MissionTask
       const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { assigned_agent: agentId, instruction: instruction.trim() || undefined });
       if (!result.ok) throw new Error('Task is running or no longer exists');
       setInstruction('');
+      pushToast({ tone: 'success', title: 'Task assigned', description: `Moved to ${agentId}.` });
       onChange();
     } catch (err: any) {
-      alert('Assign failed: ' + (err?.message || err));
+      pushToast({ tone: 'error', title: 'Assign failed', description: apiErrorMessage(err) });
     } finally {
       setBusy(null);
     }
@@ -713,9 +770,10 @@ function MobileTaskRow({ task, agents, onChange, navigate }: { task: MissionTask
       }
       await apiPost(`/api/mission/tasks/${task.id}/auto-assign`);
       setInstruction('');
+      pushToast({ tone: 'success', title: 'Task assigned', description: 'Auto-assignment queued.' });
       onChange();
     } catch (err: any) {
-      alert('Auto-assign failed: ' + (err?.message || err));
+      pushToast({ tone: 'error', title: 'Auto-assign failed', description: apiErrorMessage(err) });
     } finally {
       setBusy(null);
     }
@@ -728,9 +786,10 @@ function MobileTaskRow({ task, agents, onChange, navigate }: { task: MissionTask
       const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { instruction: instruction.trim() });
       if (!result.ok) throw new Error('Task is running or no longer exists');
       setInstruction('');
+      pushToast({ tone: 'success', title: 'Instruction saved' });
       onChange();
     } catch (err: any) {
-      alert('Instruction failed: ' + (err?.message || err));
+      pushToast({ tone: 'error', title: 'Instruction failed', description: apiErrorMessage(err) });
     } finally {
       setBusy(null);
     }
@@ -740,9 +799,10 @@ function MobileTaskRow({ task, agents, onChange, navigate }: { task: MissionTask
     setBusy('cancel');
     try {
       await apiPost(`/api/mission/tasks/${task.id}/cancel`);
+      pushToast({ tone: 'success', title: 'Task cancelled' });
       onChange();
     } catch (err: any) {
-      alert('Cancel failed: ' + (err?.message || err));
+      pushToast({ tone: 'error', title: 'Cancel failed', description: apiErrorMessage(err) });
     } finally {
       setBusy(null);
     }

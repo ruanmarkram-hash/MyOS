@@ -169,6 +169,17 @@ input, textarea, select {
     display: flex;
   }
 
+  .toast-stack {
+    right: 0.75rem;
+    bottom: calc(4.75rem + env(safe-area-inset-bottom));
+    left: 0.75rem;
+    max-width: none;
+  }
+
+  .toast-stack > * {
+    width: 100%;
+  }
+
   .app-main {
     padding-top: 3rem;
     padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));

@@ -1,6 +1,7 @@
 import { Route, Switch, Redirect, Router } from 'wouter-preact';
 import { Sidebar } from '@/components/Sidebar';
 import { CommandPalette } from '@/components/CommandPalette';
+import { ToastStack } from '@/components/ToastStack';
 import { Placeholder } from '@/pages/Placeholder';
 import { HomeDashboard } from '@/pages/HomeDashboard';
 import { MissionControl } from '@/pages/MissionControl';
@@ -57,6 +58,7 @@ export function App() {
           </Switch>
         </main>
         <CommandPalette />
+        <ToastStack />
       </div>
     </Router>
   );
