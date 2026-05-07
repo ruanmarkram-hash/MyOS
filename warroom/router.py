@@ -55,11 +55,16 @@ def _load_agent_names() -> set[str]:
 # Agent identifiers that match the configured ClaudeClaw agents.
 AGENT_NAMES = _load_agent_names()
 
-# Phrases that trigger a broadcast to all agents
-BROADCAST_TRIGGERS = {
-    "everyone", "all", "team", "standup",
-    "status update", "status report",
-}
+# Phrases that deliberately trigger a broadcast to all agents. Keep these
+# command-shaped. Plain words like "everyone", "all", or "team" are too broad
+# in natural speech and caused normal questions such as "does everyone speak?"
+# to fan out to the whole room.
+BROADCAST_PATTERNS = [
+    r"^\s*everyone[,:\s]+(?:respond|answer|weigh in|give me|status)\b",
+    r"^\s*all\s+agents[,:\s]+(?:respond|answer|weigh in|status)\b",
+    r"^\s*team[,:\s]+(?:status|standup|round|respond|weigh in)\b",
+    r"\b(?:broadcast to everyone|ask everyone|roundtable|round table|standup|status report)\b",
+]
 
 # Common casual prefixes people use before an agent name
 _GREETING_PREFIXES = r"(?:hey|yo|ok|okay|alright)?\s*"
@@ -70,11 +75,8 @@ _agent_pattern = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-# Build a pattern for broadcast triggers
-_broadcast_pattern = re.compile(
-    rf"\b({'|'.join(BROADCAST_TRIGGERS)})\b",
-    re.IGNORECASE,
-)
+# Build a pattern for broadcast commands
+_broadcast_pattern = re.compile("|".join(BROADCAST_PATTERNS), re.IGNORECASE)
 
 
 @dataclass
@@ -166,7 +168,7 @@ class AgentRouter(FrameProcessor):
         if not text:
             return
 
-        # Check for broadcast triggers first
+        # Check for deliberate broadcast commands first.
         if _broadcast_pattern.search(text):
             cleaned = _broadcast_pattern.sub("", text).strip(" ,:")
             message = cleaned if cleaned else text

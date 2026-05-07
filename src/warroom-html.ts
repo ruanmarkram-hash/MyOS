@@ -1117,6 +1117,14 @@ function handleServerMessage(msg) {
     // on version. Accept both.
     var data = msg.data || msg;
     if (!data || typeof data !== 'object') return;
+    if (data.event === 'agent_response') {
+      var responseAgent = data.agent || 'main';
+      var responseText = typeof data.text === 'string' ? data.text : '';
+      if (!responseText.trim()) return;
+      addTranscriptEntry(AGENT_LABELS[responseAgent] || responseAgent, responseText, responseAgent);
+      return;
+    }
+
     if (data.event !== 'agent_selected') return;
     var agent = data.agent;
     if (!agent) return;

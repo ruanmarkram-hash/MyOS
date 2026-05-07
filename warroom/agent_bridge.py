@@ -14,9 +14,10 @@ import asyncio
 import json
 import logging
 import os
+import uuid
 from typing import Optional
 
-from pipecat.frames.frames import TextFrame, TTSUpdateSettingsFrame
+from pipecat.frames.frames import OutputTransportMessageUrgentFrame, TextFrame, TTSUpdateSettingsFrame
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 
 from config import PROJECT_ROOT, AGENT_VOICES, DEFAULT_AGENT
@@ -118,7 +119,27 @@ class ClaudeAgentBridge(FrameProcessor):
             ))
             self._current_voice = voice_id
 
+        await self._emit_transcript_event(agent_id, text)
         await self.push_frame(TextFrame(text=text))
+
+    async def _emit_transcript_event(self, agent_id: str, text: str):
+        """Send spoken agent text to the browser transcript.
+
+        The WebSocket transport only turns audio into playback. TextFrame is
+        consumed by TTS and does not automatically surface in the browser's
+        onBotTranscript callback, so send an explicit RTVI-style server message
+        before the audio starts.
+        """
+        await self.push_frame(OutputTransportMessageUrgentFrame(message={
+            "label": "rtvi-ai",
+            "type": "server-message",
+            "id": str(uuid.uuid4()),
+            "data": {
+                "event": "agent_response",
+                "agent": agent_id,
+                "text": text,
+            },
+        }))
 
     async def _call_agent(self, agent_id: str, message: str) -> Optional[str]:
         """Call the Node.js voice bridge subprocess for the given agent.
