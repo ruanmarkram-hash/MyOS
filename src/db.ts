@@ -1512,6 +1512,34 @@ export function updateScheduledTaskModel(id: string, model: string | null): void
   db.prepare(`UPDATE scheduled_tasks SET model = ? WHERE id = ?`).run(model, id);
 }
 
+export function updateScheduledTask(
+  id: string,
+  patch: { prompt?: string; schedule?: string; nextRun?: number; agentId?: string },
+): ScheduledTask | null {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if (patch.prompt !== undefined) {
+    sets.push('prompt = ?');
+    values.push(patch.prompt);
+  }
+  if (patch.schedule !== undefined) {
+    sets.push('schedule = ?');
+    values.push(patch.schedule);
+  }
+  if (patch.nextRun !== undefined) {
+    sets.push('next_run = ?');
+    values.push(patch.nextRun);
+  }
+  if (patch.agentId !== undefined) {
+    sets.push('agent_id = ?');
+    values.push(patch.agentId);
+  }
+  if (sets.length > 0) {
+    db.prepare(`UPDATE scheduled_tasks SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+  }
+  return db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as ScheduledTask | undefined || null;
+}
+
 export function getDueTasks(agentId = 'main'): ScheduledTask[] {
   const now = Math.floor(Date.now() / 1000);
   return db

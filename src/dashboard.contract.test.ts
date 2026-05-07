@@ -1014,6 +1014,41 @@ describe('GET /api/tasks (scheduled)', () => {
     const body = await jsonOf(res);
     expect(body).toMatchObject({ tasks: expect.any(Array) });
   });
+
+  it('updates scheduled task prompt, cron, and agent assignment', async () => {
+    createScheduledTask('sched-edit-contract', 'Old prompt', '0 9 * * *', 1000, 'main');
+    const res = await app.request('/api/tasks/sched-edit-contract' + Q, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        prompt: 'Updated prompt',
+        schedule: '0 8 * * 1-5',
+        agent_id: 'main',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.task).toMatchObject({
+      id: 'sched-edit-contract',
+      prompt: 'Updated prompt',
+      schedule: '0 8 * * 1-5',
+      agent_id: 'main',
+    });
+    const saved = getAllScheduledTasks().find((task) => task.id === 'sched-edit-contract');
+    expect(saved?.prompt).toBe('Updated prompt');
+    expect(saved?.next_run).toBeGreaterThan(1000);
+  });
+
+  it('rejects invalid scheduled task cron edits', async () => {
+    createScheduledTask('sched-bad-cron-contract', 'Prompt', '0 9 * * *', 1000, 'main');
+    const res = await app.request('/api/tasks/sched-bad-cron-contract' + Q, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ schedule: 'bad cron' }),
+    });
+    expect(res.status).toBe(400);
+    expect(await jsonOf(res)).toMatchObject({ ok: false });
+  });
 });
 
 describe('GET /api/mission/tasks', () => {

@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import {
   getAllScheduledTasks,
   deleteScheduledTask,
+  updateScheduledTask,
   pauseScheduledTask,
   resumeScheduledTask,
   clearScheduledTaskAttention,
@@ -138,6 +139,7 @@ import {
 } from './brain/client.js';
 import { parseSearchText } from './brain/adapter.js';
 import { checkStale, RUNTIME_BUILD_META, RUNTIME_STARTED_AT, shortSha } from './build-meta.js';
+import { computeNextRun } from './scheduler.js';
 
 const MAIN_AGENT_MODEL = 'claude-opus-4-7';
 const DASHBOARD_AUTH_COOKIE = 'claudeclaw_dashboard';
@@ -3291,6 +3293,44 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const id = c.req.param('id');
     deleteScheduledTask(id);
     return c.json({ ok: true });
+  });
+
+  app.patch('/api/tasks/:id', async (c) => {
+    const id = c.req.param('id');
+    const existing = getAllScheduledTasks().find((task) => task.id === id);
+    if (!existing) return c.json({ ok: false, error: 'Scheduled task not found.' }, 404);
+    let body: { prompt?: unknown; schedule?: unknown; agent_id?: unknown } = {};
+    try { body = await c.req.json(); } catch {}
+
+    const patch: { prompt?: string; schedule?: string; nextRun?: number; agentId?: string } = {};
+    if (typeof body.prompt === 'string') {
+      const prompt = body.prompt.trim();
+      if (!prompt) return c.json({ ok: false, error: 'Prompt cannot be empty.' }, 400);
+      patch.prompt = prompt;
+    }
+    if (typeof body.schedule === 'string') {
+      const schedule = body.schedule.trim();
+      if (!schedule) return c.json({ ok: false, error: 'Schedule cannot be empty.' }, 400);
+      if (schedule !== existing.schedule) {
+        try {
+          patch.nextRun = computeNextRun(schedule);
+        } catch (err: any) {
+          return c.json({ ok: false, error: 'Invalid cron: ' + (err?.message || String(err)) }, 400);
+        }
+      }
+      patch.schedule = schedule;
+    }
+    if (typeof body.agent_id === 'string') {
+      const agentId = body.agent_id.trim();
+      const validAgents = ['main', ...listAgentIds()];
+      if (!validAgents.includes(agentId)) {
+        return c.json({ ok: false, error: `Unknown agent: ${agentId}. Valid: ${validAgents.join(', ')}` }, 400);
+      }
+      patch.agentId = agentId;
+    }
+
+    const task = updateScheduledTask(id, patch);
+    return c.json({ ok: true, task });
   });
 
   // Pause a scheduled task
