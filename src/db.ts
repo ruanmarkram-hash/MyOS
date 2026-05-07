@@ -1572,7 +1572,7 @@ export function clearScheduledTaskAttention(id: string, result = 'Cleared from H
          last_result = ?,
          last_status = 'success',
          started_at = NULL
-     WHERE id = ?`,
+	     WHERE id = ? AND status != 'running'`,
   ).run(now, result.slice(0, 4000), id);
   return update.changes > 0;
 }

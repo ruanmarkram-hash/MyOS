@@ -381,6 +381,20 @@ describe('GET /api/reliability/status', () => {
     expect(dead.status).toBe(200);
     expect(getTelegramOutboxRow(pendingId)?.status).toBe('dead-lettered');
   });
+
+  it('does not clear a failed schedule row while a later run is active', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('rel-running-failed-schedule', 'Run failed then running schedule', '* * * * *', now + 3600, 'warden');
+    updateTaskAfterRun('rel-running-failed-schedule', now + 3600, 'previous failure', 'failed');
+    markTaskRunning('rel-running-failed-schedule');
+
+    const clear = await app.request('/api/reliability/schedules/rel-running-failed-schedule/clear-failure' + Q, { method: 'POST' });
+    expect(clear.status).toBe(200);
+    expect(await jsonOf(clear)).toMatchObject({ ok: false, cleared: false });
+    const task = getAllScheduledTasks().find((row) => row.id === 'rel-running-failed-schedule');
+    expect(task?.status).toBe('running');
+    expect(task?.last_status).toBe('failed');
+  });
 });
 
 describe('GET /api/info', () => {

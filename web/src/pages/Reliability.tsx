@@ -308,13 +308,19 @@ function IssueLine({ issue }: { issue: ReliabilityIssue }) {
 }
 
 function SectionLines({ children, empty }: { children: ComponentChildren; empty: string }) {
-  const rows = Array.isArray(children) ? children.filter(Boolean) : children ? [children] : [];
+  const rows = flattenChildren(children).filter(Boolean);
   if (rows.length === 0) return <div class="text-[12px] text-[var(--color-text-muted)]">{empty}</div>;
   return (
     <div class="space-y-2">
       {rows}
     </div>
   );
+}
+
+function flattenChildren(children: ComponentChildren): ComponentChildren[] {
+  if (children == null || children === false) return [];
+  if (Array.isArray(children)) return children.flatMap((child) => flattenChildren(child));
+  return [children];
 }
 
 function ActionRow({
