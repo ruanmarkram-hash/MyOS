@@ -35,8 +35,25 @@ logger = logging.getLogger("warroom.router")
 PIN_PATH = Path("/tmp/warroom-pin.json")
 
 
-# Agent identifiers that match the agents/ directory names
-AGENT_NAMES = {"main", "research", "comms", "content", "ops"}
+def _load_agent_names() -> set[str]:
+    roster_path = Path("/tmp/warroom-agents.json")
+    fallback = {"main", "charter", "ember", "marlow", "mason", "warden"}
+    try:
+        if roster_path.exists():
+            agents = json.loads(roster_path.read_text())
+            ids = {
+                str(agent.get("id"))
+                for agent in agents
+                if isinstance(agent, dict) and isinstance(agent.get("id"), str)
+            }
+            return ids or fallback
+    except Exception as exc:
+        logger.warning("Could not load agent roster from %s: %s", roster_path, exc)
+    return fallback
+
+
+# Agent identifiers that match the configured ClaudeClaw agents.
+AGENT_NAMES = _load_agent_names()
 
 # Phrases that trigger a broadcast to all agents
 BROADCAST_TRIGGERS = {

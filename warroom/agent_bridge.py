@@ -31,8 +31,12 @@ BRIDGE_TIMEOUT = 60
 # Path to the voice bridge script
 BRIDGE_SCRIPT = PROJECT_ROOT / "dist" / "agent-voice-bridge.js"
 
-# Agent order for round-robin broadcasts
-BROADCAST_ORDER = ["main", "research", "comms", "content", "ops"]
+# Agent order for round-robin broadcasts. Kept aligned with the current
+# roster instead of the old template agents.
+BROADCAST_ORDER = [
+    agent for agent in ["main", "charter", "ember", "marlow", "mason", "warden"]
+    if agent in AGENT_NAMES
+]
 
 
 def _looks_like_cartesia_id(value: str) -> bool:
@@ -166,28 +170,7 @@ class ClaudeAgentBridge(FrameProcessor):
                 logger.warning("Agent %s returned an empty response", agent_id)
                 return None
 
-            # The Node bridge emits JSON: {"response": "...", "usage": {...}, "error": null}
-            # Fall back to raw text if stdout isn't JSON.
-            try:
-                data = json.loads(response)
-                if isinstance(data, dict):
-                    if data.get("error"):
-                        logger.error(
-                            "Agent %s bridge returned error: %s",
-                            agent_id, data["error"],
-                        )
-                        return f"The {agent_id} agent ran into an issue."
-                    text = data.get("response") or data.get("text")
-                    if text:
-                        return text
-                    logger.warning(
-                        "Agent %s bridge returned empty response: %s",
-                        agent_id, data,
-                    )
-                    return None
-                return response
-            except json.JSONDecodeError:
-                return response
+            return self._extract_bridge_text(agent_id, response)
 
         except asyncio.TimeoutError:
             # Kill the orphaned subprocess to prevent resource leaks
@@ -202,3 +185,39 @@ class ClaudeAgentBridge(FrameProcessor):
         except Exception as exc:
             logger.error("Failed to call agent %s: %s", agent_id, exc)
             return f"Something went wrong reaching the {agent_id} agent."
+
+    def _extract_bridge_text(self, agent_id: str, output: str) -> Optional[str]:
+        """Extract the JSON payload from noisy Node stdout.
+
+        The Node voice bridge writes the final result as JSON, but the shared
+        agent runtime can also write structured logs to stdout. Feeding that
+        whole stream into TTS makes ElevenLabs read log lines and JSON. Parse
+        the last JSON object line and ignore everything else.
+        """
+        data = None
+        for line in reversed(output.splitlines()):
+            stripped = line.strip()
+            if not stripped.startswith("{") or not stripped.endswith("}"):
+                continue
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                data = parsed
+                break
+
+        if data is None:
+            logger.error("Agent %s bridge returned no parseable JSON payload", agent_id)
+            return f"The {agent_id} agent answered, but I could not parse the voice response."
+
+        if data.get("error"):
+            logger.error("Agent %s bridge returned error: %s", agent_id, data["error"])
+            return f"The {agent_id} agent ran into an issue."
+
+        text = data.get("response") or data.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+
+        logger.warning("Agent %s bridge returned empty response: %s", agent_id, data)
+        return None
