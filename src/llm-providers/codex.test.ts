@@ -79,6 +79,23 @@ describe('CodexProvider helpers', () => {
     ]);
   });
 
+  it('can build read-only exec args without bypassing approvals', () => {
+    expect(buildCodexExecArgs({
+      cwd: '/tmp/no-git',
+      sandboxMode: 'read-only',
+      bypassApprovalsAndSandbox: false,
+    })).toEqual([
+      'exec',
+      '--json',
+      '--skip-git-repo-check',
+      '--sandbox',
+      'read-only',
+      '-C',
+      '/tmp/no-git',
+      '-',
+    ]);
+  });
+
   it('uses exec resume when a Codex session id is provided', () => {
     expect(buildCodexExecArgs({ cwd: '/tmp/repo', sessionId: '019de35d-7e16-7d43-94ba-e2f40388be5c' })).toContain('resume');
     expect(buildCodexExecArgs({ cwd: '/tmp/repo', sessionId: '019de35d-7e16-7d43-94ba-e2f40388be5c' }).slice(-3)).toEqual([

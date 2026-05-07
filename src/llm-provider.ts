@@ -99,6 +99,14 @@ export interface RunAgentOptions {
    * the caller's timeout.
    */
   maxTurns?: number;
+
+  /**
+   * Codex-only execution sandbox override. Defaults to danger-full-access for
+   * existing trusted Telegram/mission paths. Callers that execute untrusted
+   * chat-room text should request read-only and leave approval bypass off.
+   */
+  sandboxMode?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  bypassApprovalsAndSandbox?: boolean;
 }
 
 export interface LlmProvider {

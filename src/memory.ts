@@ -43,11 +43,18 @@ export async function buildMemoryContext(
   chatId: string,
   userMessage: string,
   agentId = 'main',
+  opts: {
+    strictAgentId?: string;
+    includeConsolidations?: boolean;
+    includeTeamActivity?: boolean;
+  } = {},
 ): Promise<MemoryContextResult> {
   const seen = new Set<number>();
   const summaryMap = new Map<number, string>();
   const memLines: string[] = [];
   let ob1MemoryBlock = '';
+  const memoryAgentId = opts.strictAgentId ?? agentId;
+  const strictScopedRetrieval = !!opts.strictAgentId;
 
   // Embed the query for vector search (async, adds ~200ms but gives semantic results)
   let queryEmbedding: number[] | undefined;
@@ -59,8 +66,10 @@ export async function buildMemoryContext(
     }
   }
 
-  // BRAIN=ob1: query Supabase/pgvector via OB1 MCP; on failure fall through to SQLite.
-  if (BRAIN === 'ob1' && ob1Available()) {
+  // BRAIN=ob1 has no per-agent strict filter yet. When a caller requests
+  // strict agent isolation, stay on the SQLite path where agent_id filtering
+  // is enforced.
+  if (!strictScopedRetrieval && BRAIN === 'ob1' && ob1Available()) {
     try {
       ob1MemoryBlock = await buildMemoryContextOb1(userMessage);
     } catch (err) {
@@ -74,7 +83,7 @@ export async function buildMemoryContext(
     // NOTE: We do NOT touch memories here. The feedback loop (evaluateMemoryRelevance)
     // is the only thing that should boost salience/accessed_at. Touching at retrieval
     // creates a positive feedback loop where noise stays fresh forever.
-    const searched = searchMemories(chatId, userMessage, 5, queryEmbedding);
+    const searched = searchMemories(chatId, userMessage, 5, queryEmbedding, memoryAgentId);
     for (const mem of searched) {
       seen.add(mem.id);
       summaryMap.set(mem.id, mem.summary);
@@ -84,7 +93,7 @@ export async function buildMemoryContext(
     }
 
     // Layer 2: recent high-importance memories (deduplicated)
-    const recent = getRecentHighImportanceMemories(chatId, 5);
+    const recent = getRecentHighImportanceMemories(chatId, 5, memoryAgentId);
     for (const mem of recent) {
       if (seen.has(mem.id)) continue;
       seen.add(mem.id);
@@ -99,7 +108,7 @@ export async function buildMemoryContext(
   // Consolidations live only in SQLite; skip when OB1 block is in use.
   const insightLines: string[] = [];
 
-  if (!ob1MemoryBlock) {
+  if (!ob1MemoryBlock && opts.includeConsolidations !== false) {
     if (queryEmbedding && queryEmbedding.length > 0) {
       const candidates = getConsolidationsWithEmbeddings(chatId);
       if (candidates.length > 0) {
@@ -153,7 +162,7 @@ export async function buildMemoryContext(
   }
 
   // Layer 4: Cross-agent activity awareness
-  const teamActivity = getOtherAgentActivity(agentId, 24, 10);
+  const teamActivity = opts.includeTeamActivity === false ? [] : getOtherAgentActivity(agentId, 24, 10);
   if (teamActivity.length > 0) {
     const activityLines = teamActivity.map((entry) => {
       // Note: created_at is unix seconds, Date.now() is ms, so divide by 1000

@@ -25,6 +25,8 @@ import {
   getDashboardTopAccessedMemories,
   getDashboardMemoriesList,
   getDashboardMemoryTimeline,
+  getRecentConversation,
+  saveWarRoomConversationTurn,
 } from './db.js';
 
 describe('database', () => {
@@ -177,6 +179,30 @@ describe('database', () => {
 
     it('clearSession on missing session does not throw', () => {
       expect(() => clearSession('nonexistent')).not.toThrow();
+    });
+  });
+
+  describe('war room conversation log', () => {
+    it('stores the user prompt for each responding agent', () => {
+      saveWarRoomConversationTurn({
+        chatId: 'chat1',
+        agentId: 'mason',
+        originalUserText: 'Please compare both options.',
+        agentReply: 'Mason reply.',
+        meetingId: 'wr_test_abcdef',
+        turnId: 'turn-1',
+      });
+      saveWarRoomConversationTurn({
+        chatId: 'chat1',
+        agentId: 'warden',
+        originalUserText: 'Please compare both options.',
+        agentReply: 'Warden reply.',
+        meetingId: 'wr_test_abcdef',
+        turnId: 'turn-1',
+      });
+
+      expect(getRecentConversation('chat1', 10, 'mason').map((t) => t.role).sort()).toEqual(['assistant', 'user']);
+      expect(getRecentConversation('chat1', 10, 'warden').map((t) => t.role).sort()).toEqual(['assistant', 'user']);
     });
   });
 

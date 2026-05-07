@@ -2154,6 +2154,92 @@ describe('GET /api/warroom/pin', () => {
   });
 });
 
+describe('Text War Room API', () => {
+  async function createTextRoom(chatId = 'chat-a') {
+    const res = await app.request('/api/warroom/text/new' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chatId }),
+    });
+    expect(res.status).toBe(200);
+    return jsonOf(res);
+  }
+
+  it('requires auth for text meeting list', async () => {
+    const res = await getNoToken('/api/warroom/text/list');
+    expect(res.status).toBe(401);
+  });
+
+  it('creates and lists chat-scoped text meetings without leaking into voice meetings', async () => {
+    const created = await createTextRoom('chat-a');
+    expect(created.meetingId).toMatch(/^wr_/);
+
+    const textList = await get('/api/warroom/text/list?chatId=chat-a');
+    expect(textList.status).toBe(200);
+    const textBody = await jsonOf(textList);
+    expect(textBody.meetings.map((m: any) => m.id)).toContain(created.meetingId);
+
+    const voiceList = await get('/api/warroom/meetings?limit=20');
+    const voiceBody = await jsonOf(voiceList);
+    expect(voiceBody.meetings.map((m: any) => m.id)).not.toContain(created.meetingId);
+  });
+
+  it('does not list every chat scope when chatId is omitted', async () => {
+    const a = await createTextRoom('chat-a');
+    const b = await createTextRoom('chat-b');
+
+    const res = await get('/api/warroom/text/list');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    const ids = body.meetings.map((m: any) => m.id);
+    expect(ids).not.toContain(a.meetingId);
+    expect(ids).not.toContain(b.meetingId);
+  });
+
+  it('rejects cross-chat access to a text meeting', async () => {
+    const created = await createTextRoom('chat-a');
+    const res = await get(`/api/warroom/text/history?meetingId=${created.meetingId}&chatId=chat-b`);
+    expect(res.status).toBe(403);
+    expect(await jsonOf(res)).toMatchObject({ error: 'chat_mismatch' });
+  });
+
+  it('rejects malformed meeting ids before creating a channel', async () => {
+    const res = await get('/api/warroom/text/history?meetingId=../../bad&chatId=chat-a');
+    expect(res.status).toBe(400);
+    expect(await jsonOf(res)).toMatchObject({ error: 'invalid meetingId' });
+  });
+
+  it('strips token from the text room page and then renders via auth cookie', async () => {
+    const created = await createTextRoom('chat-a');
+    const first = await app.request(`/warroom/text?token=${TOKEN}&meetingId=${created.meetingId}&chatId=chat-a`);
+    expect(first.status).toBe(302);
+    expect(first.headers.get('location')).toBe(`/warroom/text?meetingId=${created.meetingId}&chatId=chat-a`);
+    const cookie = first.headers.get('set-cookie')?.split(';')[0] || '';
+
+    const second = await app.request(`/warroom/text?meetingId=${created.meetingId}&chatId=chat-a`, {
+      headers: { cookie },
+    });
+    expect(second.status).toBe(200);
+    const html = await second.text();
+    expect(html).toContain('War Room');
+    expect(html).not.toContain(TOKEN);
+  });
+
+  it('does not warm the LLM path when LLM spawning is disabled', async () => {
+    const prev = process.env.LLM_SPAWN_ENABLED;
+    process.env.LLM_SPAWN_ENABLED = 'false';
+    try {
+      const res = await app.request('/api/warroom/text/warmup' + Q, { method: 'POST' });
+      expect(res.status).toBe(503);
+      expect(await jsonOf(res)).toMatchObject({ error: 'LLM spawn is disabled by LLM_SPAWN_ENABLED.' });
+    } finally {
+      if (prev === undefined) delete process.env.LLM_SPAWN_ENABLED;
+      else process.env.LLM_SPAWN_ENABLED = prev;
+    }
+  });
+
+});
+
 describe('GET /api/meet/sessions', () => {
   it('returns { ok, active, recent }', async () => {
     const res = await get('/api/meet/sessions');

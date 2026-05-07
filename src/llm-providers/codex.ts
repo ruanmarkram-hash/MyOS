@@ -258,17 +258,21 @@ export function buildCodexExecArgs(opts: {
   cwd: string;
   sessionId?: string;
   model?: string;
+  sandboxMode?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  bypassApprovalsAndSandbox?: boolean;
 }): string[] {
+  const sandboxMode = opts.sandboxMode ?? 'danger-full-access';
+  const bypassApprovalsAndSandbox = opts.bypassApprovalsAndSandbox ?? true;
   const args = [
     'exec',
     '--json',
     '--skip-git-repo-check',
     '--sandbox',
-    'danger-full-access',
-    '--dangerously-bypass-approvals-and-sandbox',
+    sandboxMode,
     '-C',
     opts.cwd,
   ];
+  if (bypassApprovalsAndSandbox) args.splice(5, 0, '--dangerously-bypass-approvals-and-sandbox');
 
   const cliModel = codexModelForCli(opts.model);
   if (cliModel) args.push('--model', cliModel);
@@ -334,6 +338,8 @@ export class CodexProvider implements LlmProvider {
       mcpAllowlist,
       cwdOverride,
       maxTurns,
+      sandboxMode,
+      bypassApprovalsAndSandbox,
     } = options;
 
     // Per-call cwd override (mission worktree isolation) takes precedence
@@ -341,7 +347,14 @@ export class CodexProvider implements LlmProvider {
     const cwd = cwdOverride ?? agentCwd ?? PROJECT_ROOT;
     const resumeSessionId = sessionId && codexSessionExists(sessionId) ? sessionId : undefined;
     const pricingModel = codexModelForPricing(model);
-    const args = buildCodexExecArgs({ cwd, sessionId: resumeSessionId, model });
+    const args = buildCodexExecArgs({
+      cwd,
+      sessionId: resumeSessionId,
+      model,
+      sandboxMode,
+      bypassApprovalsAndSandbox,
+    });
+    const expectedSandboxMode = sandboxMode ?? 'danger-full-access';
 
     // Per-call MCP allowlist enforcement. When mcpAllowlist is provided we
     // build a temp CODEX_HOME with a filtered config.toml. When undefined
@@ -408,8 +421,8 @@ export class CodexProvider implements LlmProvider {
       const sandboxMode = extractCodexSandboxMode(event);
       if (sandboxMode) {
         sandboxVerified = true;
-        if (sandboxMode !== 'danger-full-access') {
-          parseError = new Error(`Codex sandbox mode was ${sandboxMode}, expected danger-full-access`);
+        if (sandboxMode !== expectedSandboxMode) {
+          parseError = new Error(`Codex sandbox mode was ${sandboxMode}, expected ${expectedSandboxMode}`);
           proc.kill('SIGTERM');
           return;
         }

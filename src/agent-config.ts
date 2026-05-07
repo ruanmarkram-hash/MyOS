@@ -15,6 +15,7 @@ export interface AgentConfig {
   model?: string;
   provider?: string;
   mcpServers?: string[];
+  warroomTools?: string[];
   obsidian?: {
     vault: string;
     folders: string[];
@@ -105,6 +106,7 @@ export function loadAgentConfig(agentId: string): AgentConfig {
   }
 
   const mcpServers = raw['mcp_servers'] as string[] | undefined;
+  const warroomTools = raw['warroom_tools'] as string[] | undefined;
   const meetVoiceId = typeof raw['meet_voice_id'] === 'string' ? (raw['meet_voice_id'] as string) : undefined;
   const meetBotName = typeof raw['meet_bot_name'] === 'string' ? (raw['meet_bot_name'] as string) : undefined;
 
@@ -116,6 +118,7 @@ export function loadAgentConfig(agentId: string): AgentConfig {
     model,
     provider,
     mcpServers,
+    warroomTools,
     obsidian,
     meetVoiceId,
     meetBotName,

@@ -69,6 +69,12 @@ import {
   addWarRoomTranscript,
   getWarRoomMeetings,
   getWarRoomTranscript,
+  createTextMeeting,
+  getTextMeeting,
+  setMeetingPin,
+  clearMeetingSessions,
+  getOpenTextMeetingIds,
+  getTextMeetings,
   type MissionTask,
   type MissionReview,
   type MissionReviewStatus,
@@ -109,9 +115,13 @@ import {
   MAX_AGENT_FILE_BYTES,
 } from './agent-files.js';
 import { getWarRoomHtml } from './warroom-html.js';
+import { getWarRoomTextHtml } from './warroom-text-html.js';
+import { handleTextTurn, cancelMeetingTurns, getRoster, warmupMeeting, isWarmupDone, getActiveTurnIds, waitForMeetingTurnsIdle } from './warroom-text-orchestrator.js';
+import { getChannel, closeChannel, startChannelSweeper } from './warroom-text-events.js';
 import { WARROOM_ENABLED, WARROOM_PORT } from './config.js';
 import { logger } from './logger.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
+import { messageQueue } from './message-queue.js';
 import {
   getLlmProvider,
   getSupportedLlmProviders,
@@ -143,6 +153,8 @@ import { computeNextRun } from './scheduler.js';
 
 const MAIN_AGENT_MODEL = 'claude-opus-4-7';
 const DASHBOARD_AUTH_COOKIE = 'claudeclaw_dashboard';
+const WARROOM_TEXT_ID_RE = /^wr_[a-z0-9]+_[a-f0-9]{6}$/i;
+const CLIENT_MSG_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let mainRestartQueued = false;
 
 function dashboardCookieValue(): string {
@@ -2674,10 +2686,41 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   app.get('/manifest.webmanifest', (c) => serveV2(c, '/manifest.webmanifest'));
   app.get('/sw.js', (c) => serveV2(c, '/sw.js'));
 
-  // War Room page
+  // War Room page. The v2 dashboard owns /warroom unless the user asks
+  // for the legacy voice client explicitly with ?mode=voice.
   app.get('/warroom', (c) => {
     const chatId = c.req.query('chatId') || ALLOWED_CHAT_ID || '';
-    return c.html(getWarRoomHtml(DASHBOARD_TOKEN, chatId, WARROOM_PORT));
+    const mode = c.req.query('mode') || '';
+    if (mode === 'voice' || !fs.existsSync(path.join(PROJECT_ROOT, 'dist', 'web', 'index.html'))) {
+      return c.html(getWarRoomHtml(DASHBOARD_TOKEN, chatId, WARROOM_PORT));
+    }
+    return serveV2(c, '/index.html');
+  });
+
+  function warRoomPickerRedirect(chatId: string): string {
+    const mount = MISSION_CONTROL_V2 ? '' : '/v2';
+    const q = chatId ? `?chatId=${encodeURIComponent(chatId)}` : '';
+    return `${mount}/warroom${q}`;
+  }
+
+  app.get('/warroom/text', (c) => {
+    const chatId = dashboardChatId(c);
+    const meetingId = (c.req.query('meetingId') || '').trim();
+    const archive = c.req.query('archive') === '1';
+    if (!WARROOM_TEXT_ID_RE.test(meetingId)) {
+      return c.redirect(warRoomPickerRedirect(chatId));
+    }
+    const existing = getTextMeeting(meetingId);
+    if (!existing) {
+      return c.redirect(warRoomPickerRedirect(chatId));
+    }
+    if (existing.ended_at !== null && !archive) {
+      return c.redirect(warRoomPickerRedirect(chatId));
+    }
+    if (existing.chat_id !== '' && existing.chat_id !== chatId) {
+      return c.redirect(warRoomPickerRedirect(chatId));
+    }
+    return c.html(getWarRoomTextHtml(DASHBOARD_TOKEN, chatId, meetingId));
   });
 
   // Serve War Room background music (user's custom music.mp3 first, then bundled entrance.mp3)
@@ -2847,6 +2890,336 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
   app.get('/api/warroom/meeting/:id/transcript', (c) => {
     return c.json({ transcript: getWarRoomTranscript(c.req.param('id')) });
+  });
+
+  // ── Text War Room ─────────────────────────────────────────────────
+
+  app.get('/api/warroom/text/list', (c) => {
+    const limit = Math.max(1, Math.min(100, parseInt(c.req.query('limit') || '20', 10) || 20));
+    const chatId = c.req.query('chatId') || dashboardChatId(c);
+    return c.json({ ok: true, meetings: getTextMeetings(limit, chatId) });
+  });
+
+  app.post('/api/warroom/text/new', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled by DASHBOARD_MUTATIONS_ENABLED=false' }, 423);
+    }
+    let body: { chatId?: string } = {};
+    try { body = await c.req.json(); } catch { /* empty */ }
+    const chatId = (body.chatId || dashboardChatId(c)).trim();
+    const id = `wr_${Math.floor(Date.now() / 1000).toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
+    createTextMeeting(id, chatId);
+    getChannel(id);
+    const stale = getOpenTextMeetingIds(id, chatId);
+    for (const sid of stale) {
+      void endTextMeeting(sid).catch((err) => {
+        logger.warn({ err: err instanceof Error ? err.message : err, staleMeetingId: sid }, 'auto-end of stale text meeting failed');
+      });
+    }
+    return c.json({ ok: true, meetingId: id, autoEnded: stale });
+  });
+
+  app.post('/api/warroom/text/warmup', async (c) => {
+    if (!killSwitchFlag('WARROOM_TEXT_ENABLED', true)) {
+      return c.json({ ok: false, error: 'text war room disabled' }, 503);
+    }
+    if (!killSwitchFlag('LLM_SPAWN_ENABLED', true)) {
+      return c.json({ ok: false, error: 'LLM spawn is disabled by LLM_SPAWN_ENABLED.' }, 503);
+    }
+    if (isWarmupDone()) return c.json({ ok: true, already: true });
+    void warmupMeeting();
+    return c.json({ ok: true, started: true });
+  });
+
+  app.get('/api/warroom/text/history', (c) => {
+    const meetingId = (c.req.query('meetingId') || '').trim();
+    const reqChatId = (c.req.query('chatId') || dashboardChatId(c)).trim();
+    if (!WARROOM_TEXT_ID_RE.test(meetingId)) return c.json({ error: 'invalid meetingId' }, 400);
+    const meeting = getTextMeeting(meetingId);
+    if (!meeting) return c.json({ error: 'meeting_not_found' }, 404);
+    const chatGate = requireTextMeetingChat(meeting, reqChatId);
+    if (!chatGate.ok) return c.json({ error: chatGate.error }, chatGate.status);
+    const limit = Math.max(1, Math.min(500, parseInt(c.req.query('limit') || '200', 10) || 200));
+    const beforeTsRaw = c.req.query('beforeTs');
+    const beforeIdRaw = c.req.query('beforeId');
+    const beforeTs = beforeTsRaw ? parseInt(beforeTsRaw, 10) : undefined;
+    const beforeId = beforeIdRaw ? parseInt(beforeIdRaw, 10) : undefined;
+    const latestSeq = getChannel(meetingId).latestSeq();
+    const rows = getWarRoomTranscript(meetingId, { limit, beforeTs, beforeId }).reverse();
+    return c.json({
+      ok: true,
+      meetingId,
+      transcript: rows,
+      pinnedAgent: meeting.pinned_agent,
+      meetingStartedAt: meeting.started_at,
+      endedAt: meeting.ended_at,
+      agents: getRoster(),
+      latestSeq,
+    });
+  });
+
+  app.get('/api/warroom/text/stream', (c) => {
+    const meetingId = (c.req.query('meetingId') || '').trim();
+    const reqChatId = (c.req.query('chatId') || dashboardChatId(c)).trim();
+    if (!WARROOM_TEXT_ID_RE.test(meetingId)) return c.json({ error: 'invalid meetingId' }, 400);
+    const meeting = getTextMeeting(meetingId);
+    if (!meeting) return c.json({ error: 'meeting_not_found' }, 404);
+    const chatGate = requireTextMeetingChat(meeting, reqChatId);
+    if (!chatGate.ok) return c.json({ error: chatGate.error }, chatGate.status);
+    const sinceSeq = Math.max(0, parseInt(c.req.query('sinceSeq') || '0', 10) || 0);
+
+    return streamSSE(c, async (stream) => {
+      const channel = getChannel(meetingId);
+      await stream.writeSSE({
+        event: 'message',
+        data: JSON.stringify({
+          seq: 0,
+          event: {
+            type: 'meeting_state',
+            meetingId,
+            pinnedAgent: meeting.pinned_agent,
+            agents: getRoster(),
+            isFresh: meeting.ended_at === null && meeting.entry_count === 0,
+          },
+        }),
+      });
+
+      if (meeting.ended_at !== null) {
+        await stream.writeSSE({
+          event: 'message',
+          data: JSON.stringify({ seq: 0, event: { type: 'meeting_ended', meetingId, at: meeting.ended_at } }),
+        });
+        return;
+      }
+
+      const seenSeqs = new Set<number>();
+      let writeChain: Promise<void> = Promise.resolve();
+      const writeOrdered = (seq: number, event: unknown) => {
+        if (seenSeqs.has(seq)) return;
+        seenSeqs.add(seq);
+        writeChain = writeChain.then(async () => {
+          try {
+            await stream.writeSSE({ event: 'message', data: JSON.stringify({ seq, event }) });
+          } catch { /* client disconnected */ }
+        });
+      };
+      const unsub = channel.subscribe((entry) => writeOrdered(entry.seq, entry.event));
+      const oldest = channel.oldestSeq();
+      const latest = channel.latestSeq();
+      if (sinceSeq > 0 && oldest > 0 && sinceSeq < oldest - 1) {
+        await stream.writeSSE({
+          event: 'message',
+          data: JSON.stringify({ seq: 0, event: { type: 'replay_gap', sinceSeq, oldestSeq: oldest, latestSeq: latest } }),
+        });
+      }
+      for (const entry of channel.since(sinceSeq)) writeOrdered(entry.seq, entry.event);
+      const ping = setInterval(async () => {
+        try { await stream.writeSSE({ event: 'ping', data: '' }); }
+        catch { clearInterval(ping); }
+      }, 30_000);
+      try {
+        await new Promise<void>((_, reject) => {
+          stream.onAbort(() => reject(new Error('aborted')));
+        });
+      } catch {
+        // expected disconnect
+      } finally {
+        clearInterval(ping);
+        unsub();
+      }
+    });
+  });
+
+  function requireOpenTextMeeting(meetingId: string) {
+    const meeting = getTextMeeting(meetingId);
+    if (!meeting) return { error: 'meeting_not_found' as const, status: 404 as const };
+    if (meeting.ended_at !== null) return { error: 'meeting_ended' as const, status: 410 as const };
+    return { meeting };
+  }
+
+  function requireTextMeetingChat(
+    meeting: { chat_id: string },
+    requestChatId: string,
+  ): { ok: true } | { ok: false; error: string; status: 403 } {
+    if (meeting.chat_id === '') return { ok: true };
+    if (meeting.chat_id === requestChatId) return { ok: true };
+    return { ok: false, error: 'chat_mismatch', status: 403 };
+  }
+
+  app.post('/api/warroom/text/send', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled by DASHBOARD_MUTATIONS_ENABLED=false' }, 423);
+    }
+    if (!killSwitchFlag('WARROOM_TEXT_ENABLED', true)) {
+      return c.json({ error: 'text war room disabled' }, 503);
+    }
+    if (!killSwitchFlag('LLM_SPAWN_ENABLED', true)) {
+      return c.json({ error: 'LLM spawn is disabled by LLM_SPAWN_ENABLED.' }, 503);
+    }
+    let body: { meetingId?: string; text?: string; clientMsgId?: string; chatId?: string } = {};
+    try { body = await c.req.json(); } catch { /* empty */ }
+    const meetingId = (body.meetingId || '').trim();
+    const text = (body.text || '').trim();
+    const clientMsgId = (body.clientMsgId || '').trim();
+    const reqChatId = (body.chatId || dashboardChatId(c)).trim();
+    if (!WARROOM_TEXT_ID_RE.test(meetingId)) return c.json({ error: 'invalid meetingId' }, 400);
+    if (!text) return c.json({ error: 'empty text' }, 400);
+    if (text.length > 8000) return c.json({ error: 'text too long (max 8000 chars)' }, 400);
+    if (!CLIENT_MSG_ID_RE.test(clientMsgId)) return c.json({ error: 'invalid clientMsgId' }, 400);
+    const gate = requireOpenTextMeeting(meetingId);
+    if ('error' in gate) return c.json({ error: gate.error }, gate.status);
+    const chatGate = requireTextMeetingChat(gate.meeting, reqChatId);
+    if (!chatGate.ok) return c.json({ error: chatGate.error }, chatGate.status);
+
+    const TURN_BUDGET_MS = 300_000;
+    messageQueue.enqueue(`warroom-text:${meetingId}`, async () => {
+      let finished = false;
+      const turnPromise = handleTextTurn(meetingId, text, clientMsgId).finally(() => { finished = true; });
+      await Promise.race([
+        turnPromise,
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            if (finished) return;
+            const channel = getChannel(meetingId);
+            channel.emit({
+              type: 'system_note',
+              text: 'That turn took too long to complete and was interrupted. Send again, or end and restart the meeting if this keeps happening.',
+              tone: 'warn',
+              dismissable: true,
+            });
+            const activeTurns = getActiveTurnIds(meetingId);
+            for (const turnId of activeTurns) {
+              channel.emit({ type: 'turn_aborted', turnId, clearedAgents: [] });
+              channel.markTurnFinalized(turnId);
+            }
+            cancelMeetingTurns(meetingId);
+            resolve();
+          }, TURN_BUDGET_MS);
+        }),
+      ]);
+      if (!finished) {
+        await Promise.race([turnPromise, new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
+      }
+    });
+    return c.json({ ok: true, queued: true });
+  });
+
+  app.post('/api/warroom/text/abort', async (c) => {
+    let body: { meetingId?: string; chatId?: string } = {};
+    try { body = await c.req.json(); } catch { /* empty */ }
+    const meetingId = (body.meetingId || '').trim();
+    const reqChatId = (body.chatId || dashboardChatId(c)).trim();
+    if (!WARROOM_TEXT_ID_RE.test(meetingId)) return c.json({ error: 'invalid meetingId' }, 400);
+    const meeting = getTextMeeting(meetingId);
+    if (!meeting) return c.json({ error: 'meeting_not_found' }, 404);
+    const chatGate = requireTextMeetingChat(meeting, reqChatId);
+    if (!chatGate.ok) return c.json({ error: chatGate.error }, chatGate.status);
+    return c.json({ ok: true, cancelled: cancelMeetingTurns(meetingId) });
+  });
+
+  app.post('/api/warroom/text/pin', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled by DASHBOARD_MUTATIONS_ENABLED=false' }, 423);
+    }
+    let body: { meetingId?: string; agentId?: string; chatId?: string } = {};
+    try { body = await c.req.json(); } catch { /* empty */ }
+    const meetingId = (body.meetingId || '').trim();
+    const agentId = (body.agentId || '').trim();
+    const reqChatId = (body.chatId || dashboardChatId(c)).trim();
+    if (!WARROOM_TEXT_ID_RE.test(meetingId)) return c.json({ error: 'invalid meetingId' }, 400);
+    const rosterIds = new Set(getRoster().map((a) => a.id));
+    if (!rosterIds.has(agentId)) return c.json({ error: 'unknown agent' }, 400);
+    const gate = requireOpenTextMeeting(meetingId);
+    if ('error' in gate) return c.json({ error: gate.error }, gate.status);
+    const chatGate = requireTextMeetingChat(gate.meeting, reqChatId);
+    if (!chatGate.ok) return c.json({ error: chatGate.error }, chatGate.status);
+    setMeetingPin(meetingId, agentId);
+    getChannel(meetingId).emit({ type: 'meeting_state_update', pinnedAgent: agentId });
+    return c.json({ ok: true, meetingId, pinnedAgent: agentId });
+  });
+
+  app.post('/api/warroom/text/unpin', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled by DASHBOARD_MUTATIONS_ENABLED=false' }, 423);
+    }
+    let body: { meetingId?: string; chatId?: string } = {};
+    try { body = await c.req.json(); } catch { /* empty */ }
+    const meetingId = (body.meetingId || '').trim();
+    const reqChatId = (body.chatId || dashboardChatId(c)).trim();
+    if (!WARROOM_TEXT_ID_RE.test(meetingId)) return c.json({ error: 'invalid meetingId' }, 400);
+    const gate = requireOpenTextMeeting(meetingId);
+    if ('error' in gate) return c.json({ error: gate.error }, gate.status);
+    const chatGate = requireTextMeetingChat(gate.meeting, reqChatId);
+    if (!chatGate.ok) return c.json({ error: chatGate.error }, chatGate.status);
+    setMeetingPin(meetingId, null);
+    getChannel(meetingId).emit({ type: 'meeting_state_update', pinnedAgent: null });
+    return c.json({ ok: true, meetingId, pinnedAgent: null });
+  });
+
+  app.post('/api/warroom/text/clear', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled by DASHBOARD_MUTATIONS_ENABLED=false' }, 423);
+    }
+    let body: { meetingId?: string; chatId?: string } = {};
+    try { body = await c.req.json(); } catch { /* empty */ }
+    const meetingId = (body.meetingId || '').trim();
+    const reqChatId = (body.chatId || dashboardChatId(c)).trim();
+    if (!WARROOM_TEXT_ID_RE.test(meetingId)) return c.json({ error: 'invalid meetingId' }, 400);
+    const gate = requireOpenTextMeeting(meetingId);
+    if ('error' in gate) return c.json({ error: gate.error }, gate.status);
+    const chatGate = requireTextMeetingChat(gate.meeting, reqChatId);
+    if (!chatGate.ok) return c.json({ error: chatGate.error }, chatGate.status);
+    if (getActiveTurnIds(meetingId).length > 0) {
+      cancelMeetingTurns(meetingId);
+      await waitForMeetingTurnsIdle(meetingId, 5000);
+    }
+    const cleared = clearMeetingSessions(meetingId, getRoster().map((a) => a.id));
+    addWarRoomTranscript(meetingId, '__divider__', 'Memory cleared - agents start fresh from here');
+    const channel = getChannel(meetingId);
+    channel.emit({ type: 'divider', kind: 'memory_cleared', text: 'Memory cleared - agents start fresh from here' });
+    channel.emit({ type: 'system_note', text: 'Sessions cleared. Next message starts fresh.', tone: 'info', dismissable: true });
+    return c.json({ ok: true, cleared });
+  });
+
+  async function endTextMeeting(meetingId: string): Promise<{ alreadyEnded: boolean; entryCount: number }> {
+    const meeting = getTextMeeting(meetingId);
+    if (!meeting || meeting.ended_at !== null) {
+      const rows = meeting ? getWarRoomTranscript(meetingId) : [];
+      return { alreadyEnded: true, entryCount: rows.length };
+    }
+    const rows = getWarRoomTranscript(meetingId);
+    endWarRoomMeeting(meetingId, rows.length);
+    if (getActiveTurnIds(meetingId).length > 0) {
+      cancelMeetingTurns(meetingId);
+      await waitForMeetingTurnsIdle(meetingId, 3000);
+    }
+    try {
+      clearMeetingSessions(meetingId, getRoster().map((a) => a.id));
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : err, meetingId }, 'clearMeetingSessions failed during endTextMeeting');
+    }
+    const channel = getChannel(meetingId);
+    channel.emit({ type: 'meeting_ended', meetingId, at: Math.floor(Date.now() / 1000) });
+    setTimeout(() => closeChannel(meetingId), 1500);
+    return { alreadyEnded: false, entryCount: rows.length };
+  }
+
+  app.post('/api/warroom/text/end', async (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled by DASHBOARD_MUTATIONS_ENABLED=false' }, 423);
+    }
+    let body: { meetingId?: string; chatId?: string } = {};
+    try { body = await c.req.json(); } catch { /* empty */ }
+    const meetingId = (body.meetingId || '').trim();
+    const reqChatId = (body.chatId || dashboardChatId(c)).trim();
+    if (!WARROOM_TEXT_ID_RE.test(meetingId)) return c.json({ error: 'invalid meetingId' }, 400);
+    const meeting = getTextMeeting(meetingId);
+    if (!meeting) return c.json({ error: 'meeting_not_found' }, 404);
+    const chatGate = requireTextMeetingChat(meeting, reqChatId);
+    if (!chatGate.ok) return c.json({ error: chatGate.error }, chatGate.status);
+    const result = await endTextMeeting(meetingId);
+    if (result.alreadyEnded) return c.json({ ok: true, meetingId, alreadyEnded: true });
+    return c.json({ ok: true, meetingId, entryCount: result.entryCount });
   });
 
   // ── War Room pin: route all voice utterances to a specific agent ──
@@ -5474,6 +5847,8 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       return serveV2(c, '/index.html');
     });
   }
+
+  startChannelSweeper();
 
   return app;
 }

@@ -162,7 +162,10 @@ function createSchema(database: Database.Database): void {
       session_id  TEXT,
       role        TEXT NOT NULL,
       content     TEXT NOT NULL,
-      created_at  INTEGER NOT NULL
+      created_at  INTEGER NOT NULL,
+      source      TEXT NOT NULL DEFAULT 'telegram',
+      source_meeting_id TEXT,
+      source_turn_id TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_convo_log_chat ON conversation_log(chat_id, created_at DESC);
@@ -312,7 +315,9 @@ function createSchema(database: Database.Database): void {
       duration_s  INTEGER,
       mode        TEXT NOT NULL DEFAULT 'direct',  -- direct | auto
       pinned_agent TEXT DEFAULT 'main',
-      entry_count INTEGER DEFAULT 0
+      entry_count INTEGER DEFAULT 0,
+      meeting_type TEXT NOT NULL DEFAULT 'voice',
+      chat_id TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_warroom_meetings_time ON warroom_meetings(started_at DESC);
 
@@ -471,6 +476,14 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_file_history_path_time
       ON agent_file_history(file_path, created_at DESC);
+
+    -- Dashboard settings/personalization KV. Used by newer dashboard
+    -- features such as text War Room standup roster configuration.
+    CREATE TABLE IF NOT EXISTS dashboard_settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
   `);
 }
 
@@ -665,6 +678,40 @@ function runMigrations(database: Database.Database): void {
   if (!convoCols.some((c) => c.name === 'agent_id')) {
     database.exec(`ALTER TABLE conversation_log ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'`);
   }
+  if (!convoCols.some((c) => c.name === 'source')) {
+    database.exec(`ALTER TABLE conversation_log ADD COLUMN source TEXT NOT NULL DEFAULT 'telegram'`);
+  }
+  if (!convoCols.some((c) => c.name === 'source_meeting_id')) {
+    database.exec(`ALTER TABLE conversation_log ADD COLUMN source_meeting_id TEXT`);
+  }
+  if (!convoCols.some((c) => c.name === 'source_turn_id')) {
+    database.exec(`ALTER TABLE conversation_log ADD COLUMN source_turn_id TEXT`);
+  }
+  database.exec(`
+    DROP INDEX IF EXISTS idx_convo_warroom_user_turn;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_convo_warroom_user_turn
+      ON conversation_log(source, source_meeting_id, source_turn_id, agent_id)
+      WHERE source = 'warroom-text' AND role = 'user';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_convo_warroom_agent_turn
+      ON conversation_log(source, source_meeting_id, source_turn_id, agent_id)
+      WHERE source = 'warroom-text' AND role = 'assistant';
+  `);
+
+  const warRoomCols = database.prepare(`PRAGMA table_info(warroom_meetings)`).all() as Array<{ name: string }>;
+  const warRoomColNames = warRoomCols.map((c) => c.name);
+  if (warRoomColNames.length > 0 && !warRoomColNames.includes('meeting_type')) {
+    database.exec(`ALTER TABLE warroom_meetings ADD COLUMN meeting_type TEXT NOT NULL DEFAULT 'voice'`);
+  }
+  if (warRoomColNames.length > 0 && !warRoomColNames.includes('chat_id')) {
+    database.exec(`ALTER TABLE warroom_meetings ADD COLUMN chat_id TEXT NOT NULL DEFAULT ''`);
+  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS dashboard_settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+  `);
 
   // Task state machine: add started_at and last_status columns
   const taskColNames = taskCols.map((c) => c.name);
@@ -1152,10 +1199,11 @@ export function searchMemories(
   query: string,
   limit = 5,
   queryEmbedding?: number[],
+  agentId?: string,
 ): Memory[] {
   // Strategy 1: Vector similarity search (if embedding provided)
   if (queryEmbedding && queryEmbedding.length > 0) {
-    const candidates = getMemoriesWithEmbeddings(chatId);
+    const candidates = getMemoriesWithEmbeddings(chatId, agentId);
     if (candidates.length > 0) {
       const scored = candidates
         .map((c) => ({ id: c.id, score: cosineSimilarity(queryEmbedding, c.embedding) }))
@@ -1166,9 +1214,10 @@ export function searchMemories(
       if (scored.length > 0) {
         const ids = scored.map((s) => s.id);
         const placeholders = ids.map(() => '?').join(',');
+        const agentClause = agentId ? ' AND agent_id = ?' : '';
         const rows = db
-          .prepare(`SELECT * FROM memories WHERE id IN (${placeholders}) AND superseded_by IS NULL`)
-          .all(...ids) as Memory[];
+          .prepare(`SELECT * FROM memories WHERE id IN (${placeholders}) AND superseded_by IS NULL${agentClause}`)
+          .all(...ids, ...(agentId ? [agentId] : [])) as Memory[];
         // Preserve similarity-score ordering (SQL IN doesn't guarantee order)
         const rowMap = new Map(rows.map((r) => [r.id, r]));
         return ids.map((id) => rowMap.get(id)).filter(Boolean) as Memory[];
@@ -1190,11 +1239,11 @@ export function searchMemories(
     .prepare(
       `SELECT memories.* FROM memories
        JOIN memories_fts ON memories.id = memories_fts.rowid
-       WHERE memories_fts MATCH ? AND memories.chat_id = ? AND memories.superseded_by IS NULL
+       WHERE memories_fts MATCH ? AND memories.chat_id = ? AND memories.superseded_by IS NULL${agentId ? ' AND memories.agent_id = ?' : ''}
        ORDER BY rank
        LIMIT ?`,
     )
-    .all(ftsQuery, chatId, limit) as Memory[];
+    .all(ftsQuery, chatId, ...(agentId ? [agentId] : []), limit) as Memory[];
 
   if (results.length > 0) return results;
 
@@ -1211,11 +1260,11 @@ export function searchMemories(
   results = db
     .prepare(
       `SELECT * FROM memories
-       WHERE chat_id = ? AND superseded_by IS NULL AND (${likeConditions})
+       WHERE chat_id = ? AND superseded_by IS NULL${agentId ? ' AND agent_id = ?' : ''} AND (${likeConditions})
        ORDER BY importance DESC, accessed_at DESC
        LIMIT ?`,
     )
-    .all(chatId, ...likeParams, limit) as Memory[];
+    .all(chatId, ...(agentId ? [agentId] : []), ...likeParams, limit) as Memory[];
 
   return results;
 }
@@ -1250,12 +1299,12 @@ export function saveStructuredMemoryAtomic(
   return txn();
 }
 
-export function getMemoriesWithEmbeddings(chatId: string): Array<{ id: number; embedding: number[]; summary: string; importance: number }> {
+export function getMemoriesWithEmbeddings(chatId: string, agentId?: string): Array<{ id: number; embedding: number[]; summary: string; importance: number }> {
   const models = getCompatibleEmbeddingModelNames();
   const placeholders = models.map(() => '?').join(',');
   const rows = db
-    .prepare(`SELECT id, embedding, summary, importance FROM memories WHERE chat_id = ? AND embedding IS NOT NULL AND superseded_by IS NULL AND embedding_model IN (${placeholders})`)
-    .all(chatId, ...models) as Array<{ id: number; embedding: string; summary: string; importance: number }>;
+    .prepare(`SELECT id, embedding, summary, importance FROM memories WHERE chat_id = ?${agentId ? ' AND agent_id = ?' : ''} AND embedding IS NOT NULL AND superseded_by IS NULL AND embedding_model IN (${placeholders})`)
+    .all(chatId, ...(agentId ? [agentId] : []), ...models) as Array<{ id: number; embedding: string; summary: string; importance: number }>;
   return rows.map((r) => ({
     id: r.id,
     embedding: JSON.parse(r.embedding) as number[],
@@ -1264,13 +1313,13 @@ export function getMemoriesWithEmbeddings(chatId: string): Array<{ id: number; e
   }));
 }
 
-export function getRecentHighImportanceMemories(chatId: string, limit = 5): Memory[] {
+export function getRecentHighImportanceMemories(chatId: string, limit = 5, agentId?: string): Memory[] {
   return db
     .prepare(
-      `SELECT * FROM memories WHERE chat_id = ? AND importance >= 0.5
+      `SELECT * FROM memories WHERE chat_id = ?${agentId ? ' AND agent_id = ?' : ''} AND importance >= 0.5
        ORDER BY accessed_at DESC LIMIT ?`,
     )
-    .all(chatId, limit) as Memory[];
+    .all(chatId, ...(agentId ? [agentId] : []), limit) as Memory[];
 }
 
 export function getRecentMemories(chatId: string, limit = 5): Memory[] {
@@ -3345,18 +3394,16 @@ export function createWarRoomMeeting(id: string, mode: string, pinnedAgent: stri
 export function endWarRoomMeeting(id: string, entryCount: number): void {
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
-    'UPDATE warroom_meetings SET ended_at = ?, duration_s = ended_at - started_at, entry_count = ? WHERE id = ?',
-  ).run(now, entryCount, id);
-  // Actually compute duration correctly
-  db.prepare(
-    'UPDATE warroom_meetings SET duration_s = ? - started_at WHERE id = ?',
-  ).run(now, id);
+    'UPDATE warroom_meetings SET ended_at = ?, duration_s = ? - started_at, entry_count = ? WHERE id = ?',
+  ).run(now, now, entryCount, id);
 }
 
-export function addWarRoomTranscript(meetingId: string, speaker: string, text: string): void {
-  db.prepare(
+export function addWarRoomTranscript(meetingId: string, speaker: string, text: string): { id: number; created_at: number } {
+  const created_at = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
     'INSERT INTO warroom_transcript (meeting_id, speaker, text, created_at) VALUES (?, ?, ?, ?)',
-  ).run(meetingId, speaker, text, Math.floor(Date.now() / 1000));
+  ).run(meetingId, speaker, text, created_at);
+  return { id: Number(info.lastInsertRowid), created_at };
 }
 
 export function getWarRoomMeetings(limit = 20): Array<{
@@ -3364,16 +3411,235 @@ export function getWarRoomMeetings(limit = 20): Array<{
   mode: string; pinned_agent: string; entry_count: number;
 }> {
   return db.prepare(
-    'SELECT * FROM warroom_meetings ORDER BY started_at DESC LIMIT ?',
+    `SELECT * FROM warroom_meetings
+      WHERE meeting_type IS NULL OR meeting_type = 'voice'
+      ORDER BY started_at DESC LIMIT ?`,
   ).all(limit) as any[];
 }
 
-export function getWarRoomTranscript(meetingId: string): Array<{
-  speaker: string; text: string; created_at: number;
+export function getWarRoomTranscript(
+  meetingId: string,
+  opts: { limit?: number; beforeTs?: number; beforeId?: number } = {},
+): Array<{
+  id: number; speaker: string; text: string; created_at: number;
 }> {
+  const { limit, beforeTs, beforeId } = opts;
+  if (limit === undefined && beforeTs === undefined && beforeId === undefined) {
+    return db.prepare(
+      'SELECT id, speaker, text, created_at FROM warroom_transcript WHERE meeting_id = ? ORDER BY created_at, id',
+    ).all(meetingId) as any[];
+  }
+  const cap = Math.max(1, Math.min(1000, limit ?? 200));
+  if (beforeTs !== undefined) {
+    const bId = beforeId ?? Number.MAX_SAFE_INTEGER;
+    return db.prepare(
+      `SELECT id, speaker, text, created_at
+         FROM warroom_transcript
+        WHERE meeting_id = ?
+          AND (created_at < ? OR (created_at = ? AND id < ?))
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?`,
+    ).all(meetingId, beforeTs, beforeTs, bId, cap) as any[];
+  }
   return db.prepare(
-    'SELECT speaker, text, created_at FROM warroom_transcript WHERE meeting_id = ? ORDER BY created_at',
-  ).all(meetingId) as any[];
+    'SELECT id, speaker, text, created_at FROM warroom_transcript WHERE meeting_id = ? ORDER BY created_at DESC, id DESC LIMIT ?',
+  ).all(meetingId, cap) as any[];
+}
+
+export function saveWarRoomConversationTurn(args: {
+  chatId: string;
+  agentId: string;
+  originalUserText: string;
+  agentReply: string;
+  meetingId: string;
+  turnId: string;
+}): { userInserted: boolean; assistantInserted: boolean } {
+  const { chatId, agentId, originalUserText, agentReply, meetingId, turnId } = args;
+  if (!meetingId || !turnId) {
+    throw new Error('saveWarRoomConversationTurn: meetingId and turnId required');
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const userStmt = db.prepare(
+    `INSERT OR IGNORE INTO conversation_log
+       (chat_id, session_id, role, content, created_at, agent_id, source, source_meeting_id, source_turn_id)
+     VALUES (?, NULL, 'user', ?, ?, ?, 'warroom-text', ?, ?)`,
+  );
+  const assistantStmt = db.prepare(
+    `INSERT OR IGNORE INTO conversation_log
+       (chat_id, session_id, role, content, created_at, agent_id, source, source_meeting_id, source_turn_id)
+     VALUES (?, NULL, 'assistant', ?, ?, ?, 'warroom-text', ?, ?)`,
+  );
+  const txn = db.transaction(() => {
+    const user = userStmt.run(chatId, originalUserText, now, agentId, meetingId, turnId);
+    const assistant = assistantStmt.run(chatId, agentReply, now, agentId, meetingId, turnId);
+    return {
+      userInserted: user.changes > 0,
+      assistantInserted: assistant.changes > 0,
+    };
+  });
+  return txn();
+}
+
+export function getRecentMissionTasks(
+  agentId: string,
+  status: string | undefined,
+  sinceTs: number,
+  limit = 10,
+): MissionTask[] {
+  const conds: string[] = ['assigned_agent = ?', 'created_at >= ?'];
+  const params: unknown[] = [agentId, sinceTs];
+  if (status) { conds.push('status = ?'); params.push(status); }
+  params.push(limit);
+  return db.prepare(
+    `SELECT * FROM mission_tasks WHERE ${conds.join(' AND ')}
+     ORDER BY created_at DESC LIMIT ?`,
+  ).all(...params) as MissionTask[];
+}
+
+export function getRecentWarRoomTranscriptForChat(
+  chatId: string,
+  opts: { limit?: number; sinceTs?: number; excludeMeetingId?: string } = {},
+): Array<{ id: number; meeting_id: string; speaker: string; text: string; created_at: number }> {
+  const { limit = 10, sinceTs, excludeMeetingId } = opts;
+  const conds: string[] = ['m.meeting_type = ?', 'm.chat_id = ?'];
+  const params: unknown[] = ['text', chatId];
+  if (sinceTs !== undefined) { conds.push('t.created_at >= ?'); params.push(sinceTs); }
+  if (excludeMeetingId) { conds.push('t.meeting_id != ?'); params.push(excludeMeetingId); }
+  params.push(limit);
+  return db.prepare(
+    `SELECT t.id, t.meeting_id, t.speaker, t.text, t.created_at
+       FROM warroom_transcript t
+       JOIN warroom_meetings m ON m.id = t.meeting_id
+      WHERE ${conds.join(' AND ')}
+      ORDER BY t.created_at DESC, t.id DESC
+      LIMIT ?`,
+  ).all(...params) as Array<{ id: number; meeting_id: string; speaker: string; text: string; created_at: number }>;
+}
+
+export function createTextMeeting(id: string, chatId = ''): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO warroom_meetings
+       (id, started_at, mode, pinned_agent, meeting_type, chat_id)
+     VALUES (?, ?, 'direct', NULL, 'text', ?)`,
+  ).run(id, Math.floor(Date.now() / 1000), chatId);
+}
+
+export function getTextMeeting(id: string): {
+  id: string; started_at: number; ended_at: number | null; duration_s: number | null;
+  mode: string; pinned_agent: string | null; entry_count: number; meeting_type: string;
+  chat_id: string;
+} | null {
+  const row = db.prepare(
+    `SELECT id, started_at, ended_at, duration_s, mode, pinned_agent, entry_count, meeting_type, chat_id
+       FROM warroom_meetings WHERE id = ? AND meeting_type = 'text'`,
+  ).get(id) as any;
+  return row ?? null;
+}
+
+export function setMeetingPin(meetingId: string, agentId: string | null): void {
+  db.prepare(
+    `UPDATE warroom_meetings SET pinned_agent = ? WHERE id = ? AND meeting_type = 'text'`,
+  ).run(agentId, meetingId);
+}
+
+export function getOpenTextMeetingIds(exceptId?: string, chatId?: string): string[] {
+  const conds: string[] = [`meeting_type = 'text'`, `ended_at IS NULL`];
+  const params: unknown[] = [];
+  if (exceptId) { conds.push('id != ?'); params.push(exceptId); }
+  if (chatId !== undefined) { conds.push('chat_id = ?'); params.push(chatId); }
+  const rows = db.prepare(
+    `SELECT id FROM warroom_meetings WHERE ${conds.join(' AND ')}`,
+  ).all(...params) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
+export function getTextMeetings(limit = 20, chatId?: string): Array<{
+  id: string;
+  started_at: number;
+  ended_at: number | null;
+  entry_count: number;
+  preview: string;
+}> {
+  const params: unknown[] = [];
+  let where = `meeting_type = 'text'`;
+  if (chatId !== undefined) { where += ` AND chat_id = ?`; params.push(chatId); }
+  params.push(limit);
+  const rows = db.prepare(
+    `SELECT id, started_at, ended_at, entry_count
+       FROM warroom_meetings
+      WHERE ${where}
+      ORDER BY started_at DESC
+      LIMIT ?`,
+  ).all(...params) as Array<{ id: string; started_at: number; ended_at: number | null; entry_count: number }>;
+  if (rows.length === 0) return [];
+  const previewStmt = db.prepare(
+    `SELECT text FROM warroom_transcript
+      WHERE meeting_id = ? AND speaker = 'user'
+      ORDER BY created_at, id LIMIT 1`,
+  );
+  return rows.map((r) => {
+    const p = previewStmt.get(r.id) as { text: string } | undefined;
+    return { ...r, preview: (p?.text ?? '').slice(0, 140) };
+  });
+}
+
+export function clearMeetingSessions(meetingId: string, agentIds: string[]): number {
+  if (agentIds.length === 0) return 0;
+  const chatId = `warroom-text:${meetingId}`;
+  const placeholders = agentIds.map(() => '?').join(',');
+  const info = db.prepare(
+    `DELETE FROM sessions WHERE chat_id = ? AND agent_id IN (${placeholders})`,
+  ).run(chatId, ...agentIds);
+  return info.changes;
+}
+
+const CLIENT_MSG_TTL_MS = 24 * 60 * 60 * 1000;
+const CLIENT_MSG_MAX_ENTRIES = 10_000;
+const clientMsgSeen = new Map<string, number>();
+
+export function rememberClientMsgId(id: string, ttlMs = CLIENT_MSG_TTL_MS): boolean {
+  const now = Date.now();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    return false;
+  }
+  const existing = clientMsgSeen.get(id);
+  if (existing !== undefined && existing > now) return false;
+  clientMsgSeen.set(id, now + ttlMs);
+  if (clientMsgSeen.size > CLIENT_MSG_MAX_ENTRIES) {
+    for (const [key, expiresAt] of clientMsgSeen) {
+      if (expiresAt <= now) clientMsgSeen.delete(key);
+      if (clientMsgSeen.size <= CLIENT_MSG_MAX_ENTRIES) break;
+    }
+    while (clientMsgSeen.size > CLIENT_MSG_MAX_ENTRIES) {
+      const oldest = clientMsgSeen.keys().next().value;
+      if (oldest === undefined) break;
+      clientMsgSeen.delete(oldest);
+    }
+  }
+  return true;
+}
+
+export function _resetClientMsgCache(): void {
+  clientMsgSeen.clear();
+}
+
+export function getDashboardSetting(key: string): string | null {
+  const row = db.prepare(`SELECT value FROM dashboard_settings WHERE key = ?`).get(key) as { value: string } | undefined;
+  return row ? row.value : null;
+}
+
+export function setDashboardSetting(key: string, value: string): void {
+  db.prepare(
+    `INSERT INTO dashboard_settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(key, value);
+}
+
+export function getAllDashboardSettings(): Record<string, string> {
+  const rows = db.prepare(`SELECT key, value FROM dashboard_settings`).all() as { key: string; value: string }[];
+  const out: Record<string, string> = {};
+  for (const row of rows) out[row.key] = row.value;
+  return out;
 }
 
 // ── Telegram durable outbox ───────────────────────────────────────────
