@@ -1603,6 +1603,9 @@ interface StructuredBriefAction {
   severity: AttentionSeverity;
   sourceCategory: string;
   confidence: number;
+  suggestedAgent?: string | null;
+  due?: string | null;
+  requiresRuan?: boolean;
 }
 
 const TERMINAL_MISSION_STATUSES = new Set(['completed', 'failed', 'partial', 'cancelled']);
@@ -1684,12 +1687,27 @@ function normalizeStructuredAction(input: any): StructuredBriefAction | null {
   const confidence = typeof input.confidence === 'number' && Number.isFinite(input.confidence)
     ? Math.max(0, Math.min(1, input.confidence))
     : 0.8;
+  const suggestedAgentRaw = typeof input.suggested_agent === 'string' ? input.suggested_agent.trim()
+    : typeof input.suggestedAgent === 'string' ? input.suggestedAgent.trim()
+      : '';
+  const suggestedAgent = suggestedAgentRaw && !/^null$/i.test(suggestedAgentRaw) ? suggestedAgentRaw : null;
+  const dueRaw = typeof input.due === 'string' ? input.due.trim()
+    : typeof input.due_at === 'string' ? input.due_at.trim()
+      : typeof input.dueAt === 'string' ? input.dueAt.trim()
+        : '';
+  const due = dueRaw && !/^null$/i.test(dueRaw) ? dueRaw : null;
+  const requiresRuan = typeof input.requires_ruan === 'boolean' ? input.requires_ruan
+    : typeof input.requiresRuan === 'boolean' ? input.requiresRuan
+      : undefined;
   return {
     title: rawTitle || category || 'Brief action',
     detail: rawDetail.length > 900 ? `${rawDetail.slice(0, 897)}...` : rawDetail,
     severity,
     sourceCategory: category || 'brief',
     confidence,
+    suggestedAgent,
+    due,
+    requiresRuan,
   };
 }
 
@@ -1804,6 +1822,16 @@ function attentionSourceKey(sourceKind: string, sourceId: string, text: string):
   return `${sourceKind}:${sourceId}:${hash}`;
 }
 
+function displayDetailForStructuredAction(action: StructuredBriefAction): string {
+  const meta: string[] = [];
+  if (action.suggestedAgent) meta.push(`Suggested agent: @${action.suggestedAgent.replace(/^@/, '')}`);
+  if (action.due) meta.push(`Due: ${action.due}`);
+  if (typeof action.requiresRuan === 'boolean') meta.push(`Requires Ruan: ${action.requiresRuan ? 'yes' : 'no'}`);
+  if (meta.length > 0) meta.push(`Confidence: ${Math.round(action.confidence * 100)}%`);
+  const detail = meta.length > 0 ? `${action.detail}\n${meta.join(' · ')}` : action.detail;
+  return detail.length > 1000 ? `${detail.slice(0, 997)}...` : detail;
+}
+
 function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[]): void {
   for (const brief of buildHomeBriefs(tasks)) {
     if (!brief) continue;
@@ -1823,7 +1851,7 @@ function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[
         sourceId: brief.taskId,
         sourceKey,
         title: `${brief.label} brief`,
-        detail,
+        detail: displayDetailForStructuredAction(action),
         severity: action.severity,
         href: '/home',
       });

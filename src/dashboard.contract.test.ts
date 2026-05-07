@@ -532,6 +532,31 @@ describe('GET /api/home dashboard endpoints', () => {
     });
   });
 
+  it('preserves structured brief action metadata in durable attention detail', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-structured', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-structured',
+      now + 86400,
+      'ATTENTION_ACTIONS: [{"title":"Fix Graph auth","detail":"Microsoft Graph auth expired; re-auth Sage-Cos before calendar briefs can run.","severity":"high","sourceCategory":"runtime","suggested_agent":"warden","due":"today","requires_ruan":false,"confidence":0.91}]',
+      'success',
+    );
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    const item = body.items.find((row: any) => row.source === 'brief');
+    expect(item).toMatchObject({
+      title: 'Morning brief',
+      severity: 'high',
+      detail: expect.stringContaining('Microsoft Graph auth expired'),
+    });
+    expect(item.detail).toContain('Suggested agent: @warden');
+    expect(item.detail).toContain('Due: today');
+    expect(item.detail).toContain('Requires Ruan: no');
+    expect(item.detail).toContain('Confidence: 91%');
+  });
+
   it('promotes auth and unavailable failures from briefs into durable attention items', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-auth', 'Morning brief', '0 9 * * *', now + 3600, 'main');

@@ -302,7 +302,8 @@ async function runDueTasks(): Promise<void> {
         // Run as a fresh agent call (no session — scheduled tasks are autonomous).
         // Use runAgentWithRetry so transient failures (auth refresh, rate limits)
         // get retried with backoff instead of immediately failing.
-        const result = await runAgentWithRetry(task.prompt, undefined, () => {}, undefined, taskModel, abortController, undefined, undefined, undefined, agentMcpAllowlist, undefined, agentSystemPrompt);
+        const scheduledPrompt = isSilent ? task.prompt : withScheduledTaskContract(task.prompt);
+        const result = await runAgentWithRetry(scheduledPrompt, undefined, () => {}, undefined, taskModel, abortController, undefined, undefined, undefined, agentMcpAllowlist, undefined, agentSystemPrompt);
         clearTimeout(timeout);
 
         if (result.aborted) {
@@ -459,9 +460,10 @@ async function runDueMissionTasks(): Promise<void> {
   let promptToSend: string;
   try {
     missionCwd = worktree?.cwd;
+    const missionPrompt = withMissionResultContract(mission.prompt);
     promptToSend = worktree
-      ? buildWorktreePromptHeader(worktree, mission.id) + mission.prompt
-      : mission.prompt;
+      ? buildWorktreePromptHeader(worktree, mission.id) + missionPrompt
+      : missionPrompt;
   } catch (setupErr) {
     logger.error({ err: setupErr, missionId: mission.id }, 'mission setup post-worktree-create threw; cleaning up worktree');
     if (worktree) {
@@ -703,6 +705,42 @@ function buildWorktreePromptHeader(wt: MissionWorktree, missionId: string): stri
     ``,
     ``,
   ].join('\n');
+}
+
+const MISSION_RESULT_CONTRACT = `
+
+Mission Control result contract:
+At the end of your final response, include a fenced JSON block labelled MISSION_RESULT_JSON. The JSON must be valid and match this shape:
+{
+  "status": "completed|partial|failed",
+  "summary": "one concise operator-facing summary",
+  "deliverables": [{"kind":"file|url","target":"absolute path or URL","label":"human label"}],
+  "source_files": ["absolute paths or URLs you used/changed"],
+  "blockers": ["specific blocker, if any"],
+  "next_action": "specific follow-up, or null",
+  "follow_up_needed": false,
+  "review_required": false
+}
+Use absolute file paths for real deliverables. If a promised file was not created, put that in blockers, not deliverables.
+`.trim();
+
+const ATTENTION_ACTIONS_CONTRACT = `
+
+Attention action contract:
+If this output contains items Ruan or another agent needs to act on, include one line near the end:
+ATTENTION_ACTIONS: [{"title":"short action","detail":"full action and context","severity":"high|medium|low","sourceCategory":"brief|calendar|inbox|mission|runtime|reliability","suggested_agent":"main|charter|ember|marlow|mason|warden|null","due":"ISO date/time or natural due text, or null","requires_ruan":true|false,"confidence":0.0}]
+If there are no action items, include exactly:
+ATTENTION_ACTIONS: []
+`.trim();
+
+export function withMissionResultContract(prompt: string): string {
+  if (/MISSION_RESULT_JSON/i.test(prompt)) return prompt;
+  return `${prompt.trim()}\n\n${MISSION_RESULT_CONTRACT}\n`;
+}
+
+export function withScheduledTaskContract(prompt: string): string {
+  if (/ATTENTION_ACTIONS/i.test(prompt)) return prompt;
+  return `${prompt.trim()}\n\n${ATTENTION_ACTIONS_CONTRACT}\n`;
 }
 
 export function computeNextRun(cronExpression: string): number {

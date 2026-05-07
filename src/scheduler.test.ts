@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
+  withMissionResultContract,
+  withScheduledTaskContract,
+  computeNextRun,
+} from './scheduler.js';
+import {
   _initTestDatabase,
   createScheduledTask,
   getDueTasks,
@@ -12,6 +17,38 @@ import {
   resumeScheduledTask,
 } from './db.js';
 import type { ScheduledTask } from './db.js';
+
+describe('scheduler prompt contracts', () => {
+  it('adds the Mission Control result contract to mission prompts', () => {
+    const prompt = withMissionResultContract('Build the report.');
+
+    expect(prompt).toContain('MISSION_RESULT_JSON');
+    expect(prompt).toContain('"deliverables"');
+    expect(prompt).toContain('"review_required"');
+    expect(prompt).toContain('absolute file paths');
+  });
+
+  it('does not duplicate an existing mission result contract', () => {
+    const prompt = 'Do the work.\n\nMISSION_RESULT_JSON already present.';
+
+    expect(withMissionResultContract(prompt)).toBe(prompt);
+  });
+
+  it('adds the structured attention action contract to scheduled agent tasks', () => {
+    const prompt = withScheduledTaskContract('Produce Ruan morning brief.');
+
+    expect(prompt).toContain('ATTENTION_ACTIONS');
+    expect(prompt).toContain('"suggested_agent"');
+    expect(prompt).toContain('"requires_ruan"');
+    expect(prompt).toContain('ATTENTION_ACTIONS: []');
+  });
+
+  it('does not duplicate an existing attention action contract', () => {
+    const prompt = 'Morning brief.\nATTENTION_ACTIONS: []';
+
+    expect(withScheduledTaskContract(prompt)).toBe(prompt);
+  });
+});
 
 describe('task state machine', () => {
   beforeEach(() => {
