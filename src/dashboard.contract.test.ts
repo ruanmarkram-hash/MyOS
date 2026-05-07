@@ -148,6 +148,19 @@ describe('GET /api/health', () => {
 });
 
 describe('POST /api/system/restart-main', () => {
+  it('respects DASHBOARD_MUTATIONS_ENABLED=false', async () => {
+    const prev = process.env.DASHBOARD_MUTATIONS_ENABLED;
+    process.env.DASHBOARD_MUTATIONS_ENABLED = 'false';
+    try {
+      const res = await app.request('/api/system/restart-main' + Q, { method: 'POST' });
+      expect(res.status).toBe(423);
+      expect(await jsonOf(res)).toMatchObject({ ok: false, error: expect.any(String) });
+    } finally {
+      if (prev === undefined) delete process.env.DASHBOARD_MUTATIONS_ENABLED;
+      else process.env.DASHBOARD_MUTATIONS_ENABLED = prev;
+    }
+  });
+
   it('queues a graceful main restart', async () => {
     const res = await app.request('/api/system/restart-main' + Q, { method: 'POST' });
     expect(res.status).toBe(202);
@@ -604,6 +617,27 @@ describe('GET /api/home dashboard endpoints', () => {
     const created = missions.tasks.find((task: any) => task.title === 'Draft Lucas inquiry response');
     expect(created.prompt).toContain('Additional instructions from Ruan');
     expect(created.prompt).toContain('Prioritise the Lucas contact form');
+  });
+
+  it('carries steering instructions when assigning a scheduled attention item', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('schedule-steering', 'Run a full workspace health audit', '0 * * * *', now - 3600, 'warden');
+    updateTaskAfterRun('schedule-steering', now + 3600, 'Last run failed: credential drift', 'failed');
+
+    const before = await jsonOf(await get('/api/home/attention'));
+    const item = before.items.find((entry: any) => entry.id === 'schedule:schedule-steering:last-status');
+    expect(item).toMatchObject({ source: 'schedule' });
+
+    const assign = await app.request('/api/home/attention/assign' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ itemId: item.id, agentId: 'warden', instruction: 'Check Graph auth before retrying the audit.' }),
+    });
+    expect(assign.status).toBe(201);
+    const body = await jsonOf(assign);
+    const created = getMissionTask(body.task.id);
+    expect(created?.prompt).toContain('Additional instructions from Ruan');
+    expect(created?.prompt).toContain('Check Graph auth before retrying');
   });
 
   it('archives a report attention item durably so the same report text does not resurface', async () => {

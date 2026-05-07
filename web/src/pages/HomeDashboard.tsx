@@ -675,7 +675,7 @@ function AttentionPanel({
                 (e.target as HTMLSelectElement).value = '';
               }}
               disabled={!!assigning[item.id] || agents.length === 0}
-              class="w-[132px] bg-[var(--color-card)] border border-[var(--color-border)] rounded text-[10.5px] text-[var(--color-text-muted)] px-1.5 py-1 outline-none hover:border-[var(--color-border-strong)] disabled:opacity-40"
+              class="w-full sm:w-[132px] bg-[var(--color-card)] border border-[var(--color-border)] rounded text-[10.5px] text-[var(--color-text-muted)] px-1.5 py-1 outline-none hover:border-[var(--color-border-strong)] disabled:opacity-40"
               title="Assign this attention item"
             >
               <option value="">{assigning[item.id] ? 'Assigning...' : 'Assign to...'}</option>

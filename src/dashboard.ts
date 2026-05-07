@@ -3028,6 +3028,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         `Source schedule: ${schedule.id}`,
         `Last status: ${schedule.last_status || schedule.status}`,
         schedule.last_result ? `Last result:\n${schedule.last_result.slice(0, 2000)}` : '',
+        instruction ? `Additional instructions from Ruan:\n${instruction}` : '',
       ].filter(Boolean).join('\n'), agentId, 'dashboard', schedule.last_status === 'failed' ? 9 : 6);
       clearScheduledTaskAttention(id, `Assigned follow-up mission ${missionId} from Home Needs Attention.`);
       return c.json({ ok: true, task: getMissionTask(missionId) }, 201);
@@ -4072,6 +4073,9 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   });
 
   app.post('/api/system/restart-main', (c) => {
+    if (!killSwitchFlag('DASHBOARD_MUTATIONS_ENABLED', true)) {
+      return c.json({ ok: false, error: 'Dashboard mutations are disabled.' }, 423);
+    }
     const queued = queueMainRestart('dashboard');
     return c.json({
       ok: true,
