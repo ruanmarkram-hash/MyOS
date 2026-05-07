@@ -106,7 +106,7 @@ function validAgentIds(): Set<string> {
 }
 
 function hasHumanBlocker(text: string): boolean {
-  return /\b(?:requires ruan:\s*yes|ruan(?:'s)?\s+(?:approval|review|decision|input|confirmation|call)|your\s+(?:approval|review|decision|input|confirmation|call)|approve|sign[- ]?off|confirm|choose|decide|send\s+(?:the|this|email|message)|external account|admin account|device code|log\s?in|login|re-?auth|authenticate|refresh token|mfa|2fa|consent|payment|billing|bank|manual permission|full disk access|system settings|keychain password)\b/i.test(text);
+  return /\b(?:requires ruan:\s*yes|ruan(?:'s)?\s+(?:approval|review|decision|input|confirmation|call)|ruan\s+(?:to|needs? to|must|should)\s+(?:reply|send|call|review|decide|approve|confirm|choose|log\s?in|login|re-?auth|authenticate|inspect|check)|your\s+(?:approval|review|decision|input|confirmation|call)|approve|sign[- ]?off|confirm|choose|decide|send\s+(?:the|this|email|message)|external account|admin account|device code|log\s?in|login|re-?auth|authenticate|refresh token|mfa|2fa|consent|payment|billing|bank|manual permission|full disk access|system settings|keychain password)\b/i.test(text);
 }
 
 function isInformationalOnly(text: string): boolean {
@@ -122,6 +122,12 @@ function explicitlyNoRuan(text: string): boolean {
   return /\bRequires Ruan:\s*no\b/i.test(text);
 }
 
+function isSystemFixRecommendation(text: string): boolean {
+  const hasSystemHealthSignal = /\b(?:monitor-brain|brain-watcher|jsonl processing|upstream jsonl|thoughts ingested|ingestion path|ob1-brain-health)\b/i.test(text);
+  const hasFailureOrFixSignal = /\b(?:fix recommendation|returned exit \d+|exit code \d+|failed|failure|error|0 thoughts ingested)\b/i.test(text);
+  return hasSystemHealthSignal && hasFailureOrFixSignal;
+}
+
 function inferAgent(text: string): string | null {
   if (/\b(?:ndis|compliance|audit|ca-0?5|ca-?10|restrictive practice|support plan|charter|policy|behaviour support|regulated)\b/i.test(text)) {
     return 'charter';
@@ -135,7 +141,7 @@ function inferAgent(text: string): string | null {
   if (/\b(?:runtime|stale|worker|dead-?letter|telegram send|notification|provider health|restart|health audit|credential drift|config drift|scheduled job|service health|outbox|watchdog)\b/i.test(text)) {
     return 'warden';
   }
-  if (/\b(?:code|build|test|typescript|react|vite|api|endpoint|route|database|postgres|sqlite|supabase|module|dependency|script|caldav|imessage|digest|webhook|frontend|backend|bug|exception|stack trace|shell command)\b/i.test(text)) {
+  if (/\b(?:code|build|test|typescript|react|vite|api|endpoint|route|database|postgres|sqlite|supabase|module|dependency|script|caldav|imessage|digest|webhook|frontend|backend|bug|exception|stack trace|shell command|monitor-brain|brain-watcher|jsonl|ingestion path|thoughts ingested)\b/i.test(text)) {
     return 'mason';
   }
   return null;
@@ -159,7 +165,7 @@ export function classifyAttentionItem(item: AttentionItem): AutofixDecision {
   }
 
   const inferred = inferAgent(text);
-  if (inferred && agents.has(inferred) && (item.source_kind === 'mission' || item.source_kind === 'schedule' || explicitlyNoRuan(text))) {
+  if (inferred && agents.has(inferred) && (item.source_kind === 'mission' || item.source_kind === 'schedule' || explicitlyNoRuan(text) || isSystemFixRecommendation(text))) {
     return { action: 'route', agentId: inferred, reason: 'agent-owned issue with no human blocker detected' };
   }
 

@@ -705,6 +705,72 @@ describe('GET /api/home dashboard endpoints', () => {
     ]));
   });
 
+  it('auto-routes system fix recommendations from briefs without explicit no-Ruan metadata', async () => {
+    upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-ob1-health',
+      sourceKey: 'brief:brief-ob1-health:ob1-health',
+      title: 'Other brief',
+      detail: '[ob1-brain-health]: monitor-brain returned exit 2. Issue: 2 upstream jsonl file(s) modified in last 4h but 0 thoughts ingested. Fix recommendation: inspect brain-watcher ingestion path and upstream jsonl processing.',
+      severity: 'high',
+      href: '/home',
+    });
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items.map((item: any) => item.detail)).not.toEqual(expect.arrayContaining([
+      expect.stringContaining('monitor-brain returned exit 2'),
+    ]));
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        assigned_agent: 'mason',
+        created_by: 'autofix',
+        prompt: expect.stringContaining('brain-watcher ingestion path'),
+      }),
+    ]));
+  });
+
+  it('keeps system-looking brief items when they explicitly need Ruan', async () => {
+    upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-ob1-human',
+      sourceKey: 'brief:brief-ob1-human:ob1-health',
+      title: 'Other brief',
+      detail: '[ob1-brain-health]: monitor-brain returned exit 2. Requires Ruan: yes. Ruan to inspect the source export before ingestion is retried.',
+      severity: 'high',
+      href: '/home',
+    });
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Other brief',
+        detail: expect.stringContaining('Requires Ruan: yes'),
+      }),
+    ]));
+  });
+
+  it('does not route normal human-owned brief recommendations just because they say fix recommendation', async () => {
+    upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-human-reply',
+      sourceKey: 'brief:brief-human-reply:reply',
+      title: 'Morning brief',
+      detail: 'Fix recommendation: Ruan to reply to Lucas contact form before Ember drafts the follow-up.',
+      severity: 'medium',
+      href: '/home',
+    });
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Morning brief',
+        detail: expect.stringContaining('Ruan to reply to Lucas'),
+      }),
+    ]));
+  });
+
   it('auto-routes terminal mission failures into a linked review follow-up', async () => {
     createMissionTask('m-autofix-terminal', 'Fix frontend build failure', 'fix build', 'mason', 'dashboard', 8);
     completeMissionTask('m-autofix-terminal', null, 'failed', 'TypeScript build failed: missing dependency.');
