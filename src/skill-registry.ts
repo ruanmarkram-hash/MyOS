@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { logger } from './logger.js';
 
@@ -204,8 +205,7 @@ function scanDirectory(dir: string): void {
 export function initSkillRegistry(scanDirs: SkillRegistryScanDirs = {}): void {
   skills.clear();
 
-  // Find project root by walking up from this file looking for CLAUDE.md
-  let projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   // Fallback: look for CLAUDE.md to confirm
   if (!fs.existsSync(path.join(projectRoot, 'CLAUDE.md'))) {
     // Already at a reasonable default, just continue

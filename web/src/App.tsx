@@ -28,7 +28,7 @@ export function App() {
 
   return (
     <Router base={routeBase}>
-      <div class="app-shell flex h-screen bg-[var(--color-bg)] text-[var(--color-text)]">
+      <div class="app-shell flex h-[100dvh] bg-[var(--color-bg)] text-[var(--color-text)]">
         <Sidebar />
         <main class="app-main flex-1 min-w-0 overflow-hidden">
           <Switch>
