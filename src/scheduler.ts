@@ -484,6 +484,7 @@ async function runDueMissionTasks(): Promise<void> {
       clearTimeout(timeout);
 
       if (result.aborted) {
+        if (worktree) snapshotAndPushMissionBranch(worktree);
         const verdict = classifyMissionFailure(mission.started_at, missionCwd);
         // Partial-with-commits: try to push the branch so the operator can
         // see the work even though the wall-clock budget ran out. Best
@@ -492,7 +493,7 @@ async function runDueMissionTasks(): Promise<void> {
           pushMissionBranch(worktree);
         }
         const detail = verdict.status === 'partial'
-          ? `Hit timeout after committing ${verdict.commitCount} change(s)`
+          ? `Hit timeout after committing ${verdict.commitCount} change(s). Review branch: ${worktree?.branch || 'mission branch'}.`
           : `Timed out after ${MISSION_TIMEOUT_MIN} minutes`;
         completeMissionTask(mission.id, null, verdict.status, detail);
         logger.warn(
@@ -580,13 +581,17 @@ async function runDueMissionTasks(): Promise<void> {
       // committed work before erroring out (e.g. max-turns surfacing as
       // a thrown classified error), preserve that signal as 'partial'
       // so the user doesn't waste a re-dispatch on already-landed work.
+      if (worktree) snapshotAndPushMissionBranch(worktree);
       const verdict = classifyMissionFailure(mission.started_at, missionCwd);
       if (verdict.status === 'partial' && worktree) {
         // Preserve any committed work for human review even though the
         // mission errored out before we could merge.
         pushMissionBranch(worktree);
       }
-      completeMissionTask(mission.id, null, verdict.status, errMsg.slice(0, 500));
+      const detail = verdict.status === 'partial'
+        ? `${errMsg.slice(0, 360)}\nPartial work was preserved on branch: ${worktree?.branch || 'mission branch'}`
+        : errMsg.slice(0, 500);
+      completeMissionTask(mission.id, null, verdict.status, detail);
       logger.error(
         { err, missionId: mission.id, status: verdict.status, commitCount: verdict.commitCount },
         `mission ${mission.id} errored; ${verdict.commitCount} commits since dispatch -> status=${verdict.status}`,
@@ -594,7 +599,7 @@ async function runDueMissionTasks(): Promise<void> {
       await notifyMissionDone(
         { ...mission, error: errMsg.slice(0, 500), status: verdict.status },
         verdict.status,
-        errMsg,
+        detail,
         { commitCount: verdict.commitCount },
       );
     } finally {

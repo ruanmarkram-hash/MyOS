@@ -30,6 +30,10 @@ interface Agent { id: string; name: string; description: string; running: boolea
 const TERMINAL: MissionTask['status'][] = ['completed', 'failed', 'partial', 'cancelled'];
 const DONE_VISIBLE_SECS = 30 * 60;
 
+function stopCardGesture(event: any) {
+  event.stopPropagation();
+}
+
 export function MissionControl() {
   const [location, navigate] = useLocation();
   const tasks = useFetch<{ tasks: MissionTask[] }>('/api/mission/tasks', 15_000);
@@ -378,19 +382,46 @@ function InboxCard({
   onDragStart: () => void; onDragEnd: () => void; isDragging: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [instruction, setInstruction] = useState('');
 
   async function autoAssign() {
     setBusy('assign');
-    try { await apiPost(`/api/mission/tasks/${task.id}/auto-assign`); onChange(); }
+    try {
+      if (instruction.trim()) {
+        await apiPatch(`/api/mission/tasks/${task.id}`, { instruction: instruction.trim() });
+      }
+      await apiPost(`/api/mission/tasks/${task.id}/auto-assign`);
+      setInstruction('');
+      onChange();
+    }
     catch (err: any) { alert('Auto-assign failed: ' + (err?.message || err)); }
     finally { setBusy(null); }
   }
 
   async function manualAssign(agentId: string) {
     setBusy('manual');
-    try { await apiPatch(`/api/mission/tasks/${task.id}`, { assigned_agent: agentId }); onChange(); }
+    try {
+      await apiPatch(`/api/mission/tasks/${task.id}`, { assigned_agent: agentId, instruction: instruction.trim() || undefined });
+      setInstruction('');
+      onChange();
+    }
     catch (err: any) { alert('Assign failed: ' + (err?.message || err)); }
     finally { setBusy(null); }
+  }
+
+  async function saveInstruction() {
+    if (!instruction.trim()) return;
+    setBusy('instruction');
+    try {
+      await apiPatch(`/api/mission/tasks/${task.id}`, { instruction: instruction.trim() });
+      setInstruction('');
+      onChange();
+    } catch (err: any) {
+      alert('Instruction failed: ' + (err?.message || err));
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function remove() {
@@ -417,9 +448,39 @@ function InboxCard({
           {formatRelativeTime(task.created_at)}
         </span>
       </div>
-      <div class="text-[12.5px] text-[var(--color-text)] leading-snug mb-1.5 line-clamp-2">
-        {task.title}
-      </div>
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        class="w-full text-left text-[12.5px] text-[var(--color-text)] leading-snug mb-1.5 rounded hover:bg-[var(--color-card)]"
+      >
+        <span class={expanded ? '' : 'line-clamp-2'}>{task.title}</span>
+      </button>
+      {expanded && (
+        <div class="mb-2 rounded border border-[var(--color-border)] bg-[var(--color-card)] p-2">
+          <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Prompt</div>
+          <div class="text-[11px] text-[var(--color-text-muted)] whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto">{task.prompt}</div>
+          <textarea
+            value={instruction}
+            onInput={(e) => setInstruction((e.target as HTMLTextAreaElement).value)}
+            onClick={stopCardGesture}
+            onMouseDown={stopCardGesture}
+            onTouchStart={stopCardGesture}
+            onDragStart={stopCardGesture}
+            rows={2}
+            maxLength={2000}
+            placeholder="Steer this before assigning..."
+            class="mt-2 w-full resize-y rounded border border-[var(--color-border)] bg-[var(--color-elevated)] px-2 py-1.5 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] placeholder:text-[var(--color-text-faint)]"
+          />
+          <button
+            type="button"
+            onClick={saveInstruction}
+            disabled={!instruction.trim() || busy !== null}
+            class="mt-1.5 inline-flex items-center rounded border border-[var(--color-border)] px-2 py-1 text-[10.5px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] disabled:opacity-40"
+          >
+            Save instruction
+          </button>
+        </div>
+      )}
       <div class="flex items-center gap-1">
         <button
           type="button"
@@ -455,6 +516,7 @@ function InboxCard({
 function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; agents: Agent[]; onChange: () => void; navigate: (path: string) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [instruction, setInstruction] = useState('');
   const priorityTone = task.priority >= 7 ? 'high' : task.priority >= 4 ? 'medium' : 'low';
   const draggable = task.status !== 'running';
 
@@ -477,11 +539,27 @@ function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; age
     if (!agentId || agentId === task.assigned_agent) return;
     setBusy('assign');
     try {
-      const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { assigned_agent: agentId });
+      const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { assigned_agent: agentId, instruction: instruction.trim() || undefined });
       if (!result.ok) throw new Error('Task is running or no longer exists');
+      setInstruction('');
       onChange();
     } catch (err: any) {
       alert('Reassign failed: ' + (err?.message || err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveInstruction() {
+    if (!instruction.trim()) return;
+    setBusy('instruction');
+    try {
+      const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { instruction: instruction.trim() });
+      if (!result.ok) throw new Error('Task is running or no longer exists');
+      setInstruction('');
+      onChange();
+    } catch (err: any) {
+      alert('Instruction failed: ' + (err?.message || err));
     } finally {
       setBusy(null);
     }
@@ -573,6 +651,30 @@ function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; age
           {task.result}
         </div>
       )}
+      {expanded && task.status !== 'running' && !TERMINAL.includes(task.status) && (
+        <div class="mt-2 border-t border-[var(--color-border)] pt-2">
+          <textarea
+            value={instruction}
+            onInput={(e) => setInstruction((e.target as HTMLTextAreaElement).value)}
+            rows={2}
+            maxLength={2000}
+            placeholder="Add instructions before this agent picks it up..."
+            class="w-full resize-y rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] placeholder:text-[var(--color-text-faint)]"
+            onClick={stopCardGesture}
+            onMouseDown={stopCardGesture}
+            onTouchStart={stopCardGesture}
+            onDragStart={stopCardGesture}
+          />
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); void saveInstruction(); }}
+            disabled={!instruction.trim() || busy !== null}
+            class="mt-1.5 inline-flex items-center rounded border border-[var(--color-border)] px-2 py-1 text-[10.5px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] disabled:opacity-40"
+          >
+            Save instruction
+          </button>
+        </div>
+      )}
       {task.error && (
         <div class="mt-1.5 text-[10.5px] text-[var(--color-status-failed)] line-clamp-2 font-mono">
           {task.error}
@@ -584,14 +686,17 @@ function TaskCard({ task, agents, onChange, navigate }: { task: MissionTask; age
 
 function MobileTaskRow({ task, agents, onChange, navigate }: { task: MissionTask; agents: Agent[]; onChange: () => void; navigate: (path: string) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [instruction, setInstruction] = useState('');
   const priorityTone = task.priority >= 7 ? 'high' : task.priority >= 4 ? 'medium' : 'low';
 
   async function assign(agentId: string) {
     if (!agentId || agentId === task.assigned_agent || task.status === 'running') return;
     setBusy('assign');
     try {
-      const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { assigned_agent: agentId });
+      const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { assigned_agent: agentId, instruction: instruction.trim() || undefined });
       if (!result.ok) throw new Error('Task is running or no longer exists');
+      setInstruction('');
       onChange();
     } catch (err: any) {
       alert('Assign failed: ' + (err?.message || err));
@@ -603,10 +708,29 @@ function MobileTaskRow({ task, agents, onChange, navigate }: { task: MissionTask
   async function autoAssign() {
     setBusy('auto');
     try {
+      if (instruction.trim()) {
+        await apiPatch(`/api/mission/tasks/${task.id}`, { instruction: instruction.trim() });
+      }
       await apiPost(`/api/mission/tasks/${task.id}/auto-assign`);
+      setInstruction('');
       onChange();
     } catch (err: any) {
       alert('Auto-assign failed: ' + (err?.message || err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveInstruction() {
+    if (!instruction.trim()) return;
+    setBusy('instruction');
+    try {
+      const result = await apiPatch<{ ok: boolean }>(`/api/mission/tasks/${task.id}`, { instruction: instruction.trim() });
+      if (!result.ok) throw new Error('Task is running or no longer exists');
+      setInstruction('');
+      onChange();
+    } catch (err: any) {
+      alert('Instruction failed: ' + (err?.message || err));
     } finally {
       setBusy(null);
     }
@@ -634,7 +758,13 @@ function MobileTaskRow({ task, agents, onChange, navigate }: { task: MissionTask
             {task.assigned_agent && <Pill tone="neutral">@{task.assigned_agent}</Pill>}
             <span class="ml-auto text-[10px] text-[var(--color-text-faint)]">{formatRelativeTime(task.completed_at || task.started_at || task.created_at)}</span>
           </div>
-          <div class="text-[13px] text-[var(--color-text)] leading-snug">{task.title}</div>
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            class="w-full text-left text-[13px] text-[var(--color-text)] leading-snug"
+          >
+            {task.title}
+          </button>
           {(task.error || task.result) && (
             <div class={'mt-1 text-[11px] leading-relaxed ' + (task.error ? 'text-[var(--color-status-failed)]' : 'text-[var(--color-text-muted)]') + ' line-clamp-2'}>
               {task.error || task.result}
@@ -653,6 +783,13 @@ function MobileTaskRow({ task, agents, onChange, navigate }: { task: MissionTask
             <Wand2 size={12} /> Auto
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          class="rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-2 py-1.5 text-[11px] text-[var(--color-text-muted)] disabled:opacity-40"
+        >
+          {expanded ? 'Less' : 'Details'}
+        </button>
         {task.status !== 'running' && !TERMINAL.includes(task.status) && (
           <select
             value={task.assigned_agent || ''}
@@ -680,10 +817,54 @@ function MobileTaskRow({ task, agents, onChange, navigate }: { task: MissionTask
             disabled={busy !== null}
             class="rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-2 py-1.5 text-[11px] text-[var(--color-text-muted)] disabled:opacity-40"
           >
-            Cancel
+          Cancel
           </button>
         )}
       </div>
+      {expanded && (
+        <div class="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] p-2">
+          <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Prompt</div>
+          <div class="max-h-44 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+            {task.prompt}
+          </div>
+          {task.result && (
+            <>
+              <div class="mt-2 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Result</div>
+              <div class="max-h-44 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--color-text)]">{task.result}</div>
+            </>
+          )}
+          {task.error && (
+            <>
+              <div class="mt-2 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Error</div>
+              <div class="max-h-44 overflow-y-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-[var(--color-status-failed)]">{task.error}</div>
+            </>
+          )}
+          {task.status !== 'running' && !TERMINAL.includes(task.status) && (
+            <div class="mt-2">
+              <textarea
+                value={instruction}
+                onInput={(event) => setInstruction((event.target as HTMLTextAreaElement).value)}
+                onClick={stopCardGesture}
+                onMouseDown={stopCardGesture}
+                onTouchStart={stopCardGesture}
+                onDragStart={stopCardGesture}
+                rows={2}
+                maxLength={2000}
+                placeholder="Add instructions before this agent picks it up..."
+                class="w-full resize-y rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] placeholder:text-[var(--color-text-faint)]"
+              />
+              <button
+                type="button"
+                onClick={() => void saveInstruction()}
+                disabled={!instruction.trim() || busy !== null}
+                class="mt-1.5 rounded border border-[var(--color-border)] px-2 py-1.5 text-[11px] text-[var(--color-text-muted)] disabled:opacity-40"
+              >
+                Save instruction
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

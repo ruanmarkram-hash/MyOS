@@ -182,6 +182,35 @@ input, textarea, select {
     display: block;
   }
 
+  .page-header-inner {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .page-header-title,
+  .page-header-actions {
+    width: 100%;
+  }
+
+  .page-header-actions {
+    margin-left: 0;
+    overflow-x: auto;
+    padding-bottom: 0.125rem;
+  }
+
+  .page-header-actions > * {
+    flex: 0 0 auto;
+  }
+
+  .page-header-tabs {
+    overflow-x: auto;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
   .metric-card {
     min-height: 84px;
   }
@@ -218,7 +247,8 @@ input, textarea, select {
 }
 
 @media (max-width: 520px) {
-  .app-main > div > div:first-child {
+  .page-header-inner,
+  .page-header-tabs {
     padding-left: 1rem;
     padding-right: 1rem;
   }

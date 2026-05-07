@@ -819,26 +819,40 @@ function refreshReviewFromFollowup(review: MissionReview): MissionReview {
   const followup = getMissionTask(review.followup_task_id);
   if (!followup || !TERMINAL_MISSION_STATUSES.has(followup.status)) return review;
   if (followup.status === 'completed') {
-    return upsertMissionReview({
+    const next = upsertMissionReview({
       taskId: review.task_id,
       reviewStatus: 'resolved',
       resolution: 'followup_completed',
       followupTaskId: followup.id,
       instruction: review.instruction,
     });
+    closeTerminalMissionAttention(review.task_id, 'resolved');
+    return next;
   }
-  return upsertMissionReview({
+  const next = upsertMissionReview({
     taskId: review.task_id,
     reviewStatus: 'needs_triage',
     resolution: 'retried',
     followupTaskId: followup.id,
     instruction: review.instruction,
   });
+  reopenTerminalMissionAttention(review.task_id);
+  return next;
 }
 
 function effectiveMissionReview(task: MissionTask, missions: MissionTask[]): MissionReview | null {
   const existing = getMissionReview(task.id);
-  if (existing) return refreshReviewFromFollowup(existing);
+  if (existing) {
+    const refreshed = refreshReviewFromFollowup(existing);
+    if (
+      shouldShowReview(refreshed)
+      && refreshed.review_status !== 'waiting_followup'
+      && completedMissionHasFollowUp(task, missions)
+    ) {
+      return null;
+    }
+    return refreshed;
+  }
 
   const reviewStatus = defaultReviewStatusForTask(task, missions);
   if (!reviewStatus) return null;
@@ -2039,7 +2053,8 @@ function syncTerminalMissionAttentionItems(missions: MissionTask[]): void {
   for (const mission of missions) {
     if (mission.status !== 'failed' && mission.status !== 'partial') continue;
     const sourceKey = `mission:${mission.id}:terminal`;
-    const review = getMissionReview(mission.id);
+    const storedReview = getMissionReview(mission.id);
+    const review = storedReview ? refreshReviewFromFollowup(storedReview) : null;
     if (review && ['archived', 'resolved'].includes(review.review_status)) {
       const existing = getAttentionItemBySourceKey(sourceKey);
       if (existing?.status === 'open') updateAttentionStatus(existing.id, 'archived');
@@ -2060,6 +2075,32 @@ function syncTerminalMissionAttentionItems(missions: MissionTask[]): void {
       href: `/review?task=${encodeURIComponent(mission.id)}`,
     });
   }
+}
+
+function closeTerminalMissionAttention(missionId: string, status: 'resolved' | 'archived' | 'assigned'): void {
+  const existing = getAttentionItemBySourceKey(`mission:${missionId}:terminal`);
+  if (existing && (existing.status === 'open' || existing.status === 'assigned')) {
+    updateAttentionStatus(existing.id, status);
+  }
+}
+
+function reopenTerminalMissionAttention(missionId: string): void {
+  const mission = getMissionTask(missionId);
+  if (!mission || (mission.status !== 'failed' && mission.status !== 'partial')) return;
+  const sourceKey = `mission:${mission.id}:terminal`;
+  const existing = getAttentionItemBySourceKey(sourceKey);
+  if (existing?.status === 'assigned') {
+    updateAttentionStatus(existing.id, 'open');
+  }
+  upsertAttentionItem({
+    sourceKind: 'mission',
+    sourceId: mission.id,
+    sourceKey,
+    title: mission.title,
+    detail: terminalMissionAttentionDetail(mission),
+    severity: mission.status === 'failed' ? 'high' : 'medium',
+    href: `/review?task=${encodeURIComponent(mission.id)}`,
+  });
 }
 
 function normalizedAttentionTitle(title: string): string {
@@ -3450,16 +3491,19 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
   app.patch('/api/mission/tasks/:id', async (c) => {
     const id = c.req.param('id');
-    const body = await c.req.json<{ assigned_agent?: string }>();
+    const body = await c.req.json<{ assigned_agent?: string; instruction?: string }>();
     const newAgent = body?.assigned_agent?.trim();
-    if (!newAgent) return c.json({ error: 'assigned_agent required' }, 400);
+    const instruction = body?.instruction?.trim().slice(0, 2000) || '';
+    if (!newAgent && !instruction) return c.json({ error: 'assigned_agent or instruction required' }, 400);
     const validAgents = ['main', ...listAgentIds()];
-    if (!validAgents.includes(newAgent)) return c.json({ error: 'Unknown agent' }, 400);
+    if (newAgent && !validAgents.includes(newAgent)) return c.json({ error: 'Unknown agent' }, 400);
     const task = getMissionTask(id);
     if (!task) return c.json({ error: 'Not found' }, 404);
-    if (task.status === 'running') return c.json({ ok: false, error: 'Running mission tasks cannot be reassigned.' }, 409);
-    const ok = reassignMissionTask(id, newAgent);
-    return c.json({ ok });
+    if (task.status === 'running') return c.json({ ok: false, error: 'Running mission tasks cannot be edited or reassigned.' }, 409);
+    let ok = true;
+    if (newAgent) ok = reassignMissionTask(id, newAgent);
+    if (instruction) appendMissionTaskInstruction(id, instruction);
+    return c.json({ ok, task: getMissionTask(id) });
   });
 
   app.delete('/api/mission/tasks/:id', (c) => {
@@ -3532,6 +3576,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const task = getMissionTask(id);
     if (!task) return c.json({ ok: false, error: 'Not found' }, 404);
     const review = updateMissionReviewState(id, 'archived', 'ignored');
+    closeTerminalMissionAttention(id, 'archived');
     return c.json({ ok: true, review });
   });
 
@@ -3562,6 +3607,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const task = getMissionTask(id);
     if (!task) return c.json({ ok: false, error: 'Not found' }, 404);
     const review = updateMissionReviewState(id, 'resolved', 'approved');
+    closeTerminalMissionAttention(id, 'resolved');
     return c.json({ ok: true, review });
   });
 
@@ -3590,6 +3636,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         }
         const extraInstructions = (body.instructions || '').trim().slice(0, 6000);
         if (extraInstructions) appendMissionTaskInstruction(existingFollowup.id, extraInstructions);
+        closeTerminalMissionAttention(id, 'assigned');
         return c.json({ ok: true, task: getMissionTask(existingFollowup.id), review: existingReview, reused: true });
       }
     }
@@ -3613,6 +3660,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       followupTaskId: childId,
       instruction: instructions,
     });
+    closeTerminalMissionAttention(task.id, 'assigned');
     return c.json({ ok: true, task: childTask, review, reused: false }, 201);
   });
 

@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { _initTestDatabase, _setMissionCompletedAtForTest, completeMissionTask, createMissionTask, createScheduledTask, getAllScheduledTasks, getMissionManifest, getMissionReview, getMissionTask, getTelegramOutboxRow, insertOperationNotification, insertTelegramOutbox, markTaskRunning, markTelegramOutboxDeadLettered, saveStructuredMemory, updateTaskAfterRun } from './db.js';
+import { _initTestDatabase, _setMissionCompletedAtForTest, cleanupOldMissionTasks, completeMissionTask, createMissionTask, createScheduledTask, getAllScheduledTasks, getAttentionItemBySourceKey, getMissionManifest, getMissionReview, getMissionTask, getTelegramOutboxRow, insertOperationNotification, insertTelegramOutbox, markTaskRunning, markTelegramOutboxDeadLettered, saveStructuredMemory, updateTaskAfterRun, upsertAttentionItem, upsertMissionReview } from './db.js';
 import { buildDashboardApp, configuredReviewExportEmail, configuredReviewExportFromEmail, createReviewEmailAttachment } from './dashboard.js';
 import type { Hono } from 'hono';
 
@@ -1144,6 +1144,55 @@ describe('GET /api/review/inbox', () => {
     ]));
   });
 
+  it('materializes terminal review state and prevents unresolved cleanup loss', async () => {
+    const old = Math.floor(Date.now() / 1000) - 10 * 86400;
+    createMissionTask('m-durable-failed-loop', 'Durable failed loop', 'fail', 'mason', 'main', 8);
+    completeMissionTask('m-durable-failed-loop', null, 'failed', 'Durable blocker.');
+    _setMissionCompletedAtForTest('m-durable-failed-loop', old, 'failed');
+
+    expect(getMissionReview('m-durable-failed-loop')).toMatchObject({ review_status: 'needs_triage' });
+    expect(cleanupOldMissionTasks(7)).toBe(0);
+    expect(getMissionTask('m-durable-failed-loop')).not.toBeNull();
+
+    const approve = await app.request('/api/review/tasks/m-durable-failed-loop/approve' + Q, { method: 'POST' });
+    expect(approve.status).toBe(200);
+    expect(cleanupOldMissionTasks(7)).toBe(1);
+    expect(getMissionTask('m-durable-failed-loop')).toBeNull();
+  });
+
+  it('lets Mission Control append steering instructions without reassigning', async () => {
+    createMissionTask('m-steer', 'Steerable mission', 'Original prompt', 'mason', 'dashboard', 5);
+    const res = await app.request('/api/mission/tasks/m-steer' + Q, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ instruction: 'Use the smaller scope and report blockers first.' }),
+    });
+    expect(res.status).toBe(200);
+    expect(getMissionTask('m-steer')?.prompt).toContain('Additional instructions from Ruan:');
+    expect(getMissionTask('m-steer')?.prompt).toContain('Use the smaller scope');
+  });
+
+  it('does not archive review or attention state when deleting a nonterminal mission fails', async () => {
+    createMissionTask('m-delete-queued-guard', 'Queued guard', 'do work', 'mason', 'dashboard', 5);
+    upsertMissionReview({ taskId: 'm-delete-queued-guard', reviewStatus: 'needs_triage', resolution: null });
+    upsertAttentionItem({
+      sourceKind: 'mission',
+      sourceId: 'm-delete-queued-guard',
+      sourceKey: 'mission:m-delete-queued-guard:terminal',
+      title: 'Queued guard',
+      detail: 'Still active.',
+      severity: 'medium',
+      href: '/review?task=m-delete-queued-guard',
+    });
+
+    const res = await app.request('/api/mission/tasks/m-delete-queued-guard' + Q, { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(await jsonOf(res)).toMatchObject({ ok: false });
+    expect(getMissionTask('m-delete-queued-guard')).not.toBeNull();
+    expect(getMissionReview('m-delete-queued-guard')).toMatchObject({ review_status: 'needs_triage' });
+    expect(getAttentionItemBySourceKey('mission:m-delete-queued-guard:terminal')).toMatchObject({ status: 'open' });
+  });
+
   it('keeps old failed and partial missions in durable Needs Attention until reviewed', async () => {
     const old = Math.floor(Date.now() / 1000) - 48 * 3600;
     createMissionTask('m-old-failed-loop', 'Old failed loop', 'fail', 'mason', 'main', 8);
@@ -1555,6 +1604,78 @@ describe('GET /api/review/inbox', () => {
     const res = await get('/api/home/attention');
     const body = await jsonOf(res);
     expect(body.items.map((item: any) => item.id)).not.toContain('mission:m-home-failed-review:terminal');
+  });
+
+  it('reopens parent Home attention when a Review Inbox follow-up fails', async () => {
+    createMissionTask('m-parent-followup-fails', 'Parent failed task', 'original prompt', 'mason', 'dashboard', 6);
+    completeMissionTask('m-parent-followup-fails', null, 'failed', 'first failure');
+
+    const followup = await app.request('/api/review/tasks/m-parent-followup-fails/follow-up' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assigned_agent: 'mason', mode: 'retry', instructions: 'Try again.' }),
+    });
+    const followupBody = await jsonOf(followup);
+    expect(followup.status).toBe(201);
+    expect(getAttentionItemBySourceKey('mission:m-parent-followup-fails:terminal')).toMatchObject({ status: 'assigned' });
+
+    completeMissionTask(followupBody.task.id, null, 'failed', 'retry failed too');
+
+    const res = await get('/api/home/attention');
+    const body = await jsonOf(res);
+    expect(getMissionReview('m-parent-followup-fails')).toMatchObject({ review_status: 'needs_triage' });
+    expect(getAttentionItemBySourceKey('mission:m-parent-followup-fails:terminal')).toMatchObject({ status: 'open' });
+    expect(body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: 'mission',
+        title: 'Parent failed task',
+      }),
+    ]));
+  });
+
+  it('resolves parent Home attention when a Review Inbox follow-up completes', async () => {
+    createMissionTask('m-parent-followup-completes', 'Parent retry task', 'original prompt', 'mason', 'dashboard', 6);
+    completeMissionTask('m-parent-followup-completes', null, 'failed', 'first failure');
+
+    const followup = await app.request('/api/review/tasks/m-parent-followup-completes/follow-up' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assigned_agent: 'mason', mode: 'retry', instructions: 'Try again.' }),
+    });
+    const followupBody = await jsonOf(followup);
+    expect(followup.status).toBe(201);
+
+    completeMissionTask(followupBody.task.id, 'Retry fixed it.', 'completed');
+
+    await get('/api/home/attention');
+    expect(getMissionReview('m-parent-followup-completes')).toMatchObject({ review_status: 'resolved' });
+    expect(getAttentionItemBySourceKey('mission:m-parent-followup-completes:terminal')).toMatchObject({ status: 'resolved' });
+  });
+
+  it('keeps terminal follow-up missions until the parent review refreshes', async () => {
+    const old = Math.floor(Date.now() / 1000) - 10 * 86400;
+    createMissionTask('m-parent-followup-cleanup', 'Parent cleanup retry', 'original prompt', 'mason', 'dashboard', 6);
+    completeMissionTask('m-parent-followup-cleanup', null, 'failed', 'first failure');
+
+    const followup = await app.request('/api/review/tasks/m-parent-followup-cleanup/follow-up' + Q, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assigned_agent: 'mason', mode: 'retry', instructions: 'Try again.' }),
+    });
+    const followupBody = await jsonOf(followup);
+    expect(followup.status).toBe(201);
+
+    completeMissionTask(followupBody.task.id, 'Retry fixed it.', 'completed');
+    _setMissionCompletedAtForTest(followupBody.task.id, old, 'completed');
+
+    expect(cleanupOldMissionTasks(7)).toBe(0);
+    expect(getMissionTask(followupBody.task.id)).not.toBeNull();
+    expect(getMissionReview('m-parent-followup-cleanup')).toMatchObject({ review_status: 'waiting_followup' });
+
+    await get('/api/home/attention');
+    expect(getMissionReview('m-parent-followup-cleanup')).toMatchObject({ review_status: 'resolved' });
+    expect(cleanupOldMissionTasks(7)).toBe(1);
+    expect(getMissionTask(followupBody.task.id)).toBeNull();
   });
 
   it('surfaces failed missions in Home Needs Attention with a Review Inbox target', async () => {

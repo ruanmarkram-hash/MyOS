@@ -2847,9 +2847,60 @@ export function completeMissionTask(
   const manifest = task
     ? buildMissionManifest({ status, title: task.title, prompt: task.prompt, result, error })
     : null;
-  db.prepare(
-    `UPDATE mission_tasks SET status = ?, result = ?, error = ?, completed_at = ?, manifest_json = ? WHERE id = ?`,
-  ).run(status, result, error ?? null, now, manifest ? JSON.stringify(manifest) : null, id);
+  const txn = db.transaction(() => {
+    db.prepare(
+      `UPDATE mission_tasks SET status = ?, result = ?, error = ?, completed_at = ?, manifest_json = ? WHERE id = ?`,
+    ).run(status, result, error ?? null, now, manifest ? JSON.stringify(manifest) : null, id);
+
+    if (!task || !manifest) return;
+    const reviewStatus = missionReviewStatusForTerminal(status, manifest);
+    if (reviewStatus) {
+      upsertMissionReview({
+        taskId: id,
+        reviewStatus,
+      });
+    }
+    if (status === 'failed' || status === 'partial') {
+      upsertAttentionItem({
+        sourceKind: 'mission',
+        sourceId: id,
+        sourceKey: terminalMissionAttentionSourceKey(id),
+        title: task.title,
+        detail: terminalMissionAttentionDetailFromManifest(status, manifest, error),
+        severity: status === 'failed' ? 'high' : 'medium',
+        href: `/review?task=${encodeURIComponent(id)}`,
+      });
+    }
+  });
+  txn();
+}
+
+function missionReviewStatusForTerminal(
+  status: 'completed' | 'failed' | 'partial',
+  manifest: MissionManifest,
+): MissionReviewStatus | null {
+  if (status === 'failed' || status === 'partial') return 'needs_triage';
+  if (manifest.route === 'needs_triage') return 'needs_triage';
+  if (manifest.route === 'needs_review') return 'needs_review';
+  return null;
+}
+
+function terminalMissionAttentionSourceKey(id: string): string {
+  return `mission:${id}:terminal`;
+}
+
+function terminalMissionAttentionDetailFromManifest(
+  status: 'completed' | 'failed' | 'partial',
+  manifest: MissionManifest,
+  error?: string,
+): string {
+  const blocker = manifest.blockers.find(Boolean);
+  const detail = blocker
+    || (status === 'partial' ? manifest.nextAction : null)
+    || error
+    || manifest.summary
+    || (status === 'partial' ? 'Mission landed partial work and needs review.' : 'Mission failed and needs triage.');
+  return detail.length > 1000 ? `${detail.slice(0, 997)}...` : detail;
 }
 
 export function getMissionManifest(task: MissionTask): MissionManifest {
@@ -2870,16 +2921,55 @@ export function cancelMissionTask(id: string): boolean {
 }
 
 export function deleteMissionTask(id: string): boolean {
-  const result = db.prepare(
-    `DELETE FROM mission_tasks WHERE id = ? AND status IN ('completed', 'cancelled', 'failed', 'partial')`,
-  ).run(id);
-  return result.changes > 0;
+  let changes = 0;
+  const txn = db.transaction(() => {
+    const now = Math.floor(Date.now() / 1000);
+    const result = db.prepare(
+      `DELETE FROM mission_tasks WHERE id = ? AND status IN ('completed', 'cancelled', 'failed', 'partial')`,
+    ).run(id);
+    changes = result.changes;
+    if (changes === 0) return;
+
+    db.prepare(
+      `UPDATE mission_reviews
+       SET review_status = 'archived', resolution = COALESCE(resolution, 'ignored'), reviewed_at = COALESCE(reviewed_at, ?), updated_at = ?
+       WHERE task_id = ? AND review_status NOT IN ('resolved', 'archived')`,
+    ).run(now, now, id);
+    db.prepare(
+      `UPDATE attention_items
+       SET status = 'archived', updated_at = ?, resolved_at = COALESCE(resolved_at, ?)
+       WHERE status IN ('open', 'assigned')
+         AND ((source_kind = 'mission' AND source_id = ?) OR linked_mission_id = ?)`,
+    ).run(now, now, id, id);
+  });
+  txn();
+  return changes > 0;
 }
 
 export function cleanupOldMissionTasks(olderThanDays = 7): number {
   const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 86400;
   const result = db.prepare(
-    `DELETE FROM mission_tasks WHERE status IN ('completed', 'cancelled', 'failed', 'partial') AND completed_at < ?`,
+    `DELETE FROM mission_tasks
+     WHERE status IN ('completed', 'cancelled', 'failed', 'partial')
+       AND completed_at < ?
+       AND NOT EXISTS (
+         SELECT 1 FROM mission_reviews
+         WHERE mission_reviews.task_id = mission_tasks.id
+           AND mission_reviews.review_status IN ('needs_review', 'needs_triage', 'waiting_followup', 'snoozed')
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM attention_items
+         WHERE attention_items.status IN ('open', 'assigned')
+           AND (
+             (attention_items.source_kind = 'mission' AND attention_items.source_id = mission_tasks.id)
+             OR attention_items.linked_mission_id = mission_tasks.id
+           )
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM mission_reviews
+         WHERE mission_reviews.followup_task_id = mission_tasks.id
+           AND mission_reviews.review_status IN ('needs_review', 'needs_triage', 'waiting_followup', 'snoozed')
+       )`,
   ).run(cutoff);
   return result.changes;
 }
