@@ -46,8 +46,12 @@ interface ReviewItem {
   manifest: {
     route: 'needs_review' | 'needs_triage' | 'sorted' | 'done';
     summary: string;
+    sourceFiles?: string[];
     blockers: string[];
     nextAction: string | null;
+    followUpNeeded?: boolean | null;
+    reviewRequired?: boolean | null;
+    contractStatus?: string | null;
   };
   deliverables: Deliverable[];
   review: ReviewState;
@@ -363,6 +367,21 @@ function ReviewCard({
             <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Why this is here</div>
             <div class="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{item.why}</div>
           </div>
+          {Boolean(item.manifest.contractStatus || (item.manifest.sourceFiles?.length ?? 0) > 0 || item.manifest.followUpNeeded != null || item.manifest.reviewRequired != null) && (
+            <div class="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-elevated)] px-2.5 py-2">
+              <div class="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Result contract</div>
+              <div class="flex flex-wrap gap-1.5">
+                {item.manifest.contractStatus && <Pill tone="neutral">{item.manifest.contractStatus}</Pill>}
+                {item.manifest.reviewRequired !== null && item.manifest.reviewRequired !== undefined && <Pill tone={item.manifest.reviewRequired ? 'medium' : 'done'}>{item.manifest.reviewRequired ? 'review required' : 'no review'}</Pill>}
+                {item.manifest.followUpNeeded !== null && item.manifest.followUpNeeded !== undefined && <Pill tone={item.manifest.followUpNeeded ? 'medium' : 'done'}>{item.manifest.followUpNeeded ? 'follow-up needed' : 'no follow-up'}</Pill>}
+              </div>
+              {(item.manifest.sourceFiles?.length ?? 0) > 0 && (
+                <div class="mt-1.5 text-[11px] text-[var(--color-text-muted)] line-clamp-2">
+                  Source files: {item.manifest.sourceFiles.slice(0, 4).join(', ')}
+                </div>
+              )}
+            </div>
+          )}
         </button>
       </div>
 

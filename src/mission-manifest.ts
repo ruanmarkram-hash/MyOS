@@ -1,3 +1,5 @@
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 export type MissionManifestRoute = 'needs_review' | 'needs_triage' | 'sorted' | 'done';
@@ -6,6 +8,7 @@ export interface MissionManifestDeliverable {
   kind: 'file' | 'url';
   target: string;
   label: string;
+  exists?: boolean;
 }
 
 export interface MissionManifest {
@@ -14,8 +17,12 @@ export interface MissionManifest {
   route: MissionManifestRoute;
   summary: string;
   deliverables: MissionManifestDeliverable[];
+  sourceFiles: string[];
   blockers: string[];
   nextAction: string | null;
+  followUpNeeded: boolean | null;
+  reviewRequired: boolean | null;
+  contractStatus: string | null;
 }
 
 const HUMAN_ACTION_PATTERN = new RegExp([
@@ -59,6 +66,120 @@ function labelForTarget(target: string): string {
   return path.basename(target) || target;
 }
 
+function expandUserPath(raw: string): string {
+  if (raw.startsWith('~/')) return path.join(os.homedir(), raw.slice(2));
+  return raw;
+}
+
+function fileExists(raw: string): boolean {
+  try {
+    return fs.statSync(path.resolve(expandUserPath(raw))).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function normalizeDeliverable(item: unknown): MissionManifestDeliverable | null {
+  if (typeof item === 'string') {
+    const target = item.trim();
+    if (!target) return null;
+    const kind = /^https?:\/\//i.test(target) ? 'url' : 'file';
+    return { kind, target, label: labelForTarget(target) };
+  }
+  if (!item || typeof item !== 'object') return null;
+  const record = item as Record<string, unknown>;
+  const target = String(record.target || record.path || record.url || record.href || '').trim();
+  if (!target) return null;
+  const rawKind = String(record.kind || '').toLowerCase();
+  const kind = rawKind === 'url' || /^https?:\/\//i.test(target) ? 'url' : 'file';
+  const label = String(record.label || record.name || labelForTarget(target)).trim();
+  return { kind, target, label: label || labelForTarget(target) };
+}
+
+function normalizeStringList(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((item) => typeof item === 'string' ? item.trim() : '')
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function normalizeBoolean(input: unknown): boolean | null {
+  if (typeof input === 'boolean') return input;
+  if (typeof input === 'string') {
+    if (/^(true|yes|y|1)$/i.test(input.trim())) return true;
+    if (/^(false|no|n|0)$/i.test(input.trim())) return false;
+  }
+  return null;
+}
+
+type MissionResultContract = {
+  status: string | null;
+  summary: string | null;
+  deliverables: MissionManifestDeliverable[];
+  sourceFiles: string[];
+  blockers: string[];
+  nextAction: string | null;
+  followUpNeeded: boolean | null;
+  reviewRequired: boolean | null;
+};
+
+function normalizeContract(raw: unknown): MissionResultContract | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  const source = (record.mission_result && typeof record.mission_result === 'object')
+    ? record.mission_result as Record<string, unknown>
+    : record;
+  const hasContractKey = ['status', 'summary', 'deliverables', 'source_files', 'sourceFiles', 'blockers', 'next_action', 'nextAction', 'follow_up_needed', 'followUpNeeded', 'review_required', 'reviewRequired']
+    .some((key) => Object.prototype.hasOwnProperty.call(source, key));
+  if (!hasContractKey) return null;
+  const deliverables = Array.isArray(source.deliverables)
+    ? source.deliverables.map(normalizeDeliverable).filter((item): item is MissionManifestDeliverable => !!item)
+    : [];
+  const status = typeof source.status === 'string' ? source.status.trim().toLowerCase() : null;
+  const summary = typeof source.summary === 'string' ? source.summary.trim() : null;
+  const nextActionRaw = source.next_action ?? source.nextAction;
+  return {
+    status,
+    summary,
+    deliverables,
+    sourceFiles: normalizeStringList(source.source_files ?? source.sourceFiles),
+    blockers: normalizeStringList(source.blockers),
+    nextAction: typeof nextActionRaw === 'string' && nextActionRaw.trim() ? nextActionRaw.trim() : null,
+    followUpNeeded: normalizeBoolean(source.follow_up_needed ?? source.followUpNeeded),
+    reviewRequired: normalizeBoolean(source.review_required ?? source.reviewRequired),
+  };
+}
+
+function parseJsonCandidates(text: string): unknown[] {
+  const candidates: string[] = [];
+  for (const match of text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+    candidates.push(match[1]);
+  }
+  const marker = text.match(/MISSION_RESULT_JSON\s*:\s*({[\s\S]+})/i);
+  if (marker) candidates.push(marker[1]);
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first >= 0 && last > first) candidates.push(text.slice(first, last + 1));
+  const parsed: unknown[] = [];
+  for (const candidate of candidates) {
+    try {
+      parsed.push(JSON.parse(candidate.trim()));
+    } catch {
+      // Ignore prose or malformed examples; this parser is opportunistic.
+    }
+  }
+  return parsed;
+}
+
+function parseMissionResultContract(text: string): MissionResultContract | null {
+  for (const parsed of parseJsonCandidates(text)) {
+    const contract = normalizeContract(parsed);
+    if (contract) return contract;
+  }
+  return null;
+}
+
 function extractUrls(text: string): MissionManifestDeliverable[] {
   const out: MissionManifestDeliverable[] = [];
   for (const match of text.matchAll(/\bhttps?:\/\/[^\s)\]}>"']+/gi)) {
@@ -93,7 +214,7 @@ function dedupeDeliverables(items: MissionManifestDeliverable[]): MissionManifes
     const key = `${item.kind}:${item.target}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(item);
+    out.push(item.kind === 'file' ? { ...item, exists: fileExists(item.target) } : { ...item, exists: true });
   }
   return out.slice(0, 12);
 }
@@ -114,6 +235,7 @@ function extractBlockers(text: string, status: string, error: string | null | un
 }
 
 function inferNextAction(text: string, status: string, deliverables: MissionManifestDeliverable[], blockers: string[]): string | null {
+  if (deliverables.some((item) => item.kind === 'file' && item.exists === false)) return 'Fix or provide the missing deliverable path.';
   if (status === 'failed' || status === 'partial') return blockers[0] || 'Review failure and decide retry, archive, or reassign.';
   if (NO_HUMAN_ACTION_PATTERN.test(text) && deliverables.length === 0) return null;
   if (HUMAN_ACTION_PATTERN.test(text)) return 'Review and take the requested action.';
@@ -128,13 +250,24 @@ export function buildMissionManifest(input: {
   result?: string | null;
   error?: string | null;
 }): MissionManifest {
-  const text = [input.title, input.prompt, input.result || '', input.error || ''].join('\n');
   const outcomeText = [input.result || '', input.error || ''].join('\n') || input.title;
-  const deliverables = dedupeDeliverables([...extractFileTargets(text), ...extractUrls(text)]);
-  const blockers = extractBlockers(outcomeText, input.status, input.error);
-  const nextAction = inferNextAction(outcomeText, input.status, deliverables, blockers);
+  const contract = parseMissionResultContract(outcomeText);
+  const deliverables = dedupeDeliverables([...(contract?.deliverables ?? []), ...extractFileTargets(outcomeText), ...extractUrls(outcomeText)]);
+  const missingDeliverableBlockers = deliverables
+    .filter((item) => item.kind === 'file' && item.exists === false)
+    .map((item) => `Deliverable file not found: ${item.target}`);
+  const blockers = [...new Set([
+    ...missingDeliverableBlockers,
+    ...(contract?.blockers ?? []),
+    ...extractBlockers(outcomeText, input.status, input.error),
+  ])].slice(0, 5);
+  const nextAction = contract?.nextAction || inferNextAction(outcomeText, input.status, deliverables, blockers);
+  const hasMissingDeliverable = missingDeliverableBlockers.length > 0;
   const route: MissionManifestRoute =
     input.status === 'failed' || input.status === 'partial' ? 'needs_triage'
+    : hasMissingDeliverable ? 'needs_triage'
+    : contract?.reviewRequired === true || contract?.followUpNeeded === true ? 'needs_review'
+    : contract?.reviewRequired === false && contract?.followUpNeeded === false && deliverables.length === 0 ? 'sorted'
     : nextAction || deliverables.length > 0 || (!NO_HUMAN_ACTION_PATTERN.test(outcomeText) && DELIVERABLE_HINT_PATTERN.test(outcomeText)) ? 'needs_review'
     : input.status === 'completed' ? 'sorted'
     : 'done';
@@ -143,10 +276,14 @@ export function buildMissionManifest(input: {
     version: 1,
     status: input.status,
     route,
-    summary: compactText(input.result || input.error || input.title, 260),
+    summary: compactText(contract?.summary || input.result || input.error || input.title, 260),
     deliverables,
+    sourceFiles: contract?.sourceFiles ?? [],
     blockers,
     nextAction,
+    followUpNeeded: contract?.followUpNeeded ?? null,
+    reviewRequired: contract?.reviewRequired ?? null,
+    contractStatus: contract?.status ?? null,
   };
 }
 
@@ -155,7 +292,16 @@ export function parseMissionManifest(raw: string | null | undefined): MissionMan
   try {
     const parsed = JSON.parse(raw) as MissionManifest;
     if (parsed?.version !== 1 || !parsed.route) return null;
-    return parsed;
+    return {
+      ...parsed,
+      deliverables: Array.isArray(parsed.deliverables) ? parsed.deliverables : [],
+      sourceFiles: Array.isArray(parsed.sourceFiles) ? parsed.sourceFiles : [],
+      blockers: Array.isArray(parsed.blockers) ? parsed.blockers : [],
+      nextAction: parsed.nextAction ?? null,
+      followUpNeeded: parsed.followUpNeeded ?? null,
+      reviewRequired: parsed.reviewRequired ?? null,
+      contractStatus: parsed.contractStatus ?? null,
+    };
   } catch {
     return null;
   }

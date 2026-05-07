@@ -940,6 +940,7 @@ describe('GET /api/review/inbox', () => {
   });
 
   it('returns completed mission deliverables for review', async () => {
+    fs.writeFileSync('/tmp/review-deliverable.txt', 'Review deliverable body\n', { mode: 0o600 });
     createMissionTask('m-review-1', 'Write Charter deliverable', 'produce output', 'charter', 'dashboard', 6);
     completeMissionTask('m-review-1', 'Review pack prepared at /tmp/review-deliverable.txt for review.', 'completed');
 
@@ -968,8 +969,29 @@ describe('GET /api/review/inbox', () => {
     expect(getMissionManifest(getMissionTask('m-review-1')!)).toMatchObject({
       route: 'needs_review',
       deliverables: expect.arrayContaining([
-        expect.objectContaining({ kind: 'file', target: '/tmp/review-deliverable.txt' }),
+        expect.objectContaining({ kind: 'file', target: '/tmp/review-deliverable.txt', exists: true }),
       ]),
+    });
+  });
+
+  it('routes completed missions with missing deliverable files to triage', async () => {
+    createMissionTask('m-missing-deliverable', 'Missing file deliverable', 'produce output', 'charter', 'dashboard', 6);
+    completeMissionTask('m-missing-deliverable', 'Deliverable: /tmp/claudeclaw-missing-review-file.pdf\nReady for review.', 'completed');
+
+    const res = await get('/api/review/inbox?limit=20');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    const item = body.items.find((entry: any) => entry.id === 'm-missing-deliverable');
+    expect(item).toMatchObject({
+      kind: 'needs_action',
+      manifest: expect.objectContaining({
+        route: 'needs_triage',
+        nextAction: 'Fix or provide the missing deliverable path.',
+        blockers: expect.arrayContaining([
+          'Deliverable file not found: /tmp/claudeclaw-missing-review-file.pdf',
+        ]),
+      }),
+      review: expect.objectContaining({ status: 'needs_triage' }),
     });
   });
 

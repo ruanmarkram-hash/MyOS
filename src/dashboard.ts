@@ -695,6 +695,7 @@ function defaultReviewStatusForTask(task: MissionTask, missions: MissionTask[]):
   }
   if (task.status === 'completed') {
     if (completedMissionHasFollowUp(task, missions)) return null;
+    if (manifest.route === 'needs_triage') return 'needs_triage';
     if (manifest.route === 'needs_review') return 'needs_review';
     // Category A: anything that needs Ruan's hands or a deliverable he asked for.
     if (containsHumanActionSignal(task)) return 'needs_review';
@@ -3800,8 +3801,19 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     if (!openBrainConfigured()) {
       return c.json({ ok: false, configured: false, error: 'OpenBrain is not configured.', nodes: [], edges: [], points: [] }, 400);
     }
-    const graph = await buildWholeOpenBrainGraph();
-    return c.json({ configured: true, ...graph });
+    try {
+      const graph = await buildWholeOpenBrainGraph();
+      return c.json({ configured: true, ...graph });
+    } catch (err) {
+      return c.json({
+        ok: false,
+        configured: true,
+        error: `OpenBrain map unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        nodes: [],
+        edges: [],
+        points: [],
+      }, 400);
+    }
   });
 
   app.post('/api/brain/capture', async (c) => {

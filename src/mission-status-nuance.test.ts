@@ -128,4 +128,60 @@ describe('mission manifest routing', () => {
     expect(manifest.nextAction).toBeNull();
     expect(manifest.deliverables).toEqual([]);
   });
+
+  it('accepts a structured mission result contract', () => {
+    const manifest = buildMissionManifest({
+      status: 'completed',
+      title: 'Structured smoke',
+      prompt: 'return contract',
+      result: [
+        'Done.',
+        '```json',
+        JSON.stringify({
+          status: 'completed',
+          summary: 'Structured result landed.',
+          deliverables: [],
+          source_files: ['src/dashboard.ts'],
+          blockers: [],
+          follow_up_needed: false,
+          review_required: false,
+        }),
+        '```',
+      ].join('\n'),
+    });
+
+    expect(manifest.route).toBe('sorted');
+    expect(manifest.summary).toBe('Structured result landed.');
+    expect(manifest.sourceFiles).toEqual(['src/dashboard.ts']);
+    expect(manifest.followUpNeeded).toBe(false);
+    expect(manifest.reviewRequired).toBe(false);
+    expect(manifest.contractStatus).toBe('completed');
+  });
+
+  it('routes missing file deliverables to triage', () => {
+    const manifest = buildMissionManifest({
+      status: 'completed',
+      title: 'Missing deliverable',
+      prompt: 'produce a file',
+      result: 'Deliverable: /tmp/claudeclaw-missing-contract-file.pdf\nReady for review.',
+    });
+
+    expect(manifest.route).toBe('needs_triage');
+    expect(manifest.nextAction).toBe('Fix or provide the missing deliverable path.');
+    expect(manifest.blockers).toContain('Deliverable file not found: /tmp/claudeclaw-missing-contract-file.pdf');
+    expect(manifest.deliverables[0]).toMatchObject({ kind: 'file', exists: false });
+  });
+
+  it('does not verify a deliverable path mentioned only in the original prompt', () => {
+    const manifest = buildMissionManifest({
+      status: 'completed',
+      title: 'Prompt path only',
+      prompt: 'Create /tmp/claudeclaw-prompt-only-deliverable.pdf if needed.',
+      result: 'Completed cleanly. No deliverable and no human action required.',
+    });
+
+    expect(manifest.route).toBe('sorted');
+    expect(manifest.deliverables).toEqual([]);
+    expect(manifest.blockers).toEqual([]);
+  });
 });
