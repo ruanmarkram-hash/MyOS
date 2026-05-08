@@ -334,7 +334,10 @@ async function runDueTasks(): Promise<void> {
         // reporting (i.e. output is NOT just "OK" or empty).
         const isOkOutput = /^OK\.?$/i.test(text);
         if (!isSilent || !isOkOutput) {
-          for (const chunk of splitMessage(formatForTelegram(text))) {
+          // Strip ATTENTION_ACTIONS marker before sending to Telegram
+          // (actions are extracted separately by the dashboard from DB)
+          const cleanText = stripAttentionActionsMarker(text);
+          for (const chunk of splitMessage(formatForTelegram(cleanText))) {
             await sender(chunk);
           }
         } else {
@@ -761,6 +764,20 @@ export function withMissionResultContract(prompt: string): string {
 export function withScheduledTaskContract(prompt: string): string {
   if (/ATTENTION_ACTIONS/i.test(prompt)) return prompt;
   return `${prompt.trim()}\n\n${ATTENTION_ACTIONS_CONTRACT}\n`;
+}
+
+/**
+ * Strip ATTENTION_ACTIONS markers from response text before sending to Telegram.
+ * Removes both fenced-block and bare forms.
+ */
+export function stripAttentionActionsMarker(text: string): string {
+  let cleaned = text;
+  // Remove fenced blocks: ```ATTENTION_ACTIONS ... ```
+  cleaned = cleaned.replace(/```(?:json)?\s*ATTENTION_ACTIONS\s*[\s\S]*?```/gi, '');
+  // Remove bare form: ATTENTION_ACTIONS: [...]
+  cleaned = cleaned.replace(/ATTENTION_ACTIONS\s*:\s*\[[\s\S]*?\]/gi, '');
+  // Clean up trailing whitespace
+  return cleaned.trim();
 }
 
 export function computeNextRun(cronExpression: string): number {

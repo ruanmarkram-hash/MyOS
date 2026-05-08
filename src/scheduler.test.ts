@@ -3,6 +3,7 @@ import {
   withMissionResultContract,
   withScheduledTaskContract,
   computeNextRun,
+  stripAttentionActionsMarker,
 } from './scheduler.js';
 import {
   _initTestDatabase,
@@ -47,6 +48,53 @@ describe('scheduler prompt contracts', () => {
     const prompt = 'Morning brief.\nATTENTION_ACTIONS: []';
 
     expect(withScheduledTaskContract(prompt)).toBe(prompt);
+  });
+
+  it('strips bare ATTENTION_ACTIONS marker from response text', () => {
+    const response = "I'm here.\n\nATTENTION_ACTIONS: []";
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("I'm here.");
+  });
+
+  it('strips fenced-block ATTENTION_ACTIONS marker from response text', () => {
+    const response = "Task complete.\n\n```json\nATTENTION_ACTIONS\n[{\"title\":\"test\"}]\n```";
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("Task complete.");
+  });
+
+  it('strips fenced-block without json language tag', () => {
+    const response = "Done.\n\n```\nATTENTION_ACTIONS\n[]\n```";
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("Done.");
+  });
+
+  it('strips ATTENTION_ACTIONS with multi-line array', () => {
+    const response = `Status report here.
+
+ATTENTION_ACTIONS: [
+  {"title": "Action 1"},
+  {"title": "Action 2"}
+]`;
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("Status report here.");
+  });
+
+  it('handles text with no ATTENTION_ACTIONS marker', () => {
+    const response = "Just a normal response.";
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("Just a normal response.");
+  });
+
+  it('handles empty response after stripping marker', () => {
+    const response = "ATTENTION_ACTIONS: []";
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("");
   });
 });
 
