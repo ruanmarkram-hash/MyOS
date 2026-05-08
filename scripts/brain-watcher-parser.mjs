@@ -7,6 +7,24 @@
 
 import { readFileSync } from 'node:fs';
 
+// Folder-name filter shared between brain-watcher.mjs (which uses it to decide
+// what to ingest) and monitor-brain.mjs (which uses it to count "upstream
+// jsonl files" so the false-alarm classifier in monitor-brain-classify.mjs
+// only fires when the watcher actually skipped data it should have ingested.)
+//
+// Folder names come from `~/.claude/projects/<dir>` where Claude Code encodes
+// the project cwd by replacing slashes with hyphens (e.g. `/Users/sc/HQ` →
+// `-Users-sc-HQ`).
+export function isJsonlIncluded(folderName) {
+  if (folderName.includes('claude-worktrees')) return false;
+  const stripped = folderName.replace(/^-Users-[^-]+-?-?/, '').replace(/^-/, '');
+  if (stripped === '') return true;
+  if (/^HQ(-|$)/.test(stripped)) return true;
+  if (/^sonke-hub/.test(stripped)) return true;
+  if (/^openclaw/.test(stripped)) return true;
+  return false;
+}
+
 export function eventText(evt) {
   const msg = evt?.message;
   if (!msg) return '';

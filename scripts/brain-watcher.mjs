@@ -20,7 +20,7 @@ import { join, basename, relative } from 'node:path';
 import { homedir } from 'node:os';
 import Database from 'better-sqlite3';
 import pg from 'pg';
-import { parseTurnPairs, stripInjectedContext } from './brain-watcher-parser.mjs';
+import { parseTurnPairs, stripInjectedContext, isJsonlIncluded } from './brain-watcher-parser.mjs';
 import { embed, vecLit, EMBED_DIM, EMBED_MODEL_NAME } from './lib/embed.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
@@ -112,15 +112,10 @@ async function runPool(items, worker, n) {
 // ║ PASS 1: CLAUDE CODE JSONL                                         ║
 // ╚═════════════════════════════════════════════════════════════════╝
 
-function isJsonlIncluded(folderName) {
-  if (folderName.includes('claude-worktrees')) return false;
-  const stripped = folderName.replace(/^-Users-[^-]+-?-?/, '').replace(/^-/, '');
-  if (stripped === '') return true;
-  if (/^HQ(-|$)/.test(stripped)) return true;
-  if (/^sonke-hub/.test(stripped)) return true;
-  if (/^openclaw/.test(stripped)) return true;
-  return false;
-}
+// isJsonlIncluded() lives in ./brain-watcher-parser.mjs so monitor-brain.mjs
+// can import the same filter when counting "upstream jsonl files in window".
+// Keeping one source of truth prevents the monitor from raising CRITICAL
+// "watcher dropping data" alerts on folders the watcher legitimately skips.
 
 function discoverRecentJsonl() {
   const cutoff = Date.now() - MTIME_LOOKBACK_MS;

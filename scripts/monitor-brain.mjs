@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import pg from 'pg';
 import { classifyGrowth } from './monitor-brain-classify.mjs';
+import { isJsonlIncluded } from './brain-watcher-parser.mjs';
 
 const ROOT = '/Users/sc/HQ';
 const env = Object.fromEntries(
@@ -73,15 +74,31 @@ if (s.no_embedding > 0) issues.push(`${s.no_embedding} rows without embedding`);
 function countRecentJsonlFiles(windowHours) {
   const cutoff = Date.now() - windowHours * 60 * 60 * 1000;
   let total = 0;
+  // Filters mirror brain-watcher.mjs's ingest universe so this count answers
+  // "how many files did the watcher have a chance to ingest", not "how many
+  // files exist on disk". Folders the watcher deliberately skips (e.g. ad-hoc
+  // claude-worktrees, workspace agent dirs) would otherwise trip a CRITICAL
+  // "watcher dropping data" false alarm.
   const roots = [
-    { dir: join(homedir(), '.claude', 'projects'), recurse: true, match: (n) => n.endsWith('.jsonl') },
-    { dir: join(homedir(), '.codex', 'archived_sessions'), recurse: false, match: (n) => n.startsWith('rollout-') && n.endsWith('.jsonl') },
+    {
+      dir: join(homedir(), '.claude', 'projects'),
+      recurse: true,
+      folderFilter: isJsonlIncluded,
+      match: (n) => n.endsWith('.jsonl'),
+    },
+    {
+      dir: join(homedir(), '.codex', 'archived_sessions'),
+      recurse: false,
+      folderFilter: () => true,
+      match: (n) => n.startsWith('rollout-') && n.endsWith('.jsonl'),
+    },
   ];
   for (const r of roots) {
     let entries; try { entries = readdirSync(r.dir, { withFileTypes: true }); } catch { continue; }
     for (const entry of entries) {
       const full = join(r.dir, entry.name);
       if (entry.isDirectory() && r.recurse) {
+        if (!r.folderFilter(entry.name)) continue;
         let inner; try { inner = readdirSync(full); } catch { continue; }
         for (const name of inner) {
           if (!r.match(name)) continue;
