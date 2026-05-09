@@ -1321,6 +1321,29 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(details).not.toContain('Risks: no urgent blockers.');
   });
 
+  it('does not promote scoped none lines from briefs as attention items', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-scoped-none-lines', 'Mid-day pulse', '30 12 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-scoped-none-lines',
+      now + 86400,
+      [
+        'Overdue reminders: None.',
+        'Web forms: No urgent forms.',
+        'Calendar: No action items.',
+      ].join('\n'),
+      'success',
+    );
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    const details = body.items.map((item: any) => item.detail);
+    expect(details).not.toContain('Overdue reminders: None.');
+    expect(details).not.toContain('Web forms: No urgent forms.');
+    expect(details).not.toContain('Calendar: No action items.');
+  });
+
   it('archives stale brief attention rows when the current extraction changes', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-stale-cleanup', 'Mid-day pulse', '0 12 * * *', now + 3600, 'main');

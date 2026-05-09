@@ -1799,6 +1799,7 @@ function isNonActionBriefLine(cleaned: string): boolean {
   if (/^(items blocked\/awaiting|total unread|after triage|skipped):/i.test(cleaned)) return true;
   if (isBriefNoiseSentence(cleaned) && !hasBriefActionSignal(cleaned)) return true;
   if (/^(urgent|overdue|blocked|awaiting|needs|actions?|risks?|review|follow.?up|open threads|auth|permissions?):\s*(none|nil|n\/a|no(?:\s+(?:urgent\s+)?(?:blockers?|risks?|actions?|follow.?ups?|reviews?|items?))?|0)(\.|$)/i.test(cleaned)) return true;
+  if (/^(?:overdue\s+)?(?:reminders?|calendar|inbox|web forms?|forms?|tasks?|items?):\s*(none|nil|n\/a|no(?:\s+(?:urgent\s+)?(?:items?|actions?|follow.?ups?|entries|forms?|tasks?|reminders?))?|0)(\.|$)/i.test(cleaned)) return true;
   if (/^(no|none)\s+(urgent|overdue|blocked|awaiting|open|review|follow.?up|action|actions|risks?)/i.test(cleaned)) return true;
   return false;
 }
