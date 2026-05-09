@@ -680,6 +680,26 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(item.detail).toContain('Confidence: 91%');
   });
 
+  it('uses action detail when structured brief title is generic', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-generic-title', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-generic-title',
+      now + 86400,
+      'ATTENTION_ACTIONS: [{"title":"Morning brief","detail":"Tag contacts in ~/workspace/operations/email-triage/contacts-review.md with K/W/S/I flags to enable smart inbox filtering.","severity":"medium","sourceCategory":"brief","requires_ruan":true,"confidence":0.8}]',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: expect.stringContaining('Tag contacts in ~/workspace/operations/email-triage/contacts-review.md'),
+        detail: expect.stringContaining('Tag contacts'),
+      }),
+    ]));
+    expect(attention.items.map((item: any) => item.title)).not.toContain('Morning brief');
+  });
+
   it('does not promote non-action inbox summaries from briefs', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-inbox-noise', 'Morning brief', '0 9 * * *', now + 3600, 'main');

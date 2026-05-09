@@ -1980,16 +1980,21 @@ function attentionSourceKey(sourceKind: string, sourceId: string, text: string):
 
 function attentionTitleForStructuredAction(action: StructuredBriefAction): string {
   const raw = action.title.trim();
-  if (raw && !/^brief action$/i.test(raw) && raw.toLowerCase() !== action.sourceCategory.toLowerCase()) {
+  const genericTitle = !raw
+    || /^brief action$/i.test(raw)
+    || /^(morning|midday|evening|other)\s+brief$/i.test(raw)
+    || raw.toLowerCase() === action.sourceCategory.toLowerCase();
+  if (!genericTitle) {
     return raw.length > 220 ? `${raw.slice(0, 217)}...` : raw;
+  }
+  const firstSentence = briefActionTitle(action.detail);
+  if (firstSentence && firstSentence !== 'Brief action') {
+    return firstSentence;
   }
   if (action.sourceCategory && action.sourceCategory !== 'brief') {
     return `${action.sourceCategory.replace(/[-_]/g, ' ')} action`;
   }
-  const firstSentence = action.detail.split(/(?<=[.!?])\s+/)[0]?.trim() || action.detail;
-  return firstSentence
-    .replace(/\s+/g, ' ')
-    .slice(0, 120) || 'Brief action';
+  return 'Brief action';
 }
 
 function displayDetailForStructuredAction(action: StructuredBriefAction): string {
