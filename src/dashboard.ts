@@ -1783,10 +1783,21 @@ function isMeaningfulBriefResult(result: string | null): result is string {
   return cleaned.length > 0 && !/^OK$/i.test(cleaned);
 }
 
+function hasBriefActionSignal(cleaned: string): boolean {
+  return /has(?: not|n't) been actioned|needs|action|follow.?up|awaiting|blocked|review|approve|failed|missing|error|permission|auth|expired|lapsed|due|overdue|unavailable|re-auth/i.test(cleaned);
+}
+
+function isBriefNoiseSentence(cleaned: string): boolean {
+  return /\b(?:no urgent|mostly system notifications|system notifications|marketing|auto-clocks?)\b/i.test(cleaned);
+}
+
 function isNonActionBriefLine(cleaned: string): boolean {
+  const parts = cleaned.split(/(?<=\.)\s+/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 0 && parts.every((part) => isBriefNoiseSentence(part) && !hasBriefActionSignal(part))) return true;
   if (/:\s*$/.test(cleaned)) return true;
   if (/^(action needed|blocked on you|open threads|stale|breakdown|notes|projects|compliance|calendar|inbox|today|tomorrow top 3):?$/i.test(cleaned)) return true;
   if (/^(items blocked\/awaiting|total unread|after triage|skipped):/i.test(cleaned)) return true;
+  if (isBriefNoiseSentence(cleaned) && !hasBriefActionSignal(cleaned)) return true;
   if (/^(urgent|overdue|blocked|awaiting|needs|actions?|risks?|review|follow.?up|open threads|auth|permissions?):\s*(none|nil|n\/a|no(?:\s+(?:urgent\s+)?(?:blockers?|risks?|actions?|follow.?ups?|reviews?|items?))?|0)(\.|$)/i.test(cleaned)) return true;
   if (/^(no|none)\s+(urgent|overdue|blocked|awaiting|open|review|follow.?up|action|actions|risks?)/i.test(cleaned)) return true;
   return false;
@@ -1796,11 +1807,22 @@ function actionableBriefDetail(cleaned: string): string {
   if (!/^(inbox|calendar|today|overdue|actions?|follow.?up):\s*/i.test(cleaned)) return cleaned;
   const parts = cleaned.split(/(?<=\.)\s+/).map((part) => part.trim()).filter(Boolean);
   const actionable = parts.find((part) =>
+    !isBriefNoiseSentence(part)
+    &&
     /has(?: not|n't) been actioned|needs|action|follow.?up|awaiting|blocked|review|approve|failed|missing|error|permission|auth/i.test(part)
     && !isNonActionBriefLine(part),
   );
   if (!actionable) return cleaned;
   return actionable.replace(/^(inbox|calendar|today|overdue|actions?|follow.?up):\s*/i, '').trim();
+}
+
+function briefActionTitle(detail: string): string {
+  const firstSentence = detail.split(/(?<=[.!?])\s+/)[0]?.trim() || detail;
+  return firstSentence
+    .replace(/^(action needed|inbox|calendar|today|overdue|actions?|follow.?up):\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[.!?]+$/, '')
+    .slice(0, 120) || 'Brief action';
 }
 
 function normalizeStructuredAction(input: any): StructuredBriefAction | null {
@@ -1892,7 +1914,7 @@ function extractStructuredBriefActions(text: string, limit = 4): StructuredBrief
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({
-      title: 'Brief action',
+      title: briefActionTitle(detail),
       detail: detail.length > 900 ? `${detail.slice(0, 897)}...` : detail,
       severity: severityForText(detail),
       sourceCategory: (cleaned.match(/^([^:]{2,32}):/)?.[1] || 'brief').toLowerCase(),
@@ -1956,6 +1978,20 @@ function attentionSourceKey(sourceKind: string, sourceId: string, text: string):
   return `${sourceKind}:${sourceId}:${hash}`;
 }
 
+function attentionTitleForStructuredAction(action: StructuredBriefAction): string {
+  const raw = action.title.trim();
+  if (raw && !/^brief action$/i.test(raw) && raw.toLowerCase() !== action.sourceCategory.toLowerCase()) {
+    return raw.length > 220 ? `${raw.slice(0, 217)}...` : raw;
+  }
+  if (action.sourceCategory && action.sourceCategory !== 'brief') {
+    return `${action.sourceCategory.replace(/[-_]/g, ' ')} action`;
+  }
+  const firstSentence = action.detail.split(/(?<=[.!?])\s+/)[0]?.trim() || action.detail;
+  return firstSentence
+    .replace(/\s+/g, ' ')
+    .slice(0, 120) || 'Brief action';
+}
+
 function displayDetailForStructuredAction(action: StructuredBriefAction): string {
   const meta: string[] = [];
   if (action.suggestedAgent) meta.push(`Suggested agent: @${action.suggestedAgent.replace(/^@/, '')}`);
@@ -1984,7 +2020,7 @@ function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[
         sourceKind: 'brief',
         sourceId: brief.taskId,
         sourceKey,
-        title: `${brief.label} brief`,
+        title: attentionTitleForStructuredAction(action),
         detail: displayDetailForStructuredAction(action),
         severity: action.severity,
         href: '/home',
@@ -1997,11 +2033,21 @@ function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[
   }
 }
 
-function durableAttentionToHome(item: AttentionItem) {
+function durableAttentionToHome(item: AttentionItem, scheduledById = new Map<string, ScheduledTask>()) {
   const scheduleType = item.detail.startsWith('Scheduled job still running') ? 'stuck' : 'last-status';
+  const sourceTask = item.source_kind === 'brief' || item.source_kind === 'schedule' ? scheduledById.get(item.source_id) : null;
+  const sourceSlot = sourceTask ? briefSlot(sourceTask) : null;
+  const briefOrigin = sourceSlot ? `${briefLabel(sourceSlot)} brief` : 'Brief output';
+  const sourceTaskTitle = sourceTask ? scheduleTitle(sourceTask.prompt) : null;
+  const origin = item.source_kind === 'brief'
+    ? [briefOrigin, sourceTaskTitle && sourceTaskTitle.toLowerCase() !== briefOrigin.toLowerCase() ? sourceTaskTitle : null].filter(Boolean).join(' / ')
+    : item.source_kind === 'schedule'
+      ? ['Scheduled task', sourceTaskTitle || item.source_id].filter(Boolean).join(' / ')
+      : `Mission Control / ${item.source_id}`;
   return {
     id: item.source_kind === 'schedule' ? `schedule:${item.source_id}:${scheduleType}` : `attention:${item.id}`,
     source: item.source_kind,
+    origin,
     severity: item.severity,
     title: item.title,
     detail: item.detail,
@@ -2173,6 +2219,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
   const items: Array<{
     id: string;
     source: 'brief' | 'mission' | 'schedule';
+    origin?: string;
     severity: AttentionSeverity;
     title: string;
     detail: string;
@@ -2182,7 +2229,8 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
     href?: string;
   }> = [];
 
-  items.push(...listOpenAttentionItems(50).map(durableAttentionToHome));
+  const scheduledById = new Map(tasks.map((task) => [task.id, task] as const));
+  items.push(...listOpenAttentionItems(50).map((item) => durableAttentionToHome(item, scheduledById)));
 
   for (const mission of missions) {
     const review = effectiveMissionReview(mission, missions);

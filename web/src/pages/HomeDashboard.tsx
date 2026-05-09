@@ -85,6 +85,7 @@ interface HomeBrief {
 interface HomeAttentionItem {
   id: string;
   source: 'brief' | 'mission' | 'schedule';
+  origin?: string;
   severity: 'high' | 'medium' | 'low';
   title: string;
   detail: string;
@@ -521,7 +522,14 @@ function AttentionLine({ item }: { item: HomeAttentionItem }) {
   return (
     <div class="flex items-start gap-2 text-[12px] text-[var(--color-text-muted)]">
       <span class={(item.severity === 'high' ? 'bg-[var(--color-priority-high)]' : item.severity === 'medium' ? 'bg-[var(--color-priority-medium)]' : 'bg-[var(--color-text-faint)]') + ' mt-1.5 w-1.5 h-1.5 rounded-full shrink-0'} />
-      <span><span class="text-[var(--color-text)]">{item.title}: </span>{item.detail}</span>
+      <span class="min-w-0">
+        <span class="text-[var(--color-text)]">{item.title}: </span>{item.detail}
+        {item.origin && (
+          <span class="block mt-0.5 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] truncate">
+            {item.origin}
+          </span>
+        )}
+      </span>
     </div>
   );
 }
@@ -614,6 +622,11 @@ function AttentionPanel({
                   <Pill tone={item.severity === 'high' ? 'failed' : item.severity === 'medium' ? 'medium' : 'neutral'}>{item.source}</Pill>
                   <div class="text-[12.5px] text-[var(--color-text)] truncate">{item.title}</div>
                 </div>
+                {item.origin && (
+                  <div class="mt-1 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] truncate">
+                    {item.origin}
+                  </div>
+                )}
                 <div class={'text-[11px] text-[var(--color-text-muted)] mt-1 whitespace-pre-wrap ' + (expanded[item.id] ? 'leading-relaxed' : 'line-clamp-2')}>
                   {item.detail || 'No detail supplied.'}
                 </div>

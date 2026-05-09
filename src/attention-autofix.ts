@@ -105,11 +105,28 @@ function validAgentIds(): Set<string> {
   }
 }
 
-function hasHumanBlocker(text: string): boolean {
-  return /\b(?:requires ruan:\s*yes|ruan(?:'s)?\s+(?:approval|review|decision|input|confirmation|call)|ruan\s+(?:to|needs? to|must|should)\s+(?:reply|send|call|review|decide|approve|confirm|choose|log\s?in|login|re-?auth|authenticate|inspect|check)|your\s+(?:approval|review|decision|input|confirmation|call)|approve|sign[- ]?off|confirm|choose|decide|send\s+(?:the|this|email|message)|external account|admin account|device code|log\s?in|login|re-?auth|authenticate|refresh token|mfa|2fa|consent|payment|billing|bank|manual permission|full disk access|system settings|keychain password)\b/i.test(text);
+function hasExplicitRuanFlag(text: string): boolean {
+  return /\bRequires Ruan:\s*yes\b/i.test(text);
+}
+
+function hasHardHumanBlocker(text: string): boolean {
+  return /\b(?:ruan(?:'s)?\s+(?:approval|review|decision|input|confirmation|call)|ruan\s+(?:to|needs? to|must|should)\s+(?:reply|send|call|review|decide|approve|confirm|choose|log\s?in|login|re-?auth|authenticate|inspect|check)|needs?\s+(?:your\s+|ruan\s+)?review|your\s+(?:approval|review|decision|input|confirmation|call)|approve|sign[- ]?off|confirm(?:\s+approach)?|choose|decide|decision(?:\s+needed|\s+deferred)?|send\s+(?:the|this|email|message)|external account|admin account|device code|log\s?in|login|re-?auth|authenticate|refresh token|mfa|2fa|consent|payment|billing|bank|manual permission|full disk access|system settings|keychain password)\b/i.test(text);
+}
+
+function hasActionableSignal(text: string): boolean {
+  return /\b(?:has(?: not|n't) been actioned|needs|action|follow.?up|awaiting|blocked|review|approve|failed|missing|error|permission|auth|expired|lapsed|due|overdue|unavailable|re-auth|fix|export|upload|update|build|install|restart|deploy|rerun|retry)\b/i.test(text);
+}
+
+function hasExplicitHumanReviewBlocker(text: string): boolean {
+  return /\b(?:review|requires review|approval required|requires approval)\b/i.test(text);
+}
+
+function hasExternalActionBlocker(text: string): boolean {
+  return /\b(?:reply|respond|email|sms|text\s+message|phone|call|publish|submit|share|post|send\s+(?:reply|response|email|message|sms|text|to|the|this))\b/i.test(text);
 }
 
 function isInformationalOnly(text: string): boolean {
+  if (/\bno urgent\b/i.test(text) && /\b(?:mostly system notifications|system notifications|marketing)\b/i.test(text) && !hasActionableSignal(text)) return true;
   return /\b(?:no action required|no action needed|nothing to action|informational only|for info only|0 errors|zero errors|healthy|all clear|completed successfully|no blockers|overdue:\s*none|actions?:\s*none)\b/i.test(text);
 }
 
@@ -120,6 +137,10 @@ function suggestedAgent(text: string): string | null {
 
 function explicitlyNoRuan(text: string): boolean {
   return /\bRequires Ruan:\s*no\b/i.test(text);
+}
+
+function hasAgentExecutableWork(text: string): boolean {
+  return /\b(?:load|pull|export|upload|update|build|fix|prepare|create|write|run|wire|implement|sync|convert|generate|install|rerun|retry|restart|deploy|test)\b/i.test(text);
 }
 
 function isSystemFixRecommendation(text: string): boolean {
@@ -154,14 +175,19 @@ export function classifyAttentionItem(item: AttentionItem): AutofixDecision {
     return { action: 'archive', reason: 'informational-only attention row' };
   }
 
-  if (hasHumanBlocker(text)) {
+  const agents = validAgentIds();
+  const hinted = suggestedAgent(text);
+  const hardHumanBlocker = hasHardHumanBlocker(text);
+
+  if (hardHumanBlocker || (hasExplicitRuanFlag(text) && (hasExplicitHumanReviewBlocker(text) || hasExternalActionBlocker(text)))) {
     return { action: 'keep', reason: 'requires a human decision, credential, approval, or manual permission' };
   }
 
-  const agents = validAgentIds();
-  const hinted = suggestedAgent(text);
   if (hinted && agents.has(hinted) && explicitlyNoRuan(text)) {
     return { action: 'route', agentId: hinted, reason: 'structured action says the operator is not required and suggests an agent' };
+  }
+  if (hinted && agents.has(hinted) && hasExplicitRuanFlag(text) && hasAgentExecutableWork(text)) {
+    return { action: 'route', agentId: hinted, reason: 'suggested agent can execute the work without a hard human blocker' };
   }
 
   const inferred = inferAgent(text);
@@ -173,7 +199,9 @@ export function classifyAttentionItem(item: AttentionItem): AutofixDecision {
 }
 
 function missionTitleForAttention(item: AttentionItem): string {
-  const source = item.source_kind === 'brief' ? item.detail : item.title;
+  const source = item.title && !/^(morning|midday|evening|other)\s+brief$/i.test(item.title)
+    ? item.title
+    : item.detail;
   return source
     .replace(/^action needed:\s*/i, '')
     .replace(/^follow up:\s*/i, '')

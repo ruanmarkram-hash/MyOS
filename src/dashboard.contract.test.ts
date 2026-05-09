@@ -661,7 +661,7 @@ describe('GET /api/home dashboard endpoints', () => {
     updateTaskAfterRun(
       'brief-structured',
       now + 86400,
-      'ATTENTION_ACTIONS: [{"title":"Fix Graph auth","detail":"Microsoft Graph auth expired; re-auth Sage-Cos before calendar briefs can run.","severity":"high","sourceCategory":"runtime","suggested_agent":"warden","due":"today","requires_ruan":false,"confidence":0.91}]',
+      'ATTENTION_ACTIONS: [{"title":"Review Graph auth","detail":"Microsoft Graph auth expired; re-auth Sage-Cos before calendar briefs can run.","severity":"high","sourceCategory":"runtime","due":"today","requires_ruan":true,"confidence":0.91}]',
       'success',
     );
 
@@ -670,14 +670,104 @@ describe('GET /api/home dashboard endpoints', () => {
     const body = await jsonOf(res);
     const item = body.items.find((row: any) => row.source === 'brief');
     expect(item).toMatchObject({
-      title: 'Morning brief',
+      title: 'Review Graph auth',
+      origin: 'Morning brief',
       severity: 'high',
       detail: expect.stringContaining('Microsoft Graph auth expired'),
     });
-    expect(item.detail).toContain('Suggested agent: @warden');
     expect(item.detail).toContain('Due: today');
-    expect(item.detail).toContain('Requires Ruan: no');
+    expect(item.detail).toContain('Requires Ruan: yes');
     expect(item.detail).toContain('Confidence: 91%');
+  });
+
+  it('does not promote non-action inbox summaries from briefs', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-inbox-noise', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-inbox-noise',
+      now + 86400,
+      'Inbox: No urgent K-tagged items. Unread are mostly system notifications (Sentry, Connecteam auto-clocks, SEEK marketing from Oct 2025).',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items.map((item: any) => item.detail)).not.toEqual(expect.arrayContaining([
+      expect.stringContaining('No urgent K-tagged items'),
+    ]));
+  });
+
+  it('does not promote system notification inbox summaries with auth-like vendor names', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-inbox-auth0-noise', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-inbox-auth0-noise',
+      now + 86400,
+      'Inbox: No urgent K-tagged items. Unread are mostly system notifications from Auth0 marketing.',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items.map((item: any) => item.detail)).not.toEqual(expect.arrayContaining([
+      expect.stringContaining('Auth0 marketing'),
+    ]));
+  });
+
+  it('still extracts actions from mixed inbox summary lines', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-inbox-mixed', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-inbox-mixed',
+      now + 86400,
+      'Inbox: No urgent K-tagged items. Lucas contact form has not been actioned.',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Lucas contact form has not been actioned',
+        detail: 'Lucas contact form has not been actioned.',
+        origin: 'Morning brief',
+      }),
+    ]));
+  });
+
+  it('still extracts actions from mixed inbox summary lines with system-notification noise', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-inbox-mixed-noisy', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-inbox-mixed-noisy',
+      now + 86400,
+      'Inbox: No urgent K-tagged items. Unread are mostly system notifications. Lucas contact form has not been actioned.',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Lucas contact form has not been actioned',
+        detail: 'Lucas contact form has not been actioned.',
+      }),
+    ]));
+  });
+
+  it('still extracts actions from comma-style mixed inbox summary lines', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-inbox-comma-mixed', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-inbox-comma-mixed',
+      now + 86400,
+      'Inbox: No urgent K-tagged items, but Lucas contact form has not been actioned.',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'No urgent K-tagged items, but Lucas contact form has not been actioned',
+        detail: 'Inbox: No urgent K-tagged items, but Lucas contact form has not been actioned.',
+      }),
+    ]));
   });
 
   it('auto-routes structured attention that explicitly does not need Ruan', async () => {
@@ -703,6 +793,133 @@ describe('GET /api/home dashboard endpoints', () => {
         prompt: expect.stringContaining('Auto-routed Needs Attention item.'),
       }),
     ]));
+  });
+
+  it('auto-routes suggested-agent work even when a brief overstates Requires Ruan', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-overstated-ruan', 'Evening brief', '0 18 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-overstated-ruan',
+      now + 86400,
+      'ATTENTION_ACTIONS: [{"title":"Export Child Safety Charter PDF","detail":"Export ~/workspace/projects/sonke-hub/dry-run-4-deliverables/Child-Safety-Charter-DRAFT-v3-signed-branded.docx to PDF, upload to SharePoint, paste webUrl back.","severity":"medium","sourceCategory":"deliverable","suggested_agent":"mason","requires_ruan":true,"confidence":0.95}]',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items.map((item: any) => item.title)).not.toContain('Export Child Safety Charter PDF');
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Export Child Safety Charter PDF',
+        assigned_agent: 'mason',
+        created_by: 'autofix',
+      }),
+    ]));
+  });
+
+  it('keeps suggested-agent actions when they still need an explicit decision', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-decision-needed', 'Evening brief', '0 18 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-decision-needed',
+      now + 86400,
+      'ATTENTION_ACTIONS: [{"title":"Confirm OR merge approach","detail":"Codex recommended OR-merge in convert_prospect_to_client reconciliation should overwrite stale-true flags; brief forbade overwriting withdrawn-true. Confirm approach.","severity":"high","sourceCategory":"sonke-hub","suggested_agent":"mason","requires_ruan":true,"confidence":0.9}]',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Confirm OR merge approach',
+        detail: expect.stringContaining('Confirm approach'),
+      }),
+    ]));
+  });
+
+  it('keeps suggested-agent review work when Requires Ruan is explicit', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-review-human', 'Evening brief', '0 18 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-review-human',
+      now + 86400,
+      'ATTENTION_ACTIONS: [{"title":"Review draft intake policy","detail":"Review the draft intake policy and confirm whether it should replace the current version.","severity":"medium","sourceCategory":"policy","suggested_agent":"charter","requires_ruan":true,"confidence":0.9}]',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Review draft intake policy',
+        detail: expect.stringContaining('confirm whether'),
+      }),
+    ]));
+  });
+
+  it('keeps bare suggested-agent review work when Requires Ruan is explicit', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-review-human-bare', 'Evening brief', '0 18 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-review-human-bare',
+      now + 86400,
+      'ATTENTION_ACTIONS: [{"title":"Review draft intake policy","detail":"Review draft intake policy.","severity":"medium","sourceCategory":"policy","suggested_agent":"charter","requires_ruan":true,"confidence":0.9}]',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Review draft intake policy',
+        detail: expect.stringContaining('Review draft intake policy'),
+      }),
+    ]));
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks.map((task: any) => task.title)).not.toContain('Review draft intake policy');
+  });
+
+  it('keeps external comms actions when Requires Ruan is explicit', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-send-reply-human', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-send-reply-human',
+      now + 86400,
+      'ATTENTION_ACTIONS: [{"title":"Reply to Lucas family","detail":"Write and send reply to the family.","severity":"medium","sourceCategory":"inbox","suggested_agent":"ember","requires_ruan":true,"confidence":0.9}]',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Reply to Lucas family',
+        detail: expect.stringContaining('Write and send reply'),
+      }),
+    ]));
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks.map((task: any) => task.title)).not.toContain('Reply to Lucas family');
+  });
+
+  it('keeps SMS actions when Requires Ruan is explicit', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-sms-human', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-sms-human',
+      now + 86400,
+      'ATTENTION_ACTIONS: [{"title":"SMS Lucas family","detail":"Write SMS to Lucas family.","severity":"medium","sourceCategory":"inbox","suggested_agent":"ember","requires_ruan":true,"confidence":0.9}]',
+      'success',
+    );
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'SMS Lucas family',
+        detail: expect.stringContaining('Write SMS'),
+      }),
+    ]));
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks.map((task: any) => task.title)).not.toContain('SMS Lucas family');
   });
 
   it('auto-routes system fix recommendations from briefs without explicit no-Ruan metadata', async () => {
