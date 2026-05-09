@@ -700,6 +700,27 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(attention.items.map((item: any) => item.title)).not.toContain('Morning brief');
   });
 
+  it('derives display title for existing durable brief rows with generic titles', async () => {
+    upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-existing-generic',
+      sourceKey: 'brief:brief-existing-generic:tag-contacts',
+      title: 'Morning brief',
+      detail: 'Tag contacts in ~/workspace/operations/email-triage/contacts-review.md with K/W/S/I flags to enable smart inbox filtering.\nRequires Ruan: yes · Confidence: 80%',
+      severity: 'low',
+      href: '/home',
+    });
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: expect.stringContaining('Tag contacts in ~/workspace/operations/email-triage/contacts-review.md'),
+        detail: expect.stringContaining('Tag contacts'),
+      }),
+    ]));
+    expect(attention.items.map((item: any) => item.title)).not.toContain('Morning brief');
+  });
+
   it('does not promote non-action inbox summaries from briefs', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-inbox-noise', 'Morning brief', '0 9 * * *', now + 3600, 'main');
@@ -942,6 +963,32 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(missions.tasks.map((task: any) => task.title)).not.toContain('SMS Lucas family');
   });
 
+  it('keeps external comms actions even when they omit explicit Requires Ruan metadata', async () => {
+    upsertAttentionItem({
+      sourceKind: 'mission',
+      sourceId: 'mission-external-comms',
+      sourceKey: 'mission:mission-external-comms:terminal',
+      title: 'SMS Lucas family failed',
+      detail: 'Reply to Lucas family is blocked. Suggested agent: @ember. Draft and send the SMS.',
+      severity: 'medium',
+      href: '/review?task=mission-external-comms',
+    });
+
+    const sweep = runAttentionAutofixSweep(50);
+    expect(sweep.routed).toBe(0);
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'SMS Lucas family failed',
+        detail: expect.stringContaining('Draft and send the SMS'),
+      }),
+    ]));
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks.map((task: any) => task.title)).not.toContain('SMS Lucas family failed');
+  });
+
   it('auto-routes system fix recommendations from briefs without explicit no-Ruan metadata', async () => {
     upsertAttentionItem({
       sourceKind: 'brief',
@@ -982,7 +1029,7 @@ describe('GET /api/home dashboard endpoints', () => {
     const attention = await jsonOf(await get('/api/home/attention'));
     expect(attention.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        title: 'Other brief',
+        title: '[ob1-brain-health]: monitor-brain returned exit 2',
         detail: expect.stringContaining('Requires Ruan: yes'),
       }),
     ]));
@@ -1002,7 +1049,7 @@ describe('GET /api/home dashboard endpoints', () => {
     const attention = await jsonOf(await get('/api/home/attention'));
     expect(attention.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        title: 'Morning brief',
+        title: 'Fix recommendation: Ruan to reply to Lucas contact form before Ember drafts the follow-up',
         detail: expect.stringContaining('Ruan to reply to Lucas'),
       }),
     ]));
@@ -1334,6 +1381,45 @@ describe('GET /api/home dashboard endpoints', () => {
       'Fix Reminders CalDAV auth',
       'Fix iMessage digest access',
       'CA-05 support plans recovery',
+    ]));
+  });
+
+  it('does not hide fresh brief actions behind old terminal missions', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-old-terminal-cover', 'Morning brief', '0 9 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-old-terminal-cover',
+      now + 86400,
+      'Scripts unavailable (missing `caldav` module). Requires Ruan: yes. Ruan to inspect the Reminders account permission before retrying.',
+      'success',
+    );
+    createMissionTask('m-old-reminders', 'Fix Reminders CalDAV auth', 'fix reminders', 'warden', 'dashboard', 8);
+    completeMissionTask('m-old-reminders', null, 'failed', 'old failure');
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Scripts unavailable (missing `caldav` module)',
+        detail: expect.stringContaining('Requires Ruan: yes'),
+      }),
+    ]));
+  });
+
+  it('adds origin metadata to transient mission attention rows', async () => {
+    createMissionTask('m-unassigned-origin', 'Unassigned mission needing dispatch', 'do work', null, 'dashboard', 5);
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'mission:m-unassigned-origin',
+        source: 'mission',
+        origin: 'Mission Control / unassigned',
+        title: 'Unassigned mission needing dispatch',
+      }),
     ]));
   });
 

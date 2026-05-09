@@ -179,7 +179,7 @@ export function classifyAttentionItem(item: AttentionItem): AutofixDecision {
   const hinted = suggestedAgent(text);
   const hardHumanBlocker = hasHardHumanBlocker(text);
 
-  if (hardHumanBlocker || (hasExplicitRuanFlag(text) && (hasExplicitHumanReviewBlocker(text) || hasExternalActionBlocker(text)))) {
+  if (hardHumanBlocker || hasExternalActionBlocker(text) || (hasExplicitRuanFlag(text) && hasExplicitHumanReviewBlocker(text))) {
     return { action: 'keep', reason: 'requires a human decision, credential, approval, or manual permission' };
   }
 

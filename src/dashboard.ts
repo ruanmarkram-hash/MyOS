@@ -2054,7 +2054,9 @@ function durableAttentionToHome(item: AttentionItem, scheduledById = new Map<str
     source: item.source_kind,
     origin,
     severity: item.severity,
-    title: item.title,
+    title: item.source_kind === 'brief' && /^(morning|midday|evening|other)\s+brief$/i.test(item.title)
+      ? briefActionTitle(item.detail.split(/\n/)[0] || item.detail)
+      : item.title,
     detail: item.detail,
     createdAt: item.updated_at || item.created_at,
     agentId: item.assigned_agent,
@@ -2065,7 +2067,9 @@ function durableAttentionToHome(item: AttentionItem, scheduledById = new Map<str
 
 function briefDetailCoveredByMission(detail: string, missions: MissionTask[]): boolean {
   const d = detail.toLowerCase();
-  const missionTitles = missions.map((mission) => mission.title.toLowerCase());
+  const missionTitles = missions
+    .filter((mission) => !TERMINAL_MISSION_STATUSES.has(mission.status))
+    .map((mission) => mission.title.toLowerCase());
   const hasMission = (patterns: RegExp[]) => missionTitles.some((title) => patterns.some((pattern) => pattern.test(title)));
 
   if (/(caldav|scripts unavailable|reminders)/i.test(d)) {
@@ -2247,6 +2251,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
       items.push({
         id: `mission:${mission.id}`,
         source: 'mission',
+        origin: `Mission Control / ${mission.assigned_agent ? `@${mission.assigned_agent}` : 'unassigned'}`,
         severity: mission.status === 'running' || ageHours > 12 || !mission.assigned_agent ? 'medium' : 'low',
         title: mission.title,
         detail: `${mission.status}${mission.assigned_agent ? ` with @${mission.assigned_agent}` : ', unassigned'} · priority ${mission.priority}`,
@@ -2263,6 +2268,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
       items.push({
         id: `mission:${mission.id}:follow-up`,
         source: 'mission',
+        origin: `Mission Control / ${mission.assigned_agent ? `@${mission.assigned_agent}` : 'unassigned'}`,
         severity: 'medium',
         title: mission.title,
         detail: completedMissionDetail(mission),
