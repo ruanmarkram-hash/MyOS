@@ -23,6 +23,22 @@ if (cachedChatId) {
 export const dashboardToken = cachedToken;
 export const chatId = cachedChatId;
 
+function currentPathWithoutToken(): string {
+  const next = new URL(window.location.href);
+  next.searchParams.delete('token');
+  return `${next.pathname}${next.search}${next.hash}`;
+}
+
+function redirectToLogin(): void {
+  try {
+    sessionStorage.removeItem('claudeclaw.token');
+  } catch {}
+  const next = currentPathWithoutToken();
+  if (window.location.pathname !== '/login') {
+    window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+  }
+}
+
 function withToken(path: string): string {
   if (!dashboardToken) return path;
   const sep = path.includes('?') ? '&' : '?';
@@ -44,11 +60,16 @@ export function apiErrorMessage(err: unknown): string {
   return String(err);
 }
 
+async function parseApiError(res: Response, path: string, method: string): Promise<never> {
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 401) redirectToLogin();
+  throw new ApiError(res.status, body, `${method} ${path} failed: ${res.status}`);
+}
+
 export async function apiGet<T = unknown>(path: string): Promise<T> {
-  const res = await fetch(withToken(path), { method: 'GET' });
+  const res = await fetch(withToken(path), { method: 'GET', credentials: 'same-origin', cache: 'no-store' });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body, `GET ${path} failed: ${res.status}`);
+    await parseApiError(res, path, 'GET');
   }
   return res.json();
 }
@@ -56,12 +77,13 @@ export async function apiGet<T = unknown>(path: string): Promise<T> {
 export async function apiPost<T = unknown>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(withToken(path), {
     method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
     headers: body ? { 'content-type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, errBody, `POST ${path} failed: ${res.status}`);
+    await parseApiError(res, path, 'POST');
   }
   return res.json();
 }
@@ -69,12 +91,13 @@ export async function apiPost<T = unknown>(path: string, body?: unknown): Promis
 export async function apiPut<T = unknown>(path: string, body: unknown): Promise<T> {
   const res = await fetch(withToken(path), {
     method: 'PUT',
+    credentials: 'same-origin',
+    cache: 'no-store',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, errBody, `PUT ${path} failed: ${res.status}`);
+    await parseApiError(res, path, 'PUT');
   }
   return res.json();
 }
@@ -82,21 +105,21 @@ export async function apiPut<T = unknown>(path: string, body: unknown): Promise<
 export async function apiPatch<T = unknown>(path: string, body: unknown): Promise<T> {
   const res = await fetch(withToken(path), {
     method: 'PATCH',
+    credentials: 'same-origin',
+    cache: 'no-store',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, errBody, `PATCH ${path} failed: ${res.status}`);
+    await parseApiError(res, path, 'PATCH');
   }
   return res.json();
 }
 
 export async function apiDelete<T = unknown>(path: string): Promise<T> {
-  const res = await fetch(withToken(path), { method: 'DELETE' });
+  const res = await fetch(withToken(path), { method: 'DELETE', credentials: 'same-origin', cache: 'no-store' });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body, `DELETE ${path} failed: ${res.status}`);
+    await parseApiError(res, path, 'DELETE');
   }
   return res.json();
 }
