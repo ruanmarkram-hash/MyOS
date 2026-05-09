@@ -122,7 +122,7 @@ function hasExplicitHumanReviewBlocker(text: string): boolean {
 }
 
 function hasExternalActionBlocker(text: string): boolean {
-  return /\b(?:reply|respond|email|sms|text\s+message|phone|call|publish|submit|share|post|send\s+(?:reply|response|email|message|sms|text|to|the|this))\b/i.test(text);
+  return /\b(?:reply|respond|email|sms|text\s+message|text\s+(?:the|client|participant|family|provider|contact|person|parent|guardian)|message\s+(?:the|client|participant|family|provider|contact|person|parent|guardian)|phone|call|publish|submit|share|post|send\s+(?:reply|response|email|message|sms|text|to|the|this))\b/i.test(text);
 }
 
 function isInformationalOnly(text: string): boolean {
@@ -144,12 +144,15 @@ function hasAgentExecutableWork(text: string): boolean {
 }
 
 function isSystemFixRecommendation(text: string): boolean {
-  const hasSystemHealthSignal = /\b(?:monitor-brain|brain-watcher|jsonl processing|upstream jsonl|thoughts ingested|ingestion path|ob1-brain-health)\b/i.test(text);
-  const hasFailureOrFixSignal = /\b(?:fix recommendation|returned exit \d+|exit code \d+|failed|failure|error|0 thoughts ingested)\b/i.test(text);
+  const hasSystemHealthSignal = /\b(?:monitor-brain|brain-watcher|jsonl processing|upstream jsonl|thoughts ingested|ingestion path|ob1-brain-health|imessage|digest|caldav|reminders|database|postgres|sqlite|module|dependency|script|runtime|scheduled job)\b/i.test(text);
+  const hasFailureOrFixSignal = /\b(?:fix recommendation|returned exit \d+|exit code \d+|failed|failure|error|unavailable|missing|blocked|0 thoughts ingested)\b/i.test(text);
   return hasSystemHealthSignal && hasFailureOrFixSignal;
 }
 
 function inferAgent(text: string): string | null {
+  if (isSystemFixRecommendation(text)) {
+    return 'mason';
+  }
   if (/\b(?:ndis|compliance|audit|ca-0?5|ca-?10|restrictive practice|support plan|charter|policy|behaviour support|regulated)\b/i.test(text)) {
     return 'charter';
   }

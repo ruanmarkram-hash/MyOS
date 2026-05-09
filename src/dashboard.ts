@@ -1794,12 +1794,14 @@ function isBriefNoiseSentence(cleaned: string): boolean {
 function isNonActionBriefLine(cleaned: string): boolean {
   const parts = cleaned.split(/(?<=\.)\s+/).map((part) => part.trim()).filter(Boolean);
   if (parts.length > 0 && parts.every((part) => isBriefNoiseSentence(part) && !hasBriefActionSignal(part))) return true;
+  if (parts.length > 1 && parts.some((part) => hasBriefActionSignal(part) && !isNonActionBriefLine(part))) return false;
   if (/:\s*$/.test(cleaned)) return true;
   if (/^(action needed|blocked on you|open threads|stale|breakdown|notes|projects|compliance|calendar|inbox|today|tomorrow top 3):?$/i.test(cleaned)) return true;
   if (/^(items blocked\/awaiting|total unread|after triage|skipped):/i.test(cleaned)) return true;
   if (isBriefNoiseSentence(cleaned) && !hasBriefActionSignal(cleaned)) return true;
-  if (/^(urgent|overdue|blocked|awaiting|needs|actions?|risks?|review|follow.?up|open threads|auth|permissions?):\s*(none|nil|n\/a|no(?:\s+(?:urgent\s+)?(?:blockers?|risks?|actions?|follow.?ups?|reviews?|items?))?|0)(\.|$)/i.test(cleaned)) return true;
-  if (/^(?:overdue\s+)?(?:reminders?|calendar|inbox|web forms?|forms?|tasks?|items?):\s*(none|nil|n\/a|no(?:\s+(?:urgent\s+)?(?:items?|actions?|follow.?ups?|entries|forms?|tasks?|reminders?))?|0)(\.|$)/i.test(cleaned)) return true;
+  if (/^(?:calendar|tasks?|items?):\s*no action items?\.?$/i.test(cleaned)) return true;
+  if (/^(urgent|overdue|blocked|awaiting|needs|actions?|risks?|review|follow.?up|open threads|auth|permissions?):\s*(none|nil|n\/a|no(?:\s+(?:urgent\s+)?(?:blockers?|risks?|actions?|follow.?ups?|reviews?|items?))?|0)\.?$/i.test(cleaned)) return true;
+  if (/^(?:overdue\s+)?(?:reminders?|calendar|inbox|web forms?|forms?|tasks?|items?):\s*(none|nil|n\/a|no(?:\s+(?:urgent\s+)?(?:items?|actions?|follow.?ups?|entries|forms?|tasks?|reminders?))?|0)\.?$/i.test(cleaned)) return true;
   if (/^(no|none)\s+(urgent|overdue|blocked|awaiting|open|review|follow.?up|action|actions|risks?)/i.test(cleaned)) return true;
   return false;
 }
@@ -1807,12 +1809,13 @@ function isNonActionBriefLine(cleaned: string): boolean {
 function actionableBriefDetail(cleaned: string): string {
   if (!/^(inbox|calendar|today|overdue|actions?|follow.?up):\s*/i.test(cleaned)) return cleaned;
   const parts = cleaned.split(/(?<=\.)\s+/).map((part) => part.trim()).filter(Boolean);
-  const actionable = parts.find((part) =>
-    !isBriefNoiseSentence(part)
-    &&
-    /has(?: not|n't) been actioned|needs|action|follow.?up|awaiting|blocked|review|approve|failed|missing|error|permission|auth/i.test(part)
-    && !isNonActionBriefLine(part),
-  );
+  const actionable = parts.find((part) => {
+    const candidate = part.replace(/^(inbox|calendar|today|overdue|actions?|follow.?up):\s*/i, '').trim();
+    return !isBriefNoiseSentence(part)
+      && /has(?: not|n't) been actioned|needs|action|follow.?up|awaiting|blocked|review|approve|failed|missing|error|permission|auth|expired|lapsed|due|overdue|unavailable|re-auth/i.test(part)
+      && !isNonActionBriefLine(part)
+      && !isNonActionBriefLine(candidate);
+  });
   if (!actionable) return cleaned;
   return actionable.replace(/^(inbox|calendar|today|overdue|actions?|follow.?up):\s*/i, '').trim();
 }

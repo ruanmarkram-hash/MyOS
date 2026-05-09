@@ -166,6 +166,7 @@ describe('auth gate', () => {
 describe('GET /api/health', () => {
   it('returns the documented shape', async () => {
     const res = await get('/api/health');
+    expect(res.status).toBe(200);
     const body = await jsonOf(res);
     expect(body).toMatchObject({
       contextPct: expect.any(Number),
@@ -195,6 +196,7 @@ describe('GET /api/health', () => {
 
   it('killSwitches contains all 6 documented flags', async () => {
     const res = await get('/api/health');
+    expect(res.status).toBe(200);
     const body = await jsonOf(res);
     expect(body.killSwitches).toMatchObject({
       WARROOM_TEXT_ENABLED: expect.any(Boolean),
@@ -826,6 +828,9 @@ describe('GET /api/home dashboard endpoints', () => {
       expect.stringContaining('missing caldav module'),
     ]));
 
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+
     const missions = await jsonOf(await get('/api/mission/tasks'));
     expect(missions.tasks).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -989,6 +994,52 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(missions.tasks.map((task: any) => task.title)).not.toContain('SMS Lucas family failed');
   });
 
+  it('keeps plain message or text actions human-gated when they omit explicit Requires Ruan metadata', async () => {
+    upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-message-human',
+      sourceKey: 'brief:brief-message-human:message-lucas',
+      title: 'Message the family about missing database form',
+      detail: 'Message the family about missing database form.',
+      severity: 'medium',
+      href: '/home',
+    });
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Message the family about missing database form',
+      }),
+    ]));
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks.map((task: any) => task.title)).not.toContain('Message the family about missing database form');
+  });
+
+  it('auto-routes technical message database failures', async () => {
+    upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-message-db',
+      sourceKey: 'brief:brief-message-db:message-db',
+      title: 'Message database error',
+      detail: 'Message database error: inbox digest unavailable.',
+      severity: 'high',
+      href: '/home',
+    });
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items.map((item: any) => item.title)).not.toContain('Message database error');
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Message database error',
+        assigned_agent: 'mason',
+        created_by: 'autofix',
+      }),
+    ]));
+  });
+
   it('auto-routes system fix recommendations from briefs without explicit no-Ruan metadata', async () => {
     upsertAttentionItem({
       sourceKind: 'brief',
@@ -1011,6 +1062,30 @@ describe('GET /api/home dashboard endpoints', () => {
         assigned_agent: 'mason',
         created_by: 'autofix',
         prompt: expect.stringContaining('brain-watcher ingestion path'),
+      }),
+    ]));
+  });
+
+  it('auto-routes plain technical brief failures without explicit no-Ruan metadata', async () => {
+    upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-imessage-db',
+      sourceKey: 'brief:brief-imessage-db:imessage-db',
+      title: 'iMessages: Database error (unable to check)',
+      detail: 'iMessages: Database error (unable to check).',
+      severity: 'medium',
+      href: '/home',
+    });
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items.map((item: any) => item.title)).not.toContain('iMessages: Database error (unable to check)');
+
+    const missions = await jsonOf(await get('/api/mission/tasks'));
+    expect(missions.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'iMessages: Database error (unable to check)',
+        assigned_agent: 'mason',
+        created_by: 'autofix',
       }),
     ]));
   });
@@ -1342,6 +1417,27 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(details).not.toContain('Overdue reminders: None.');
     expect(details).not.toContain('Web forms: No urgent forms.');
     expect(details).not.toContain('Calendar: No action items.');
+  });
+
+  it('keeps actionable text after scoped none clauses on the same brief line', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    createScheduledTask('brief-mixed-scoped-none-line', 'Mid-day pulse', '30 12 * * *', now + 3600, 'main');
+    updateTaskAfterRun(
+      'brief-mixed-scoped-none-line',
+      now + 86400,
+      'Calendar: No action items. CalDAV unavailable; re-auth failed.',
+      'success',
+    );
+
+    const res = await get('/api/home/attention');
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: 'CalDAV unavailable; re-auth failed',
+        detail: expect.stringContaining('CalDAV unavailable'),
+      }),
+    ]));
   });
 
   it('archives stale brief attention rows when the current extraction changes', async () => {
