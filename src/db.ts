@@ -1728,6 +1728,13 @@ export function listOpenAttentionItems(limit = 50): AttentionItem[] {
   ).all(limit) as AttentionItem[];
 }
 
+/**
+ * Returns attention items that are still actionable in the UI: 'open' rows
+ * (untouched) plus 'assigned' rows (work in flight). Resolved/archived rows
+ * stay hidden. Used by the Mission Control "Needs Attention" panel so an
+ * item does not vanish the moment it gets assigned to an agent — the panel
+ * shows progress, then auto-cleans on completion via the sync sweep.
+ */
 export function listActiveAttentionItems(limit = 50): AttentionItem[] {
   return db.prepare(
     `SELECT * FROM attention_items

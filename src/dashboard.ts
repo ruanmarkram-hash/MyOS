@@ -2052,10 +2052,30 @@ function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[
   }
 }
 
+type AttentionWorkStatus = 'new' | 'queued' | 'running' | 'done' | 'failed';
+
+function deriveAttentionWorkStatus(item: AttentionItem, missionsById: Map<string, MissionTask>): AttentionWorkStatus {
+  if (item.status === 'open' && !item.assigned_agent) return 'new';
+  // assigned (or claimed-but-no-mission) rows: look at the linked mission
+  if (item.linked_mission_id) {
+    const mission = missionsById.get(item.linked_mission_id);
+    if (mission) {
+      if (mission.status === 'completed') return 'done';
+      if (mission.status === 'failed' || mission.status === 'partial') return 'failed';
+      if (mission.status === 'running') return 'running';
+      if (mission.status === 'queued') return 'queued';
+      if (mission.status === 'cancelled') return 'failed';
+    }
+  }
+  // assigned but no live mission row found — treat as queued
+  if (item.status === 'assigned') return 'queued';
+  return 'new';
+}
+
 function durableAttentionToHome(
   item: AttentionItem,
   scheduledById = new Map<string, ScheduledTask>(),
-  missions: MissionTask[] = [],
+  missionsById = new Map<string, MissionTask>(),
 ) {
   const scheduleType = item.detail.startsWith('Scheduled job still running') ? 'stuck' : 'last-status';
   const sourceTask = item.source_kind === 'brief' || item.source_kind === 'schedule' ? scheduledById.get(item.source_id) : null;
@@ -2067,30 +2087,6 @@ function durableAttentionToHome(
     : item.source_kind === 'schedule'
       ? ['Scheduled task', sourceTaskTitle || item.source_id].filter(Boolean).join(' / ')
       : `Mission Control / ${item.source_id}`;
-
-  let workStatus: 'new' | 'queued' | 'running' | 'done' | 'failed' = 'new';
-  if (item.linked_mission_id) {
-    const linked = missions.find((m) => m.id === item.linked_mission_id);
-    if (!linked) {
-      workStatus = 'queued';
-    } else if (linked.status === 'queued') {
-      workStatus = 'queued';
-    } else if (linked.status === 'running') {
-      workStatus = 'running';
-    } else if (linked.status === 'completed') {
-      workStatus = 'done';
-    } else if (linked.status === 'failed' || linked.status === 'partial') {
-      workStatus = 'failed';
-    } else {
-      workStatus = 'queued';
-    }
-  } else if (item.assigned_agent) {
-    // Assigned but no linked mission found.
-    workStatus = 'queued';
-  } else {
-    workStatus = 'new';
-  }
-
   return {
     id: item.source_kind === 'schedule' ? `schedule:${item.source_id}:${scheduleType}` : `attention:${item.id}`,
     source: item.source_kind,
@@ -2104,7 +2100,8 @@ function durableAttentionToHome(
     agentId: item.assigned_agent,
     taskId: item.source_id,
     href: item.href || '/home',
-    workStatus,
+    workStatus: deriveAttentionWorkStatus(item, missionsById),
+    linkedMissionId: item.linked_mission_id,
   };
 }
 
@@ -2262,22 +2259,23 @@ function completedMissionHasFollowUp(mission: MissionTask, missions: MissionTask
 }
 
 function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
+  const missionsById = new Map(missions.map((m) => [m.id, m] as const));
   if (isEnabled('DASHBOARD_MUTATIONS_ENABLED')) {
     syncReportAttentionItems(tasks, missions);
     syncTerminalMissionAttentionItems(missions);
-    runAttentionAutofixSweep(50);
-    // Auto-resolve assigned attention items whose linked mission has completed.
-    const missionById = new Map(missions.map((m) => [m.id, m] as const));
+    // Auto-resolve attention items whose linked mission landed successfully.
+    // Failed/partial stay visible (workStatus='failed') so Ruan sees them.
+    // This is the self-cleaning behaviour for assigned rows.
     for (const item of listActiveAttentionItems(200)) {
-      if (!item.linked_mission_id) continue;
-      const linked = missionById.get(item.linked_mission_id);
-      if (linked && linked.status === 'completed') {
+      if (item.status !== 'assigned' || !item.linked_mission_id) continue;
+      const mission = missionsById.get(item.linked_mission_id);
+      if (mission && mission.status === 'completed') {
         updateAttentionStatus(item.id, 'resolved');
       }
     }
+    runAttentionAutofixSweep(50);
   }
   const canonicalFollowUps = canonicalFollowUpIds(missions);
-  type WorkStatus = 'new' | 'queued' | 'running' | 'done' | 'failed';
   const items: Array<{
     id: string;
     source: 'brief' | 'mission' | 'schedule';
@@ -2289,11 +2287,12 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
     agentId?: string | null;
     taskId?: string;
     href?: string;
-    workStatus: WorkStatus;
+    workStatus?: AttentionWorkStatus;
+    linkedMissionId?: string | null;
   }> = [];
 
   const scheduledById = new Map(tasks.map((task) => [task.id, task] as const));
-  items.push(...listActiveAttentionItems(50).map((item) => durableAttentionToHome(item, scheduledById, missions)));
+  items.push(...listActiveAttentionItems(50).map((item) => durableAttentionToHome(item, scheduledById, missionsById)));
 
   for (const mission of missions) {
     const review = effectiveMissionReview(mission, missions);
@@ -2302,14 +2301,6 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
       if (followUpSource && !canonicalFollowUps.has(mission.id)) continue;
       const ageHours = (Date.now() / 1000 - mission.created_at) / 3600;
       if (mission.assigned_agent && mission.status === 'queued' && ageHours <= 12) continue;
-      let workStatus: WorkStatus = 'new';
-      if (!mission.assigned_agent) {
-        workStatus = 'new';
-      } else if (mission.status === 'running') {
-        workStatus = 'running';
-      } else if (mission.status === 'queued') {
-        workStatus = 'queued';
-      }
       items.push({
         id: `mission:${mission.id}`,
         source: 'mission',
@@ -2321,7 +2312,8 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
         agentId: mission.assigned_agent,
         taskId: mission.id,
         href: '/mission',
-        workStatus,
+        workStatus: mission.status === 'running' ? 'running' : mission.status === 'queued' ? 'queued' : 'new',
+        linkedMissionId: mission.id,
       });
     } else if (review && ['archived', 'resolved', 'waiting_followup'].includes(review.review_status)) {
       continue;
@@ -2339,19 +2331,26 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
         agentId: mission.assigned_agent,
         taskId: mission.id,
         href: '/mission',
-        workStatus: 'failed',
+        workStatus: 'new',
+        linkedMissionId: mission.id,
       });
     }
   }
 
-  const severityRank = { high: 0, medium: 1, low: 2 } satisfies Record<AttentionSeverity, number>;
-  const workStatusRank: Record<WorkStatus, number> = { failed: 0, new: 1, queued: 2, running: 3, done: 4 };
+  const rank = { high: 0, medium: 1, low: 2 } satisfies Record<AttentionSeverity, number>;
+  // Plan-locked sort: failed → new → queued → running → done. Severity is
+  // a secondary key so a high-severity 'new' still sits above a low-severity
+  // 'new'. createdAt breaks any remaining ties.
+  const workRank: Record<AttentionWorkStatus, number> = { failed: 0, new: 1, queued: 2, running: 3, done: 4 };
   return items
-    .sort((a, b) =>
-      workStatusRank[a.workStatus] - workStatusRank[b.workStatus] ||
-      severityRank[a.severity] - severityRank[b.severity] ||
-      b.createdAt - a.createdAt,
-    )
+    .sort((a, b) => {
+      const aw = workRank[a.workStatus ?? 'new'];
+      const bw = workRank[b.workStatus ?? 'new'];
+      if (aw !== bw) return aw - bw;
+      const sev = rank[a.severity] - rank[b.severity];
+      if (sev !== 0) return sev;
+      return b.createdAt - a.createdAt;
+    })
     .slice(0, 12);
 }
 

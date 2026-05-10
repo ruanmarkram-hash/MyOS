@@ -82,6 +82,8 @@ interface HomeBrief {
   primary: boolean;
 }
 
+type AttentionWorkStatus = 'new' | 'queued' | 'running' | 'done' | 'failed';
+
 interface HomeAttentionItem {
   id: string;
   source: 'brief' | 'mission' | 'schedule';
@@ -93,6 +95,8 @@ interface HomeAttentionItem {
   agentId?: string | null;
   taskId?: string;
   href?: string;
+  workStatus?: AttentionWorkStatus;
+  linkedMissionId?: string | null;
 }
 
 interface HomeAgendaItem {
@@ -619,7 +623,8 @@ function AttentionPanel({
                 title={expanded[item.id] ? 'Collapse detail' : 'Show full action detail'}
               >
                 <div class="flex items-center gap-2 min-w-0">
-                  <Pill tone={item.severity === 'high' ? 'failed' : item.severity === 'medium' ? 'medium' : 'neutral'}>{item.source}</Pill>
+                  <StatusDot tone={item.severity === 'high' ? 'high' : item.severity === 'medium' ? 'medium' : 'low'} />
+                  <WorkStatusPill item={item} />
                   <div class="text-[12.5px] text-[var(--color-text)] truncate">{item.title}</div>
                 </div>
                 {item.origin && (
@@ -671,14 +676,31 @@ function AttentionPanel({
               </div>
             </div>
           </div>
+          {item.workStatus === 'done' ? (
+            <div class="mt-2 pl-1">
+              <button
+                type="button"
+                onClick={() => void resolve(item, 'complete')}
+                disabled={!!resolving[item.id]}
+                class="inline-flex items-center gap-1.5 rounded border border-[color-mix(in_srgb,var(--color-status-done)_45%,transparent)] bg-[color-mix(in_srgb,var(--color-status-done)_12%,transparent)] px-2.5 py-1 text-[11px] text-[var(--color-status-done)] hover:bg-[color-mix(in_srgb,var(--color-status-done)_22%,transparent)] disabled:opacity-40"
+                title={resolving[item.id] || 'Clear this completed item'}
+              >
+                <Check size={12} />
+                {resolving[item.id] ? 'Clearing...' : 'Clear?'}
+              </button>
+            </div>
+          ) : (
           <div class="mt-2 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_132px] gap-2 pl-1">
             <textarea
               value={instructions[item.id] || ''}
               onInput={(e) => setInstructions((prev) => ({ ...prev, [item.id]: (e.target as HTMLTextAreaElement).value }))}
               rows={2}
               maxLength={2000}
-              placeholder="Optional instructions for the agent before assigning..."
-              class="min-w-0 resize-y rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] placeholder:text-[var(--color-text-faint)]"
+              placeholder={item.workStatus === 'running' || item.workStatus === 'queued'
+                ? 'Already in flight — reassignment disabled.'
+                : 'Optional instructions for the agent before assigning...'}
+              disabled={item.workStatus === 'running' || item.workStatus === 'queued'}
+              class="min-w-0 resize-y rounded border border-[var(--color-border)] bg-[var(--color-card)] px-2 py-1.5 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] placeholder:text-[var(--color-text-faint)] disabled:opacity-40"
             />
             <select
               value=""
@@ -687,20 +709,34 @@ function AttentionPanel({
                 void assign(item, value);
                 (e.target as HTMLSelectElement).value = '';
               }}
-              disabled={!!assigning[item.id] || agents.length === 0}
+              disabled={!!assigning[item.id] || agents.length === 0 || item.workStatus === 'running' || item.workStatus === 'queued'}
               class="w-full sm:w-[132px] bg-[var(--color-card)] border border-[var(--color-border)] rounded text-[10.5px] text-[var(--color-text-muted)] px-1.5 py-1 outline-none hover:border-[var(--color-border-strong)] disabled:opacity-40"
-              title="Assign this attention item"
+              title={item.workStatus === 'running' || item.workStatus === 'queued'
+                ? 'Already assigned — wait for the run to land or fail before reassigning.'
+                : 'Assign this attention item'}
             >
-              <option value="">{assigning[item.id] ? 'Assigning...' : 'Assign to...'}</option>
+              <option value="">{assigning[item.id] ? 'Assigning...' : item.workStatus === 'running' || item.workStatus === 'queued' ? 'Locked' : 'Assign to...'}</option>
               {agents.map((agent) => (
                 <option key={agent.id} value={agent.id}>{agent.name || agent.id}</option>
               ))}
             </select>
           </div>
+          )}
         </div>
       ))}
     </div>
   );
+}
+
+function WorkStatusPill({ item }: { item: HomeAttentionItem }) {
+  const status = item.workStatus ?? 'new';
+  const agent = item.agentId ? '@' + item.agentId : null;
+  if (status === 'new') return <Pill tone="neutral">new</Pill>;
+  if (status === 'failed') return <Pill tone="failed">{(agent || 'agent') + ' · failed'}</Pill>;
+  if (status === 'queued') return <Pill tone="queued">{(agent || 'agent') + ' · queued'}</Pill>;
+  if (status === 'running') return <Pill tone="running">{(agent || 'agent') + ' · running'}</Pill>;
+  // done
+  return <Pill tone="done">{(agent || 'agent') + ' · done'}</Pill>;
 }
 
 function ControlLine({ label, on }: { label: string; on: boolean }) {

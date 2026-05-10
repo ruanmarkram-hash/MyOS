@@ -1704,6 +1704,63 @@ describe('GET /api/home dashboard endpoints', () => {
     });
     expect(body.items).toEqual([]);
   });
+
+  it('exposes assigned attention rows with workStatus tied to the linked mission', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const item = upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-workstatus',
+      sourceKey: 'brief:brief-workstatus:wire-thing',
+      title: 'Wire the thing',
+      detail: 'Wire the thing because reasons.',
+      severity: 'high',
+      href: '/home',
+    });
+    createMissionTask('m-workstatus', 'Wire the thing', 'wire it', 'mason', 'dashboard', 7);
+    markAttentionAssigned(item.id, 'm-workstatus', 'mason');
+
+    // Mission still queued — workStatus should be 'queued'.
+    const queuedRes = await get('/api/home/attention');
+    const queuedBody = await jsonOf(queuedRes);
+    const queuedRow = queuedBody.items.find((row: any) => row.id === `attention:${item.id}`);
+    expect(queuedRow).toBeTruthy();
+    expect(queuedRow).toMatchObject({ workStatus: 'queued', agentId: 'mason', linkedMissionId: 'm-workstatus' });
+
+    // Mission running — workStatus flips to 'running'.
+    expect(claimNextMissionTask('mason')?.id).toBe('m-workstatus');
+    const runningBody = await jsonOf(await get('/api/home/attention'));
+    const runningRow = runningBody.items.find((row: any) => row.id === `attention:${item.id}`);
+    expect(runningRow).toMatchObject({ workStatus: 'running' });
+
+    // Mission completes — auto-resolve drops the row from the panel.
+    completeMissionTask('m-workstatus', 'Done.', 'completed');
+    const doneBody = await jsonOf(await get('/api/home/attention'));
+    expect(doneBody.items.find((row: any) => row.id === `attention:${item.id}`)).toBeUndefined();
+    // And the underlying durable row is now resolved (self-cleaned).
+    expect(getAttentionItem(item.id)?.status).toBe('resolved');
+  });
+
+  it('keeps a failed assigned attention row visible with workStatus=failed', async () => {
+    const item = upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-workstatus-fail',
+      sourceKey: 'brief:brief-workstatus-fail:other',
+      title: 'Other thing',
+      detail: 'Other thing detail.',
+      severity: 'medium',
+      href: '/home',
+    });
+    createMissionTask('m-workstatus-fail', 'Other thing', 'do it', 'mason', 'dashboard', 6);
+    markAttentionAssigned(item.id, 'm-workstatus-fail', 'mason');
+    completeMissionTask('m-workstatus-fail', null, 'failed', 'boom');
+
+    const body = await jsonOf(await get('/api/home/attention'));
+    const row = body.items.find((r: any) => r.id === `attention:${item.id}`);
+    expect(row).toBeTruthy();
+    expect(row).toMatchObject({ workStatus: 'failed', agentId: 'mason' });
+    // Durable row stays assigned (NOT auto-resolved) because the mission failed.
+    expect(getAttentionItem(item.id)?.status).toBe('assigned');
+  });
 });
 
 describe('GET /api/tasks (scheduled)', () => {
