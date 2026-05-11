@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { _initTestDatabase, _setMissionCompletedAtForTest, cleanupOldMissionTasks, completeMissionTask, createMissionTask, createScheduledTask, getAllScheduledTasks, getAttentionItemBySourceKey, getMissionManifest, getMissionReview, getMissionTask, getTelegramOutboxRow, insertOperationNotification, insertTelegramOutbox, markTaskRunning, markTelegramOutboxDeadLettered, saveStructuredMemory, updateTaskAfterRun, upsertAttentionItem, upsertMissionReview } from './db.js';
+import { _initTestDatabase, _setMissionCompletedAtForTest, claimNextMissionTask, cleanupOldMissionTasks, completeMissionTask, createMissionTask, createScheduledTask, getAllScheduledTasks, getAttentionItem, getAttentionItemBySourceKey, getMissionManifest, getMissionReview, getMissionTask, getTelegramOutboxRow, insertOperationNotification, insertTelegramOutbox, markAttentionAssigned, markTaskRunning, markTelegramOutboxDeadLettered, saveStructuredMemory, updateTaskAfterRun, upsertAttentionItem, upsertMissionReview } from './db.js';
 import { runAttentionAutofixSweep } from './attention-autofix.js';
 import { buildDashboardApp, configuredReviewExportEmail, configuredReviewExportFromEmail, createReviewEmailAttachment } from './dashboard.js';
 import type { Hono } from 'hono';
@@ -657,6 +657,67 @@ describe('GET /api/home dashboard endpoints', () => {
     });
   });
 
+  it('emits workStatus=running for attention item assigned to a running mission', async () => {
+    const item = upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-running-mission',
+      sourceKey: 'brief:brief-running-mission:workstatus-running',
+      title: 'Fix Graph auth',
+      detail: 'Re-auth Sage-Cos before calendar briefs can run.',
+      severity: 'high',
+      href: '/home',
+    });
+    createMissionTask('m-workstatus-running', 'Fix Graph auth', 'fix it', 'mason', 'dashboard', 7);
+    const claimed = claimNextMissionTask('mason');
+    expect(claimed?.status).toBe('running');
+    markAttentionAssigned(item.id, 'm-workstatus-running', 'mason');
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    const row = attention.items.find((it: any) => it.id === `attention:${item.id}`);
+    expect(row).toBeDefined();
+    expect(row.workStatus).toBe('running');
+  });
+
+  it('auto-resolves attention items whose linked mission completed', async () => {
+    const item = upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-mission-completed',
+      sourceKey: 'brief:brief-mission-completed:autoresolve',
+      title: 'Resolve calendar issue',
+      detail: 'Calendar connector pending.',
+      severity: 'medium',
+      href: '/home',
+    });
+    createMissionTask('m-workstatus-completed', 'Resolve calendar issue', 'do it', 'mason', 'dashboard', 5);
+    markAttentionAssigned(item.id, 'm-workstatus-completed', 'mason');
+    completeMissionTask('m-workstatus-completed', 'all done', 'completed');
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    expect(attention.items.find((it: any) => it.id === `attention:${item.id}`)).toBeUndefined();
+    const stored = getAttentionItem(item.id);
+    expect(stored?.status).toBe('resolved');
+  });
+
+  it('emits workStatus=failed when linked mission failed', async () => {
+    const item = upsertAttentionItem({
+      sourceKind: 'brief',
+      sourceId: 'brief-mission-failed',
+      sourceKey: 'brief:brief-mission-failed:workstatus-failed',
+      title: 'Investigate Graph errors',
+      detail: 'Graph calls returning 401.',
+      severity: 'high',
+      href: '/home',
+    });
+    createMissionTask('m-workstatus-failed', 'Investigate Graph errors', 'fix it', 'mason', 'dashboard', 7);
+    markAttentionAssigned(item.id, 'm-workstatus-failed', 'mason');
+    completeMissionTask('m-workstatus-failed', null, 'failed', 'auth refused');
+
+    const attention = await jsonOf(await get('/api/home/attention'));
+    const row = attention.items.find((it: any) => it.id === `attention:${item.id}`);
+    expect(row).toBeDefined();
+    expect(row.workStatus).toBe('failed');
+  });
+
   it('preserves structured brief action metadata in durable attention detail', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-structured', 'Morning brief', '0 9 * * *', now + 3600, 'main');
@@ -824,9 +885,9 @@ describe('GET /api/home dashboard endpoints', () => {
     );
 
     const attention = await jsonOf(await get('/api/home/attention'));
-    expect(attention.items.map((item: any) => item.detail)).not.toEqual(expect.arrayContaining([
-      expect.stringContaining('missing caldav module'),
-    ]));
+    const routed = attention.items.find((item: any) => /missing caldav module/.test(item.detail));
+    expect(routed).toBeDefined();
+    expect(routed.workStatus).not.toBe('new');
 
     const res = await get('/api/home/attention');
     expect(res.status).toBe(200);
@@ -852,7 +913,9 @@ describe('GET /api/home dashboard endpoints', () => {
     );
 
     const attention = await jsonOf(await get('/api/home/attention'));
-    expect(attention.items.map((item: any) => item.title)).not.toContain('Export Child Safety Charter PDF');
+    const routed = attention.items.find((item: any) => item.title === 'Export Child Safety Charter PDF');
+    expect(routed).toBeDefined();
+    expect(routed.workStatus).not.toBe('new');
 
     const missions = await jsonOf(await get('/api/mission/tasks'));
     expect(missions.tasks).toEqual(expect.arrayContaining([
@@ -1028,7 +1091,9 @@ describe('GET /api/home dashboard endpoints', () => {
     });
 
     const attention = await jsonOf(await get('/api/home/attention'));
-    expect(attention.items.map((item: any) => item.title)).not.toContain('Message database error');
+    const routed = attention.items.find((item: any) => item.title === 'Message database error');
+    expect(routed).toBeDefined();
+    expect(routed.workStatus).not.toBe('new');
 
     const missions = await jsonOf(await get('/api/mission/tasks'));
     expect(missions.tasks).toEqual(expect.arrayContaining([
@@ -1052,9 +1117,9 @@ describe('GET /api/home dashboard endpoints', () => {
     });
 
     const attention = await jsonOf(await get('/api/home/attention'));
-    expect(attention.items.map((item: any) => item.detail)).not.toEqual(expect.arrayContaining([
-      expect.stringContaining('monitor-brain returned exit 2'),
-    ]));
+    const routed = attention.items.find((item: any) => /monitor-brain returned exit 2/.test(item.detail));
+    expect(routed).toBeDefined();
+    expect(routed.workStatus).not.toBe('new');
 
     const missions = await jsonOf(await get('/api/mission/tasks'));
     expect(missions.tasks).toEqual(expect.arrayContaining([
@@ -1078,7 +1143,9 @@ describe('GET /api/home dashboard endpoints', () => {
     });
 
     const attention = await jsonOf(await get('/api/home/attention'));
-    expect(attention.items.map((item: any) => item.title)).not.toContain('iMessages: Database error (unable to check)');
+    const routed = attention.items.find((item: any) => item.title === 'iMessages: Database error (unable to check)');
+    expect(routed).toBeDefined();
+    expect(routed.workStatus).not.toBe('new');
 
     const missions = await jsonOf(await get('/api/mission/tasks'));
     expect(missions.tasks).toEqual(expect.arrayContaining([
@@ -1135,7 +1202,9 @@ describe('GET /api/home dashboard endpoints', () => {
     completeMissionTask('m-autofix-terminal', null, 'failed', 'TypeScript build failed: missing dependency.');
 
     const attention = await jsonOf(await get('/api/home/attention'));
-    expect(attention.items.map((item: any) => item.title)).not.toContain('Fix frontend build failure');
+    const routed = attention.items.find((item: any) => item.title === 'Fix frontend build failure');
+    expect(routed).toBeDefined();
+    expect(routed.workStatus).not.toBe('new');
 
     const review = getMissionReview('m-autofix-terminal');
     expect(review).toMatchObject({
@@ -1197,7 +1266,9 @@ describe('GET /api/home dashboard endpoints', () => {
     const res = await get('/api/home/attention');
     expect(res.status).toBe(200);
     const body = await jsonOf(res);
-    expect(body.items.map((item: any) => item.id)).not.toContain('schedule:schedule-command-title:last-status');
+    const routed = body.items.find((item: any) => item.id === 'schedule:schedule-command-title:last-status');
+    expect(routed).toBeDefined();
+    expect(routed.workStatus).not.toBe('new');
     const missions = await jsonOf(await get('/api/mission/tasks'));
     expect(missions.tasks).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -1287,7 +1358,9 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(assign.status).toBe(201);
 
     const after = await jsonOf(await get('/api/home/attention'));
-    expect(after.items.map((entry: any) => entry.id)).not.toContain(item.id);
+    const stillThere = after.items.find((entry: any) => entry.id === item.id);
+    expect(stillThere).toBeDefined();
+    expect(stillThere.workStatus).not.toBe('new');
 
     const missions = await jsonOf(await get('/api/mission/tasks'));
     expect(missions.tasks.map((task: any) => task.title)).toContain('Draft Lucas inquiry response');
