@@ -1724,6 +1724,17 @@ export function listOpenAttentionItems(limit = 50): AttentionItem[] {
   ).all(limit) as AttentionItem[];
 }
 
+export function listActiveAttentionItems(limit = 50): AttentionItem[] {
+  return db.prepare(
+    `SELECT * FROM attention_items
+     WHERE status IN ('open', 'assigned')
+     ORDER BY
+       CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+       updated_at DESC
+     LIMIT ?`,
+  ).all(limit) as AttentionItem[];
+}
+
 export function upsertAttentionItem(input: {
   sourceKind: AttentionItem['source_kind'];
   sourceId: string;
