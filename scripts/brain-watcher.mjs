@@ -31,7 +31,9 @@ const VAULT_DIR = join(homedir(), 'workspace');
 const STATE_DB = join(ROOT, 'store', 'claudeclaw.db');
 const LOG_PATH = join(ROOT, 'logs', 'brain-watcher.log');
 
-const MTIME_LOOKBACK_MS = 20 * 60 * 1000;
+const MTIME_LOOKBACK_MS = process.env.MTIME_LOOKBACK_MS_OVERRIDE
+  ? parseInt(process.env.MTIME_LOOKBACK_MS_OVERRIDE, 10)
+  : 20 * 60 * 1000;
 const MIN_TURN_CHARS = 200;
 const IMPORTANCE_FLOOR = 0.4;
 const CHUNK_CHARS = 4000;
@@ -231,17 +233,34 @@ async function processJsonlFile({ folder, path, mtimeSec }) {
 // ║ PASS 2: CODEX ARCHIVED SESSIONS                                   ║
 // ╚═════════════════════════════════════════════════════════════════╝
 
+function walkCodexJsonl(dir, cutoff, out = []) {
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      // Recurse into subdirs (the new dated tree is ~/.codex/sessions/YYYY/MM/DD/)
+      walkCodexJsonl(full, cutoff, out);
+    } else if (entry.isFile() && entry.name.startsWith('rollout-') && entry.name.endsWith('.jsonl')) {
+      let st; try { st = statSync(full); } catch { continue; }
+      if (st.mtimeMs < cutoff) continue;
+      out.push({ path: full, mtimeSec: Math.floor(st.mtimeMs / 1000) });
+    }
+  }
+  return out;
+}
+
 function discoverRecentCodexJsonl() {
   const cutoff = Date.now() - MTIME_LOOKBACK_MS;
   const out = [];
-  let entries;
-  try { entries = readdirSync(CODEX_SESSIONS_DIR); } catch { return out; }
-  for (const name of entries) {
-    if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
-    const path = join(CODEX_SESSIONS_DIR, name);
-    let st; try { st = statSync(path); } catch { continue; }
-    if (st.mtimeMs < cutoff) continue;
-    out.push({ path, mtimeSec: Math.floor(st.mtimeMs / 1000) });
+  // Scan BOTH the old flat dir and the new dated tree so we don't miss sessions
+  // after Codex moved its live storage to ~/.codex/sessions/YYYY/MM/DD/.
+  const paths = [
+    join(homedir(), '.codex', 'archived_sessions'),  // old flat dir
+    join(homedir(), '.codex', 'sessions'),           // new dated tree
+  ];
+  for (const root of paths) {
+    walkCodexJsonl(root, cutoff, out);
   }
   return out;
 }

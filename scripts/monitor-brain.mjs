@@ -71,6 +71,22 @@ if (s.no_embedding > 0) issues.push(`${s.no_embedding} rows without embedding`);
 // Count NEW upstream jsonl files in the same window so we can tell "watcher
 // broke" apart from "user was asleep, nothing to ingest". See
 // ./monitor-brain-classify.mjs for the threshold rationale.
+function walkAndCount(dir, cutoff, folderFilter, fileMatch, count = { n: 0 }) {
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return count; }
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!folderFilter(entry.name)) continue;
+      walkAndCount(full, cutoff, folderFilter, fileMatch, count);
+    } else if (entry.isFile() && fileMatch(entry.name)) {
+      let st; try { st = statSync(full); } catch { continue; }
+      if (st.mtimeMs >= cutoff) count.n++;
+    }
+  }
+  return count;
+}
+
 function countRecentJsonlFiles(windowHours) {
   const cutoff = Date.now() - windowHours * 60 * 60 * 1000;
   let total = 0;
@@ -88,27 +104,29 @@ function countRecentJsonlFiles(windowHours) {
     },
     {
       dir: join(homedir(), '.codex', 'archived_sessions'),
-      recurse: false,
+      recurse: true,
+      folderFilter: () => true,
+      match: (n) => n.startsWith('rollout-') && n.endsWith('.jsonl'),
+    },
+    {
+      dir: join(homedir(), '.codex', 'sessions'),
+      recurse: true,
       folderFilter: () => true,
       match: (n) => n.startsWith('rollout-') && n.endsWith('.jsonl'),
     },
   ];
   for (const r of roots) {
-    let entries; try { entries = readdirSync(r.dir, { withFileTypes: true }); } catch { continue; }
-    for (const entry of entries) {
-      const full = join(r.dir, entry.name);
-      if (entry.isDirectory() && r.recurse) {
-        if (!r.folderFilter(entry.name)) continue;
-        let inner; try { inner = readdirSync(full); } catch { continue; }
-        for (const name of inner) {
-          if (!r.match(name)) continue;
-          let st; try { st = statSync(join(full, name)); } catch { continue; }
-          if (st.mtimeMs >= cutoff) total++;
-        }
-      } else if (entry.isFile() && r.match(entry.name)) {
-        let st; try { st = statSync(full); } catch { continue; }
+    if (!r.recurse) {
+      // Flat scan (kept for backwards compat, though all current roots recurse)
+      let entries; try { entries = readdirSync(r.dir); } catch { continue; }
+      for (const name of entries) {
+        if (!r.match(name)) continue;
+        let st; try { st = statSync(join(r.dir, name)); } catch { continue; }
         if (st.mtimeMs >= cutoff) total++;
       }
+    } else {
+      const count = walkAndCount(r.dir, cutoff, r.folderFilter, r.match);
+      total += count.n;
     }
   }
   return total;
