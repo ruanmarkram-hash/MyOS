@@ -1,213 +1,155 @@
-# ClaudeClaw OS — Setup Checklist
+# ClaudeClaw OS Setup Checklist
 
-**Install location:** `~/HQ`
-**Version:** v1.1.1
-**Status as of 2026-04-15: Tokens in place. Ready for first run.**
+Use this after cloning the starter repo onto a fresh Mac. The root README and
+`SETUP-PROMPT.md` are the preferred guided setup path; this file is the manual
+checklist for what the setup flow is doing.
 
-> Full session context: `~/workspace/scratchpad/DISPATCH_SESSION_HANDOFF_2026-04-15.md`
-> Resume prompt for new session: `~/workspace/scratchpad/RESUME_PROMPT.md`
+## Before You Start
 
-### Current state (2026-04-15)
+- macOS machine with Terminal access.
+- Git installed.
+- Node.js 20 or newer installed.
+- Claude Code installed and logged in with `claude login`.
+- A Telegram account if you want phone access.
 
-- [x] Repo cloned and `npm install` complete
-- [x] `.env` configured — all 5 bot tokens set (Sage, Charter, Ember, Marlow, Mason)
-- [x] `DASHBOARD_TOKEN` and `DB_ENCRYPTION_KEY` auto-generated
-- [x] Agent souls migrated from OpenClaw (Charter, Ember, Marlow, Mason, Warden)
-- [x] Forge merged into Mason, Lens merged into Marlow
-- [x] `~/workspace/` landing zone created
-- [ ] `ALLOWED_CHAT_ID` — **needs first run** (send `/chatid` to Sage bot, paste result here)
-- [ ] First run test
-
-**One command to start:**
-```bash
-cd ~/HQ && npm start
-```
-
----
-
----
-
-## Phase 1: Phone Steps (do these first, anywhere)
-
-### 1. Create a dedicated Telegram bot
-
-> This MUST be a new bot. Do NOT reuse OpenClaw's bot token.
-
-1. Open Telegram, search for **@BotFather**
-2. Send `/newbot`
-3. Choose a name (e.g. "HQ" or "ClaudeClaw")
-4. Choose a username ending in `bot` (e.g. `ruan_hq_bot`)
-5. BotFather gives you a token like `123456789:AAF...`
-6. Copy it — you'll paste it into `.env` at your desk
-
-### 2. Get your Telegram chat ID
-
-After you paste in the bot token and do a first run (Phase 3), send `/chatid` to your new bot and paste the number into `.env` as `ALLOWED_CHAT_ID`. You cannot do this until the bot is running once.
-
-### 3. (Optional but recommended) Get a Groq API key — free
-
-- Go to https://console.groq.com
-- Sign in with Google or GitHub
-- Create a free API key
-- This enables voice transcription (Whisper) — send voice notes to your bot
-
-### 4. (Optional) Get a Google AI Studio key — free
-
-- Go to https://aistudio.google.com
-- Sign in and create an API key
-- This enables: video analysis, memory consolidation, and War Room voice mode
-
----
-
-## Phase 2: Desk Steps — Fill in .env
-
-Open `~/HQ/.env` and fill in the following. Everything else is pre-filled or optional.
-
-| Variable | Where to get it | Required? |
-|---|---|---|
-| `TELEGRAM_BOT_TOKEN` | @BotFather on Telegram | **YES** |
-| `ALLOWED_CHAT_ID` | Send `/chatid` to your bot after first run | **YES** |
-| `ANTHROPIC_API_KEY` | https://console.anthropic.com — only needed for pay-per-token. Leave blank to use `claude login` OAuth (recommended for Max plan) | Optional |
-| `GROQ_API_KEY` | https://console.groq.com (free) | Optional — enables voice input |
-| `GOOGLE_API_KEY` | https://aistudio.google.com (free) | Optional — enables video, memory consolidation, War Room |
-| `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` | https://elevenlabs.io | Optional — cloud TTS |
-| `SLACK_USER_TOKEN` | Slack app settings (see README) | Optional |
-
-> **Already pre-filled (no action needed):**
-> - `DASHBOARD_TOKEN` — generated automatically
-> - `DB_ENCRYPTION_KEY` — generated automatically
-> - `GOOGLE_CREDS_PATH`, `GMAIL_TOKEN_PATH`, `GCAL_TOKEN_PATH` — default paths
-
----
-
-## Phase 3: Desk Steps — First Run
-
-### 1. Make sure Claude Code CLI is logged in
+## 1. Clone The Starter
 
 ```bash
-claude login
+git clone https://github.com/ruanmarkram-hash/StarterOSDad.git
+cd StarterOSDad
 ```
 
-If already logged in for OpenClaw, this is the same global auth — no action needed unless you want a separate account.
+## 2. Run The Guided Setup
 
-### 2. Do a first run to get your chat ID
+```bash
+claude
+```
+
+Paste the contents of `SETUP-PROMPT.md` into Claude Code. The setup flow should
+ask questions one at a time and create the live runtime and workspace from:
+
+- `starter-runtime/`
+- `starter-workspace/`
+
+Expected live install locations:
+
+- Runtime: `~/HQ`
+- Workspace: `~/workspace`
+
+## 3. Create A Telegram Bot
+
+Do this only if phone access is wanted.
+
+1. Open Telegram and message `@BotFather`.
+2. Send `/newbot`.
+3. Choose a bot name and username ending in `bot`.
+4. Copy the token into `~/HQ/.env` as `TELEGRAM_BOT_TOKEN`.
+
+## 4. Fill In Required Environment Values
+
+Copy the example file if setup has not already done it:
 
 ```bash
 cd ~/HQ
+cp .env.example .env
+```
+
+Minimum required values:
+
+```bash
+TELEGRAM_BOT_TOKEN=
+ALLOWED_CHAT_ID=
+DASHBOARD_TOKEN=
+DB_ENCRYPTION_KEY=
+```
+
+Recommended LLM setup:
+
+```bash
+LLM_PROVIDER=claude
+```
+
+Leave `ANTHROPIC_API_KEY` blank if using Claude Code OAuth through
+`claude login`. Add an API key only if you want pay-per-token API usage.
+
+Optional values:
+
+```bash
+GOOGLE_API_KEY=      # video analysis, Gemini helper flows, War Room features
+GROQ_API_KEY=        # voice transcription
+SLACK_BOT_TOKEN=     # Slack integration
+```
+
+## 5. First Run
+
+```bash
+cd ~/HQ
+npm ci
+npm run build
 npm run dev
 ```
 
-- Watch the terminal for the banner
-- On first launch, macOS may show permission dialogs — click **Allow** on each one
-- Open Telegram, message your new bot with `/chatid`
-- Copy the number it replies with
-- Press Ctrl+C to stop the bot
+If using Telegram, send `/chatid` to the new bot, then paste the returned number
+into `~/HQ/.env` as `ALLOWED_CHAT_ID`.
 
-### 3. Paste your chat ID into .env
+Stop the dev server with `Ctrl+C`, then start again:
 
 ```bash
-# Open ~/HQ/.env and set:
-ALLOWED_CHAT_ID=<the number from step 2>
-```
-
-### 4. Start the bot again and test it
-
-```bash
-cd ~/HQ
 npm run dev
 ```
 
-Send a message to your bot. It should reply.
+Send the bot a test message.
 
-### 5. (Optional) Run the interactive setup wizard
+## 6. Dashboard
 
-```bash
-cd ~/HQ
-npm run setup
-```
+With the runtime running, open:
 
-This can help configure PIN security, emergency kill phrase, and other settings interactively.
-
----
-
-## Phase 4: Optional Features
-
-### Voice input (Groq/Whisper)
-
-Paste `GROQ_API_KEY` into `.env` and restart. Send a voice note to your bot — it transcribes automatically.
-
-### War Room (voice boardroom)
-
-Requires `GOOGLE_API_KEY` set in `.env`, then:
-
-```bash
-cd ~/HQ
-python3 -m venv warroom/.venv
-source warroom/.venv/bin/activate
-pip install -r warroom/requirements.txt
-```
-
-Enable in `.env`:
-```
-WARROOM_ENABLED=true
-WARROOM_PORT=7860
-WARROOM_MODE=live
-```
-
-### Web dashboard
-
-Already configured — `DASHBOARD_TOKEN` is set. When the bot is running, open:
-
-```
+```text
 http://localhost:3141
 ```
 
-Use `DASHBOARD_TOKEN` from `.env` to log in.
+Use `DASHBOARD_TOKEN` from `~/HQ/.env`.
 
-### Specialist agents (research, comms, content, ops)
-
-Agents are pre-configured in `~/HQ/agents/`. Each needs its own `agent.yaml` copied from `agent.yaml.example` and filled in. See the README for the multi-agent setup section.
-
----
-
-## Phase 5: Keep It Running (Manual Only — DO NOT enable launchd yet)
-
-To start HQ manually each session:
+Useful switches:
 
 ```bash
-cd ~/HQ && npm run dev
+MISSION_CONTROL_V2=0   # legacy at /, v2 at /v2
+MISSION_CONTROL_V2=1   # v2 at /, legacy at /legacy
+BRAIN=sqlite           # local memory
+BRAIN=ob1              # OpenBrain/OB1 with SQLite fallback
+LLM_PROVIDER=claude
+LLM_PROVIDER=codex
 ```
 
-To run as a background process (without launchd):
+## 7. Keep It Running
+
+Use manual mode until the first few test conversations work:
 
 ```bash
-cd ~/HQ && nohup npm run dev > /tmp/hq.log 2>&1 &
+cd ~/HQ
+npm run dev
 ```
 
----
+Only enable launchd after the manual run is stable.
 
-## Important Notes
+## 8. Sanity Checks
 
-- **Isolation:** HQ is fully isolated from OpenClaw (`~/.openclaw`). Different bot token, different database, different config directory.
-- **launchd is NOT enabled.** Run manually until everything is stable.
-- **Do NOT reuse OpenClaw's Telegram bot token** — two bots on the same token will conflict silently.
-- **The `.env` file contains secrets** — it is gitignored. Do not commit it.
+```bash
+cd ~/HQ
+npm audit
+npm run build
+npm test
+```
 
----
+Expected for this starter snapshot:
 
-## Quick Reference: What's Already Done
+- `npm audit`: 0 vulnerabilities
+- Build passes
+- Test suite passes with skipped live-integration tests unless explicitly enabled
 
-- [x] Node.js 25.9.0 verified (>= 20 required)
-- [x] git 2.53.0 verified
-- [x] Port 3141 (dashboard) — free
-- [x] Port 7860 (warroom) — free
-- [x] Repo cloned to `~/HQ`
-- [x] `npm install` completed (6 moderate deprecation warnings, nothing critical)
-- [x] `.env` created from `.env.example`, safe values pre-filled
-- [x] `DASHBOARD_TOKEN` generated and set
-- [x] `DB_ENCRYPTION_KEY` generated and set
-- [ ] `TELEGRAM_BOT_TOKEN` — needs your new bot token
-- [ ] `ALLOWED_CHAT_ID` — get after first run
-- [ ] `ANTHROPIC_API_KEY` — optional (leave blank for OAuth)
-- [ ] `GROQ_API_KEY` — optional (voice input)
-- [ ] `GOOGLE_API_KEY` — optional (video + War Room)
+## Important Safety Notes
+
+- Never commit `~/HQ/.env`.
+- Never commit `~/HQ/store/`.
+- Never reuse another running bot's Telegram token.
+- Treat WhatsApp, Slack, Telegram, and OAuth session files as credentials.
