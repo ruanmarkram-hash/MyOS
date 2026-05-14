@@ -42,6 +42,14 @@ async function getNoToken(path: string) {
   return app.request(path);
 }
 
+async function getRemoteNoToken(path: string) {
+  return app.request('https://dashboard.example.test' + path);
+}
+
+async function getRemote(path: string) {
+  return app.request('https://dashboard.example.test' + path + (path.includes('?') ? '&' : '?') + 'token=' + TOKEN);
+}
+
 // Tests fetch JSON we only describe shape-wise — typing as `any` keeps the
 // assertions readable without forcing the real interfaces into the test file.
 async function jsonOf(res: Response): Promise<any> {
@@ -50,9 +58,14 @@ async function jsonOf(res: Response): Promise<any> {
 
 describe('auth gate', () => {
   it('rejects unauthorized GET without token', async () => {
-    const res = await getNoToken('/api/health');
+    const res = await getRemoteNoToken('/api/health');
     expect(res.status).toBe(401);
     expect(await jsonOf(res)).toMatchObject({ error: 'Unauthorized' });
+  });
+
+  it('trusts localhost dashboard requests without token', async () => {
+    const res = await getNoToken('/api/health');
+    expect(res.status).toBe(200);
   });
 
   it('allows PWA install assets without dashboard token', async () => {
@@ -64,7 +77,7 @@ describe('auth gate', () => {
   });
 
   it('rejects unauthorized GET with wrong token', async () => {
-    const res = await app.request('/api/health?token=wrong');
+    const res = await app.request('https://dashboard.example.test/api/health?token=wrong');
     expect(res.status).toBe(401);
   });
 
@@ -74,20 +87,20 @@ describe('auth gate', () => {
   });
 
   it('sets an auth cookie after a valid token request', async () => {
-    const res = await get('/api/health');
+    const res = await getRemote('/api/health');
     expect(res.status).toBe(200);
     expect(res.headers.get('set-cookie')).toContain('myos_dashboard=');
   });
 
   it('accepts GET with dashboard auth cookie and no token', async () => {
-    const first = await get('/api/health');
+    const first = await getRemote('/api/health');
     const cookie = first.headers.get('set-cookie')?.split(';')[0] || '';
-    const res = await app.request('/api/health', { headers: { cookie } });
+    const res = await app.request('https://dashboard.example.test/api/health', { headers: { cookie } });
     expect(res.status).toBe(200);
   });
 
   it('redirects browser GETs without auth to the login page', async () => {
-    const res = await getNoToken('/v2/home');
+    const res = await getRemoteNoToken('/v2/home');
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toContain('/login?next=');
   });
@@ -135,7 +148,7 @@ describe('auth gate', () => {
   });
 
   it('strips token query params from browser deep links after setting the cookie', async () => {
-    const res = await app.request('/v2/home?token=' + TOKEN);
+    const res = await app.request('https://dashboard.example.test/v2/home?token=' + TOKEN);
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/v2/home');
     expect(res.headers.get('set-cookie')).toContain('myos_dashboard=');
@@ -2852,7 +2865,7 @@ describe('Text War Room API', () => {
   }
 
   it('requires auth for text meeting list', async () => {
-    const res = await getNoToken('/api/warroom/text/list');
+    const res = await getRemoteNoToken('/api/warroom/text/list');
     expect(res.status).toBe(401);
   });
 
@@ -2897,12 +2910,12 @@ describe('Text War Room API', () => {
 
   it('strips token from the text room page and then renders via auth cookie', async () => {
     const created = await createTextRoom('chat-a');
-    const first = await app.request(`/warroom/text?token=${TOKEN}&meetingId=${created.meetingId}&chatId=chat-a`);
+    const first = await app.request(`https://dashboard.example.test/warroom/text?token=${TOKEN}&meetingId=${created.meetingId}&chatId=chat-a`);
     expect(first.status).toBe(302);
     expect(first.headers.get('location')).toBe(`/warroom/text?meetingId=${created.meetingId}&chatId=chat-a`);
     const cookie = first.headers.get('set-cookie')?.split(';')[0] || '';
 
-    const second = await app.request(`/warroom/text?meetingId=${created.meetingId}&chatId=chat-a`, {
+    const second = await app.request(`https://dashboard.example.test/warroom/text?meetingId=${created.meetingId}&chatId=chat-a`, {
       headers: { cookie },
     });
     expect(second.status).toBe(200);

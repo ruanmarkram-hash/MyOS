@@ -180,6 +180,15 @@ function dashboardCookieSecurityFlag(c: any): string {
   return forwardedProto.split(',')[0]?.trim() === 'https' || reqProtocol === 'https:' ? '; Secure' : '';
 }
 
+function isLocalDashboardRequest(c: any): boolean {
+  const url = new URL(c.req.url);
+  const hostname = url.hostname.toLowerCase();
+  if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname)) return false;
+
+  // If a tunnel or proxy forwarded the request, keep the token gate active.
+  return !c.req.header('x-forwarded-for') && !c.req.header('x-forwarded-host');
+}
+
 function setDashboardAuthCookie(c: any): void {
   c.header(
     'Set-Cookie',
@@ -243,7 +252,7 @@ function renderDashboardLogin(next = '', error = ''): string {
 <body>
   <main>
     <h1>MyOS</h1>
-    <p>Sign in to Mission Control. This stores access in an HttpOnly browser cookie so you can use the dashboard without keeping the token in the URL.</p>
+    <p>Sign in to Mission Control for remote access. Localhost access on this Mac opens directly.</p>
     ${escapedError ? `<div class="error">${escapedError}</div>` : ''}
     <form method="post" action="/login">
       <input type="hidden" name="next" value="${escapedNext}" />
@@ -2582,6 +2591,11 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const cookies = parseCookieHeader(c.req.header('cookie'));
     const cookieOk = cookies[DASHBOARD_AUTH_COOKIE] === dashboardCookieValue();
     const tokenOk = !!DASHBOARD_TOKEN && !!token && token === DASHBOARD_TOKEN;
+    const localOk = isLocalDashboardRequest(c);
+    if (localOk) {
+      await next();
+      return;
+    }
     if (!DASHBOARD_TOKEN || (!tokenOk && !cookieOk)) {
       if (c.req.method === 'GET' && !decodedReqPath.startsWith('/api/')) {
         const url = new URL(c.req.url);

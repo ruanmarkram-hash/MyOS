@@ -7,6 +7,7 @@ import path from 'path';
 // app without polluting the developer's real .env or DB.
 process.env.DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || 'test-contract-token';
 process.env.DASHBOARD_MUTATIONS_ENABLED = process.env.DASHBOARD_MUTATIONS_ENABLED || 'true';
+process.env.MISSION_CONTROL_V2 = '0';
 process.env.WARROOM_ENABLED = process.env.WARROOM_ENABLED || 'false';
 process.env.ALLOWED_CHAT_ID = process.env.ALLOWED_CHAT_ID || 'test-chat-id';
 process.env.DB_ENCRYPTION_KEY = process.env.DB_ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
