@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * ClaudeClaw Mission CLI
+ * MyOS Mission CLI
  *
  * Used by Claude assistants to create and manage one-shot mission tasks
  * that are picked up and executed by the target agent's scheduler.
@@ -65,7 +65,7 @@ const notifyOnDoneIdx = process.argv.indexOf('--notify-on-done');
 const notifyOnDone = notifyOnDoneIdx !== -1;
 
 // Who created this task
-const createdBy = process.env.CLAUDECLAW_AGENT_ID ?? 'main';
+const createdBy = process.env.MYOS_AGENT_ID ?? 'main';
 
 // Clean argv: remove all flag pairs (and the standalone --notify-on-done)
 const flagIndices = new Set<number>();

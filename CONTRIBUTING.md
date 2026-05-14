@@ -1,4 +1,4 @@
-# Contributing to ClaudeClaw
+# Contributing to MyOS
 
 ## Adding a migration
 

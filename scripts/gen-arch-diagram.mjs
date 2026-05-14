@@ -12,7 +12,7 @@ const ai = new GoogleGenAI({ apiKey: GOOGLE_API_KEY });
 
 const prompt = `Generate a clean, modern technical architecture diagram image with the following specifications:
 
-Title: "ClaudeClaw Multi-Agent System" at the top in bold white text.
+Title: "MyOS Multi-Agent System" at the top in bold white text.
 
 Dark theme: dark charcoal/navy background (#1a1a2e or similar), with light text and colored accent borders.
 

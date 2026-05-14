@@ -76,7 +76,7 @@ describe('auth gate', () => {
   it('sets an auth cookie after a valid token request', async () => {
     const res = await get('/api/health');
     expect(res.status).toBe(200);
-    expect(res.headers.get('set-cookie')).toContain('claudeclaw_dashboard=');
+    expect(res.headers.get('set-cookie')).toContain('myos_dashboard=');
   });
 
   it('accepts GET with dashboard auth cookie and no token', async () => {
@@ -107,7 +107,7 @@ describe('auth gate', () => {
     });
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe('/v2/home');
-    expect(res.headers.get('set-cookie')).toContain('claudeclaw_dashboard=');
+    expect(res.headers.get('set-cookie')).toContain('myos_dashboard=');
   });
 
   it('marks the auth cookie secure behind an HTTPS tunnel', async () => {
@@ -138,7 +138,7 @@ describe('auth gate', () => {
     const res = await app.request('/v2/home?token=' + TOKEN);
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/v2/home');
-    expect(res.headers.get('set-cookie')).toContain('claudeclaw_dashboard=');
+    expect(res.headers.get('set-cookie')).toContain('myos_dashboard=');
   });
 
   it('redirects root-level v2 deep links to the mounted v2 app', async () => {
@@ -1788,7 +1788,7 @@ describe('GET /api/agents/:id/avatar', () => {
 
 describe('GET /api/review/inbox', () => {
   it('smoke-tests the mission loop: clean completion, real deliverable, and failure routing', async () => {
-    const deliverablePath = '/tmp/claudeclaw-loop-smoke-deliverable.md';
+    const deliverablePath = '/tmp/myos-loop-smoke-deliverable.md';
     fs.writeFileSync(deliverablePath, '# Smoke deliverable\n\nActual file worked on.\n', { mode: 0o600 });
 
     createMissionTask('m-loop-clean', 'Clean loop smoke', 'do a small check', 'mason', 'main', 3);
@@ -1958,7 +1958,7 @@ describe('GET /api/review/inbox', () => {
 
   it('routes completed missions with missing deliverable files to triage', async () => {
     createMissionTask('m-missing-deliverable', 'Missing file deliverable', 'produce output', 'charter', 'dashboard', 6);
-    completeMissionTask('m-missing-deliverable', 'Deliverable: /tmp/claudeclaw-missing-review-file.pdf\nReady for review.', 'completed');
+    completeMissionTask('m-missing-deliverable', 'Deliverable: /tmp/myos-missing-review-file.pdf\nReady for review.', 'completed');
 
     const res = await get('/api/review/inbox?limit=20');
     expect(res.status).toBe(200);
@@ -1970,7 +1970,7 @@ describe('GET /api/review/inbox', () => {
         route: 'needs_triage',
         nextAction: 'Fix or provide the missing deliverable path.',
         blockers: expect.arrayContaining([
-          'Deliverable file not found: /tmp/claudeclaw-missing-review-file.pdf',
+          'Deliverable file not found: /tmp/myos-missing-review-file.pdf',
         ]),
       }),
       review: expect.objectContaining({ status: 'needs_triage' }),
@@ -2468,7 +2468,7 @@ describe('POST /api/review/tasks/:id/email', () => {
   });
 
   it('prefers an actual file deliverable over the generated mission report attachment', async () => {
-    const deliverablePath = '/tmp/claudeclaw-contract-deliverable.pdf';
+    const deliverablePath = '/tmp/myos-contract-deliverable.pdf';
     fs.writeFileSync(deliverablePath, '%PDF-1.3\ncontract test\n', { mode: 0o600 });
     createMissionTask('m-review-real-file', 'Real file deliverable', 'produce output', 'charter', 'dashboard', 6);
     completeMissionTask('m-review-real-file', `Deliverable: \`${deliverablePath}\`\n\nSummary report text.`, 'completed');
@@ -2485,7 +2485,7 @@ describe('POST /api/review/tasks/:id/email', () => {
   });
 
   it('uses MISSION_RESULT_JSON deliverables as the source of truth for email attachments', async () => {
-    const deliverablePath = '/tmp/claudeclaw-contract-json-deliverable.docx';
+    const deliverablePath = '/tmp/myos-contract-json-deliverable.docx';
     fs.writeFileSync(deliverablePath, 'fake docx payload', { mode: 0o600 });
     createMissionTask('m-review-json-file', 'JSON file deliverable', 'produce output', 'charter', 'dashboard', 6);
     completeMissionTask(
@@ -2547,7 +2547,7 @@ describe('POST /api/review/tasks/:id/email', () => {
   });
 
   it('can extract and email a deliverable path that contains spaces', async () => {
-    const deliverablePath = '/tmp/claudeclaw contract deliverable final.md';
+    const deliverablePath = '/tmp/myos contract deliverable final.md';
     fs.writeFileSync(deliverablePath, '# Contract deliverable\n\nActual worked-on document.\n', { mode: 0o600 });
     createMissionTask('m-review-spaced-file', 'Spaced file deliverable', 'produce output', 'charter', 'dashboard', 6);
     completeMissionTask('m-review-spaced-file', `Actual deliverable: "${deliverablePath}"\nMission report follows below.`, 'completed');
@@ -2559,7 +2559,7 @@ describe('POST /api/review/tasks/:id/email', () => {
       originalPath: fs.realpathSync(deliverablePath),
       format: 'html',
     });
-    expect(path.basename(attachment.path)).toContain('claudeclaw-contract-deliverable-final');
+    expect(path.basename(attachment.path)).toContain('myos-contract-deliverable-final');
   });
 
   it('prefers the real document over a mission-report file when both are mentioned', async () => {

@@ -26,7 +26,7 @@ interface AgentOption { id: string; name: string; }
 
 type ViewMode = 'cards' | 'list';
 
-const VIEW_KEY = 'claudeclaw.scheduled.view';
+const VIEW_KEY = 'myos.scheduled.view';
 
 function loadView(): ViewMode {
   try {

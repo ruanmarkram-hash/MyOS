@@ -41,7 +41,7 @@ function configuredProviderName(): string {
 /**
  * Run a single user message through the configured LLM provider.
  *
- * `systemPrompt` is the provider-neutral ClaudeClaw agent definition. It is
+ * `systemPrompt` is the provider-neutral MyOS agent definition. It is
  * injected by this boundary so callers do not depend on Claude's CLAUDE.md
  * loading behavior or Codex's AGENTS.md compatibility path.
  */

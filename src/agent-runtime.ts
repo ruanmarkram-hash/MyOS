@@ -1,5 +1,5 @@
 /**
- * Provider-neutral prompt assembly for ClaudeClaw agent runs.
+ * Provider-neutral prompt assembly for MyOS agent runs.
  *
  * Claude, Codex, and future local providers should all receive the same
  * OS-owned agent definition. Provider-native project docs remain useful
@@ -8,11 +8,11 @@
  */
 
 export const AGENT_RUNTIME_CONTRACT = [
-  '[ClaudeClaw runtime contract]',
-  'The active agent definition below is owned by ClaudeClaw OS.',
+  '[MyOS runtime contract]',
+  'The active agent definition below is owned by MyOS.',
   'Follow it regardless of the LLM provider executing this turn.',
   'Provider-specific project files are compatibility projections only.',
-  '[End ClaudeClaw runtime contract]',
+  '[End MyOS runtime contract]',
 ].join('\n');
 
 export function formatAgentSystemPrompt(systemPrompt: string): string {

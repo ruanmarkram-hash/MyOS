@@ -55,7 +55,7 @@ export function checkPendingMigrations(projectRoot: string): void {
 
     if (hasPending) {
       console.error(
-        `\n⚠️  ClaudeClaw has pending migrations (applied: ${lastApplied ?? 'none'}, latest: ${latest}).\n` +
+        `\n⚠️  MyOS has pending migrations (applied: ${lastApplied ?? 'none'}, latest: ${latest}).\n` +
           `    Run \`npm run migrate\` to update, then restart.\n`,
       );
       process.exit(1);

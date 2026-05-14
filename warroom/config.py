@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 def get_project_root() -> Path:
-    """Resolve the ClaudeClaw project root via git or file path fallback."""
+    """Resolve the MyOS project root via git or file path fallback."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
@@ -54,7 +54,7 @@ def _read_project_env() -> dict[str, str]:
 
 
 _PROJECT_ENV = _read_project_env()
-CONFIG_DIR = _expand_home(os.environ.get("CLAUDECLAW_CONFIG") or _PROJECT_ENV.get("CLAUDECLAW_CONFIG") or "~/.claudeclaw")
+CONFIG_DIR = _expand_home(os.environ.get("MYOS_CONFIG") or _PROJECT_ENV.get("MYOS_CONFIG") or "~/.myos")
 VOICES_FILE = _expand_home(
     os.environ.get("WARROOM_VOICES_PATH")
     or _PROJECT_ENV.get("WARROOM_VOICES_PATH")
@@ -68,7 +68,7 @@ def load_voices() -> dict:
     Returns a dict mapping agent_id to {voice_id, gemini_voice, name}.
 
     The repository file is a generic template. If an external config file is
-    present under CLAUDECLAW_CONFIG, it overlays the template so personal
+    present under MYOS_CONFIG, it overlays the template so personal
     ElevenLabs voice IDs never need to be committed.
     """
     configured = {}

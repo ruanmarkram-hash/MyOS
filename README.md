@@ -1,4 +1,4 @@
-# ClaudeClaw OS
+# MyOS
 
 ```
  ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
@@ -21,19 +21,19 @@
 ### Getting Started
 
 ```bash
-git clone https://github.com/earlyaidopters/claudeclaw-os.git
-cd claudeclaw-os
+git clone https://github.com/ruanmarkram-hash/MyOS.git
+cd MyOS
 npm install
 npm run setup
 ```
 
-ClaudeClaw OS is not a chatbot wrapper. It spawns the actual `claude` CLI on your Mac or Linux machine and pipes the result back to your Telegram chat. Everything that works in your terminal (your skills, your tools, your context) works from your phone.
+MyOS is not a chatbot wrapper. It spawns the actual `claude` CLI on your Mac or Linux machine and pipes the result back to your Telegram chat. Everything that works in your terminal (your skills, your tools, your context) works from your phone.
 
 ---
 
 ## What You Get
 
-ClaudeClaw has two tiers of features. The **core** features work out of the box with just a Telegram bot token. The **experimental** features are opt-in and require additional setup.
+MyOS has two tiers of features. The **core** features work out of the box with just a Telegram bot token. The **experimental** features are opt-in and require additional setup.
 
 ### Core Features (zero to hero in 5 minutes)
 
@@ -70,7 +70,7 @@ These are powerful but require extra API keys or services. Each one has its own 
 
 ## Get Started
 
-![ClaudeClaw setup flow](assets/setup-flow.jpeg)
+![MyOS setup flow](assets/setup-flow.jpeg)
 
 Follow these steps in order. The whole thing takes about 5 minutes.
 
@@ -93,9 +93,9 @@ git config --global user.email "you@example.com"
 ```
 Without this, git operations will fail with a confusing error about missing identity.
 
-**macOS users:** After starting ClaudeClaw for the first time, your Mac may show "Node wants to access..." permission dialogs. You need to click Allow on each one or the bot will silently hang. Keep an eye on your Mac screen during the first run.
+**macOS users:** After starting MyOS for the first time, your Mac may show "Node wants to access..." permission dialogs. You need to click Allow on each one or the bot will silently hang. Keep an eye on your Mac screen during the first run.
 
-**Which Claude plan works best?** ClaudeClaw runs the `claude` CLI, so any plan works (Free, Pro, Max). However, complex multi-step tasks (building skills, debugging code, multi-agent work) perform significantly better on **Opus**: If you're on the Free or Pro plan and Claude struggles with a task, the model matters. Sonnet is fast but often can't handle the kind of agentic work ClaudeClaw enables. Max ($100 or $200) with Opus is the recommended experience.
+**Which Claude plan works best?** MyOS runs the `claude` CLI, so any plan works (Free, Pro, Max). However, complex multi-step tasks (building skills, debugging code, multi-agent work) perform significantly better on **Opus**: If you're on the Free or Pro plan and Claude struggles with a task, the model matters. Sonnet is fast but often can't handle the kind of agentic work MyOS enables. Max ($100 or $200) with Opus is the recommended experience.
 
 **New to the terminal?** Download [Warp](https://www.warp.dev), it's a modern terminal with AI built in. If you hit any OS-level issues during setup (permissions, missing tools, PATH problems), type `/agent` in Warp and describe what went wrong. It will walk you through fixing it. This alone will save you hours of Googling.
 
@@ -105,7 +105,7 @@ That's it for hard requirements. Everything else (voice, video, WhatsApp) is opt
 
 ### Step 2: Create a Telegram bot
 
-You need a bot token from Telegram. This is what ClaudeClaw uses to send and receive messages.
+You need a bot token from Telegram. This is what MyOS uses to send and receive messages.
 
 1. Open Telegram and search for **@BotFather**
 2. Send `/newbot`
@@ -119,8 +119,8 @@ Keep this token handy for the next step.
 ### Step 3: Clone and install
 
 ```bash
-git clone https://github.com/earlyaidopters/claudeclaw-os.git
-cd claudeclaw-os
+git clone https://github.com/ruanmarkram-hash/MyOS.git
+cd MyOS
 npm install
 ```
 
@@ -145,7 +145,7 @@ The wizard walks you through everything interactively:
 
 > **Prefer to let Claude handle it?** After cloning, `cd` into the repo, run `claude`, and paste:
 > ```
-> I just cloned ClaudeClaw. Please read README.md and set me up completely.
+> I just cloned MyOS. Please read README.md and set me up completely.
 > install deps, configure .env, help me get any API keys I need, and set up
 > the background service for my OS.
 > ```
@@ -180,25 +180,25 @@ or just start talking. Claude Code is running on your machine, it has access to 
 
 ### Step 7: Run as a background service
 
-You probably want ClaudeClaw running automatically, not manually in a terminal.
+You probably want MyOS running automatically, not manually in a terminal.
 
 **macOS**: the setup wizard installs a launchd agent. Or manually:
 ```bash
 # After running npm run setup, it's already installed.
 # Logs:
-tail -f /tmp/claudeclaw.log
+tail -f /tmp/myos.log
 ```
 
 **Linux**: the setup wizard installs a systemd user service:
 ```bash
-systemctl --user status claudeclaw
-journalctl --user -u claudeclaw -f
+systemctl --user status myos
+journalctl --user -u myos -f
 ```
 
 **Windows**: use WSL2 (recommended) and follow the Linux steps, or:
 ```bash
 npm install -g pm2
-pm2 start dist/index.js --name claudeclaw
+pm2 start dist/index.js --name myos
 pm2 save && pm2 startup
 ```
 
@@ -226,12 +226,12 @@ Output looks like:
 
 ---
 
-## Updating ClaudeClaw
+## Updating MyOS
 
 When a new version is released, update in 5 commands:
 
 ```bash
-cd claudeclaw-os       # go to your ClaudeClaw directory
+cd MyOS       # go to your MyOS directory
 git pull               # pull the latest code
 npm install            # install any new dependencies
 npm run migrate        # apply any pending migrations
@@ -248,11 +248,11 @@ Then restart the bot (Ctrl+C and `npm start`, or restart the background service)
 
 ## Cloud deployment (advanced)
 
-ClaudeClaw is designed to run on a local Mac or Linux host. Most setup paths assume you have run `claude login` on the host, you have a writable filesystem for SQLite plus skill caches, and process restarts mean your own machine or service manager restarts the bot. If you host it on Railway, Fly, Render, Hetzner, or another VM/container platform, two things break by default.
+MyOS is designed to run on a local Mac or Linux host. Most setup paths assume you have run `claude login` on the host, you have a writable filesystem for SQLite plus skill caches, and process restarts mean your own machine or service manager restarts the bot. If you host it on Railway, Fly, Render, Hetzner, or another VM/container platform, two things break by default.
 
 ### 1. Claude Code cannot authenticate
 
-The Claude Code CLI normally reads OAuth credentials created by `claude login` on the host. A fresh container has no such file. The subprocess exits immediately and ClaudeClaw retries, often surfacing only `Claude Code subprocess crashed. Retrying...`.
+The Claude Code CLI normally reads OAuth credentials created by `claude login` on the host. A fresh container has no such file. The subprocess exits immediately and MyOS retries, often surfacing only `Claude Code subprocess crashed. Retrying...`.
 
 Pick one of:
 
@@ -261,14 +261,14 @@ Pick one of:
 
 ### 2. Container storage is ephemeral
 
-ClaudeClaw stores conversation history, extracted memories, scheduled tasks, messaging session keys, tokens, and audit logs in `store/claudeclaw.db`. Most cloud platforms wipe the filesystem on every redeploy. Without a persistent volume mount:
+MyOS stores conversation history, extracted memories, scheduled tasks, messaging session keys, tokens, and audit logs in `store/myos.db`. Most cloud platforms wipe the filesystem on every redeploy. Without a persistent volume mount:
 
 - memory and session history reset
 - WhatsApp Web and similar browser sessions need reauthorization
 - scheduled tasks vanish
 - Mission Control queues drop
 
-Mount a persistent volume at the project root, or at minimum make `store/` persistent. If your platform does not offer persistence, ClaudeClaw can run as a stateless bot, but memory and messaging features will not behave like the local setup.
+Mount a persistent volume at the project root, or at minimum make `store/` persistent. If your platform does not offer persistence, MyOS can run as a stateless bot, but memory and messaging features will not behave like the local setup.
 
 ### Other gotchas
 
@@ -281,7 +281,7 @@ Mount a persistent volume at the project root, or at minimum make `store/` persi
 
 ## How it works
 
-![ClaudeClaw OS architecture](assets/architecture.jpeg)
+![MyOS architecture](assets/architecture.jpeg)
 
 ## What's included
 
@@ -369,7 +369,7 @@ The skill reads `GOOGLE_API_KEY` from the environment automatically.
 
 ### Google Workspace CLI (optional)
 
-> ClaudeClaw ships with bundled Gmail and Google Calendar skills that work great out of the box. This is an **optional alternative** if you want broader Google Workspace access from a single tool.
+> MyOS ships with bundled Gmail and Google Calendar skills that work great out of the box. This is an **optional alternative** if you want broader Google Workspace access from a single tool.
 
 
 Google released an official CLI that covers Drive, Gmail, Calendar, Sheets, Docs, Chat, Admin, and every other Workspace API in one tool. It's dynamically built from Google Discovery Service and includes 40+ agent skills out of the box.
@@ -384,7 +384,7 @@ There are three ways Claude can interact with external services. They all achiev
 | | What it is | How Claude uses it |
 |---|---|---|
 | **CLI** (Command Line Interface) | A program you install on your machine that runs commands in the terminal. Think of it like a text-based app. | Claude runs terminal commands like `workspace drive list` or `workspace gmail send` through the Bash tool. It's the same as if you typed those commands yourself. |
-| **Skill** | A markdown file (`.md`) that teaches Claude how to do something specific, usually by combining CLI commands, API calls, or code into a workflow. | Claude reads the skill file and follows its instructions. ClaudeClaw's bundled Gmail skill, for example, tells Claude which Python scripts to run and how to format the output. |
+| **Skill** | A markdown file (`.md`) that teaches Claude how to do something specific, usually by combining CLI commands, API calls, or code into a workflow. | Claude reads the skill file and follows its instructions. MyOS's bundled Gmail skill, for example, tells Claude which Python scripts to run and how to format the output. |
 | **MCP** (Model Context Protocol) | A server that runs in the background and gives Claude access to tools directly, without going through the terminal. | Claude calls MCP tools natively, like calling a function. No terminal commands needed. It's the most seamless option but requires a running MCP server. |
 
 In short: a CLI is a tool you run in the terminal, a skill is a set of instructions that tells Claude how to use tools, and an MCP is a live server that gives Claude direct access to tools. They can all do similar things, just with different tradeoffs in setup and flexibility.
@@ -456,7 +456,7 @@ Any file Claude Code can open: PDFs, code, markdown, CSV, plain text. Caption is
 
 ### Videos → Gemini analysis
 
-ClaudeClaw downloads the video to `workspace/uploads/` and tells Claude to analyze it with the `gemini-api-dev` skill. Without `GOOGLE_API_KEY`, Claude receives the file path but can't understand the content. Telegram caps downloads at 20MB.
+MyOS downloads the video to `workspace/uploads/` and tells Claude to analyze it with the `gemini-api-dev` skill. Without `GOOGLE_API_KEY`, Claude receives the file path but can't understand the content. Telegram caps downloads at 20MB.
 
 ### File sending → Claude sends you files
 
@@ -531,7 +531,7 @@ cp -r skills/tldr ~/.claude/skills/tldr
 
 The next time the bot starts, `/tldr` appears in Telegram's autocomplete alongside the built-in commands. The description shown in the menu comes from the skill's `description` field in its frontmatter.
 
-**How it works:** On startup, ClaudeClaw scans `~/.claude/skills/` for folders containing a `SKILL.md` with valid YAML frontmatter. If `user_invocable: true` is set, the skill's `name` and `description` are registered with Telegram's `setMyCommands` API alongside the built-in commands. Telegram allows up to 100 commands total.
+**How it works:** On startup, MyOS scans `~/.claude/skills/` for folders containing a `SKILL.md` with valid YAML frontmatter. If `user_invocable: true` is set, the skill's `name` and `description` are registered with Telegram's `setMyCommands` API alongside the built-in commands. Telegram allows up to 100 commands total.
 
 **Important:** Telegram aggressively caches the command menu on mobile. After installing a new skill and restarting the bot, you may need to fully close Telegram (swipe it away from your app switcher, not just minimize) and reopen it before the new `/` commands appear.
 
@@ -570,9 +570,9 @@ A live web page that shows you everything happening inside your assistant: what 
 
 ### How the dashboard works
 
-![ClaudeClaw OS dashboard architecture](assets/dashboard-architecture.jpeg)
+![MyOS dashboard architecture](assets/dashboard-architecture.jpeg)
 
-When you start ClaudeClaw, a small web page starts running alongside the bot. It reads directly from the same database the bot uses and shows you the data in real time.
+When you start MyOS, a small web page starts running alongside the bot. It reads directly from the same database the bot uses and shows you the data in real time.
 
 Here's what happens when you use it:
 
@@ -626,7 +626,7 @@ It prints a long random string like `a3f8c2d1e5b794...`. This is your dashboard 
 
 #### Step 2: Add the password to your settings
 
-Open the `.env` file in your ClaudeClaw folder. (This is the same file where your Telegram token and other keys live. Open it with any text editor. TextEdit on Mac, Notepad on Windows, or whatever your terminal editor is.)
+Open the `.env` file in your MyOS folder. (This is the same file where your Telegram token and other keys live. Open it with any text editor. TextEdit on Mac, Notepad on Windows, or whatever your terminal editor is.)
 
 Add this line:
 
@@ -709,10 +709,10 @@ brew install cloudflare/cloudflare/cloudflared
 cloudflared tunnel login
 
 # 3. Create a tunnel (remember the ID it prints: you'll need it)
-cloudflared tunnel create claudeclaw
+cloudflared tunnel create myos
 
 # 4. Connect your domain to the tunnel (replace with your actual domain)
-cloudflared tunnel route dns claudeclaw dash.yourdomain.com
+cloudflared tunnel route dns myos dash.yourdomain.com
 ```
 
 Now you need to create a config file. Open your terminal and paste:
@@ -737,7 +737,7 @@ Save and exit (in nano: press `Ctrl+X`, then `Y`, then `Enter`).
 
 Start the tunnel:
 ```bash
-cloudflared tunnel run claudeclaw
+cloudflared tunnel run myos
 ```
 
 Update your `.env`:
@@ -754,7 +754,7 @@ To make the tunnel start automatically when your computer boots:
 brew services start cloudflared
 ```
 
-**Moving to a new machine later?** Copy two files from the old machine: `~/.cloudflared/config.yml` and the `.json` credentials file next to it. Run `cloudflared tunnel run claudeclaw` on the new machine. Same URL, no changes needed.
+**Moving to a new machine later?** Copy two files from the old machine: `~/.cloudflared/config.yml` and the `.json` credentials file next to it. Run `cloudflared tunnel run myos` on the new machine. Same URL, no changes needed.
 
 ### Things to know
 
@@ -788,7 +788,7 @@ All endpoints require `?token=YOUR_TOKEN`. Per-user endpoints also need `&chatId
 
 ## Slack (optional)
 
-Requires a Slack User OAuth Token. This connects to your workspace so ClaudeClaw can read and send messages on your behalf.
+Requires a Slack User OAuth Token. This connects to your workspace so MyOS can read and send messages on your behalf.
 
 ### Step 1: Create a Slack app
 
@@ -796,7 +796,7 @@ Requires a Slack User OAuth Token. This connects to your workspace so ClaudeClaw
 2. Click the green **Create New App** button (top right)
 3. In the popup, choose **From scratch** (not "From an app manifest")
 4. Fill in:
-   - **App Name**: anything you want (e.g. `ClaudeClaw`)
+   - **App Name**: anything you want (e.g. `MyOS`)
    - **Pick a workspace**: select the Slack workspace you want to connect
 5. Click **Create App**
 
@@ -838,14 +838,14 @@ This is the critical step. You need to add permissions so the app can read and s
 6. You'll now see a **User OAuth Token** field with a token that starts with `xoxp-`
 7. Click **Copy** to copy the token
 
-### Step 4: Add the token to ClaudeClaw
+### Step 4: Add the token to MyOS
 
-1. Open your `.env` file in the ClaudeClaw project directory
+1. Open your `.env` file in the MyOS project directory
 2. Add the token:
    ```
    SLACK_USER_TOKEN=xoxp-your-token-here
    ```
-3. Restart ClaudeClaw
+3. Restart MyOS
 
 ### Step 5: Verify it works
 
@@ -854,11 +854,11 @@ Send `/slack` in your Telegram chat. You should see a numbered list of your rece
 If you get "Slack not connected", double-check:
 - The token starts with `xoxp-` (not `xoxb-` which is a bot token)
 - The `.env` file has no extra spaces around the `=` sign
-- You restarted ClaudeClaw after adding the token
+- You restarted MyOS after adding the token
 
 ### Using Slack from Claude Code (skill)
 
-ClaudeClaw ships with a Slack CLI at `dist/slack-cli.js` and a matching skill in `skills/slack/`. To use Slack via natural language from any Claude Code session:
+MyOS ships with a Slack CLI at `dist/slack-cli.js` and a matching skill in `skills/slack/`. To use Slack via natural language from any Claude Code session:
 
 ```bash
 cp -r skills/slack ~/.claude/skills/slack
@@ -869,7 +869,7 @@ Then just say "check my slack" or "message Jane on slack saying hey" and Claude 
 ### Slack CLI reference
 
 ```bash
-cd /path/to/claudeclaw
+cd /path/to/myos
 
 node dist/slack-cli.js list              # List conversations with unread counts
 node dist/slack-cli.js list --limit 10   # Limit results
@@ -968,7 +968,7 @@ Messages you send via the bot go into a `wa_outbox` SQLite table. The daemon's o
 
 ### Message security
 
-All WhatsApp message bodies are **encrypted at rest** using AES-256-GCM before being written to the database. Even if someone accesses `store/claudeclaw.db` directly, message content is unreadable without the encryption key in your `.env`.
+All WhatsApp message bodies are **encrypted at rest** using AES-256-GCM before being written to the database. Even if someone accesses `store/myos.db` directly, message content is unreadable without the encryption key in your `.env`.
 
 Messages are also **automatically deleted after 3 days**: The retention sweep runs on startup and every 24 hours, covering `wa_messages`, `wa_outbox`, and `wa_message_map`. This is enforced in code and cannot be bypassed without modifying `runDecaySweep()` in `src/memory.ts`.
 
@@ -978,9 +978,9 @@ The `store/` directory (database, WhatsApp session, logs) is gitignored with mul
 
 ## Memory
 
-![ClaudeClaw OS memory system](assets/memory-diagram.jpeg)
+![MyOS memory system](assets/memory-diagram.jpeg)
 
-ClaudeClaw has a structured memory system that extracts, consolidates, and recalls knowledge across all sessions. Everything is automatic.
+MyOS has a structured memory system that extracts, consolidates, and recalls knowledge across all sessions. Everything is automatic.
 
 ### Layer 1. Session resumption
 
@@ -1139,7 +1139,7 @@ Mission tasks go through the same FIFO message queue as user messages and schedu
 
 ## Database
 
-ClaudeClaw ships with SQLite and **creates everything automatically on first run**: No migrations, no setup, no external database server. File lives at `store/claudeclaw.db`.
+MyOS ships with SQLite and **creates everything automatically on first run**: No migrations, no setup, no external database server. File lives at `store/myos.db`.
 
 **Schema:**
 
@@ -1167,7 +1167,7 @@ slack_messages    -- Slack message history (encrypted, 3-day retention)
 Inspect it directly:
 
 ```bash
-sqlite3 store/claudeclaw.db
+sqlite3 store/myos.db
 
 SELECT summary, importance, salience FROM memories ORDER BY created_at DESC LIMIT 10;
 SELECT * FROM scheduled_tasks;
@@ -1180,7 +1180,7 @@ SELECT * FROM sessions;
 
 ## Customizing your assistant (CLAUDE.md)
 
-`CLAUDE.md` is loaded into every Claude Code session. It's the personality and context file. The main thing to edit to make ClaudeClaw OS yours.
+`CLAUDE.md` is loaded into every Claude Code session. It's the personality and context file. The main thing to edit to make MyOS yours.
 
 The sections that matter most:
 
@@ -1198,7 +1198,7 @@ The sections that matter most:
 
 ## Building your context stack
 
-ClaudeClaw gets more useful the more context you give it. Each layer compounds on the last. Your CLAUDE.md is the foundation, skills add capabilities, and your file system becomes the knowledge base. The more you invest in these layers, the less you explain per message and the more your agents can do autonomously.
+MyOS gets more useful the more context you give it. Each layer compounds on the last. Your CLAUDE.md is the foundation, skills add capabilities, and your file system becomes the knowledge base. The more you invest in these layers, the less you explain per message and the more your agents can do autonomously.
 
 Here's how to think about it if you're a business owner:
 
@@ -1221,7 +1221,7 @@ Update my CLAUDE.md with this context:
 Claude can read any file on your machine. Organize key business docs where agents can find them:
 
 ```
-Create a ~/Business folder structure for my ClaudeClaw agents:
+Create a ~/Business folder structure for my MyOS agents:
 - ~/Business/SOPs/ for standard operating procedures
 - ~/Business/Templates/ for email templates, proposals, contracts
 - ~/Business/Clients/ for client briefs and notes
@@ -1284,11 +1284,11 @@ The startup banner is in `banner.txt` at the project root. Replace it with anyth
 
 ## Skills to install
 
-ClaudeClaw auto-loads every skill in `~/.claude/skills/`. Install a skill by copying its folder there.
+MyOS auto-loads every skill in `~/.claude/skills/`. Install a skill by copying its folder there.
 
 ### Bundled skills
 
-ClaudeClaw ships with ready-to-use skills in the `skills/` directory. Copy any of these to activate them:
+MyOS ships with ready-to-use skills in the `skills/` directory. Copy any of these to activate them:
 
 ```bash
 # Gmail: read, triage, reply, send, create filters
@@ -1361,11 +1361,11 @@ npm run typecheck # Type-check without compiling
 
 ## Is this compliant with Anthropic's Terms of Service?
 
-**It's a grey area, but signs point to yes for personal use.** Anthropic's Agent SDK (`@anthropic-ai/claude-agent-sdk`) is a published, official package. Boris Cherny (Anthropic) has indicated the Agent SDK can be used for personal usage with a Claude subscription. ClaudeClaw uses this SDK exclusively.
+**It's a grey area, but signs point to yes for personal use.** Anthropic's Agent SDK (`@anthropic-ai/claude-agent-sdk`) is a published, official package. Boris Cherny (Anthropic) has indicated the Agent SDK can be used for personal usage with a Claude subscription. MyOS uses this SDK exclusively.
 
-**How ClaudeClaw works:** The Agent SDK's `query()` spawns the `claude` binary as a child process. That subprocess manages its own auth from `~/.claude/`. ClaudeClaw never reads or transmits your token. It runs Claude Code and reads the output, identical to typing `claude -p "message"` in a terminal.
+**How MyOS works:** The Agent SDK's `query()` spawns the `claude` binary as a child process. That subprocess manages its own auth from `~/.claude/`. MyOS never reads or transmits your token. It runs Claude Code and reads the output, identical to typing `claude -p "message"` in a terminal.
 
-| | ClaudeClaw | Token-extraction tools |
+| | MyOS | Token-extraction tools |
 |---|---|---|
 | Runs the official `claude` CLI | ✅ | ❌ |
 | Auth stays in `~/.claude/` | ✅ | ❌ |
@@ -1381,11 +1381,11 @@ For server or multi-user deployments, set `ANTHROPIC_API_KEY` to use pay-per-tok
 
 ## Security
 
-ClaudeClaw has multiple security layers. Some are always on, others are opt-in. The setup wizard (`npm run setup`) configures all of them interactively.
+MyOS has multiple security layers. Some are always on, others are opt-in. The setup wizard (`npm run setup`) configures all of them interactively.
 
 ### Always on
 
-These protections are active in every ClaudeClaw installation, no configuration needed.
+These protections are active in every MyOS installation, no configuration needed.
 
 | Layer | What it does |
 |-------|-------------|
@@ -1413,7 +1413,7 @@ The PIN is stored as a salted SHA-256 hash. The plaintext never touches disk.
 
 ### Emergency kill switch (opt-in)
 
-Set `EMERGENCY_KILL_PHRASE` to a unique phrase. Sending it immediately stops all ClaudeClaw launchd/systemd services and force-exits the process. This is a hard stop, not a lock. Use it if something goes wrong and you need everything shut down now.
+Set `EMERGENCY_KILL_PHRASE` to a unique phrase. Sending it immediately stops all MyOS launchd/systemd services and force-exits the process. This is a hard stop, not a lock. Use it if something goes wrong and you need everything shut down now.
 
 The setup wizard can generate one for you, or you can choose your own.
 
@@ -1430,7 +1430,7 @@ The setup wizard can generate one for you, or you can choose your own.
 ### Viewing the audit log
 
 ```bash
-sqlite3 store/claudeclaw.db \
+sqlite3 store/myos.db \
   "SELECT datetime(created_at,'unixepoch'), action, detail FROM audit_log ORDER BY created_at DESC LIMIT 20;"
 ```
 
@@ -1448,7 +1448,7 @@ Or view it in the dashboard via the API: `GET /api/audit?limit=50`.
 
 **Bot doesn't respond**
 - Check `ALLOWED_CHAT_ID` matches the number from `/chatid`
-- Check logs: `tail -f /tmp/claudeclaw.log`
+- Check logs: `tail -f /tmp/myos.log`
 - Run `npm run status` for a full health check
 - Verify Claude auth: `claude --version`
 - **macOS:** Check if your Mac is showing "Node wants to access..." permission dialogs. The bot hangs until you click Allow. This is easy to miss if your Mac screen is off or in the background.
@@ -1457,15 +1457,15 @@ Or view it in the dashboard via the API: `GET /api/audit?limit=50`.
 - `CLAUDE.md` ships with `[BRACKETED]` placeholder values like `[YOUR NAME]` and `[YOUR ASSISTANT NAME]`
 - These **must** be replaced before the bot can work properly
 - The setup wizard opens `CLAUDE.md` in your editor for this, but if you skip it or your editor doesn't save, edit it manually: open `CLAUDE.md` in any text editor, find/replace all `[BRACKETED]` values with your actual info
-- You do **not** need to fill in every bracket. At minimum: `[YOUR ASSISTANT NAME]`, `[YOUR NAME]`, and `[PATH TO CLAUDECLAW]` (the full path to your claudeclaw directory)
+- You do **not** need to fill in every bracket. At minimum: `[YOUR ASSISTANT NAME]`, `[YOUR NAME]`, and `[PATH TO MYOS]` (the full path to your myos directory)
 
 **Git errors during setup**
 - "Please tell me who you are". run `git config --global user.name "Your Name"` and `git config --global user.email "you@email.com"`
 - Git needs these set once, globally, before it can do anything
 
 **Can't access the internet / "break out"**
-- ClaudeClaw runs the real Claude Code CLI, which has full internet access through its built-in tools (web search, web fetch, bash with curl, etc.)
-- If Claude says it can't access the internet, it's likely a skill or prompt issue, not a ClaudeClaw limitation
+- MyOS runs the real Claude Code CLI, which has full internet access through its built-in tools (web search, web fetch, bash with curl, etc.)
+- If Claude says it can't access the internet, it's likely a skill or prompt issue, not a MyOS limitation
 - Make sure your Claude Code CLI works in the terminal first: open a terminal, run `claude`, and ask it to search the web
 
 **Voice notes return an error**
@@ -1482,13 +1482,13 @@ Or view it in the dashboard via the API: `GET /api/audit?limit=50`.
 - To force re-authentication, delete `store/waweb/` and restart the daemon
 
 **"409 Conflict: terminated by other getUpdates request"**
-- Two instances running. Kill the old one: `kill $(cat store/claudeclaw.pid)`
+- Two instances running. Kill the old one: `kill $(cat store/myos.pid)`
 
 **Session feels off or confused**
 - Send `/newchat` for a fresh start
 
 **File downloads fail**
-- Telegram caps downloads at 20MB. This is a Telegram API limit, not a ClaudeClaw OS one
+- Telegram caps downloads at 20MB. This is a Telegram API limit, not a MyOS one
 
 ---
 
@@ -1498,22 +1498,22 @@ Or view it in the dashboard via the API: `GET /api/audit?limit=50`.
 No. There is no separate prompt to execute and no `Rebuild_Prompt.md` file. `CLAUDE.md` in the repo **is** the prompt, it loads automatically into every Claude Code session. You personalize it once (replace the `[BRACKETED]` placeholders with your info) and forget about it. Just clone the repo, run setup, and go. When you `git pull` updates, your personalized `.env` stays untouched (gitignored) and `CLAUDE.md` changes are merged by git.
 
 **"Does this use Claude Remote?"**
-No. ClaudeClaw has nothing to do with Anthropic's Remote product. It runs the `claude` CLI locally on your own machine (Mac, Linux, or Windows via WSL2) and pipes results to Telegram. No cloud VMs, no remote sessions.
+No. MyOS has nothing to do with Anthropic's Remote product. It runs the `claude` CLI locally on your own machine (Mac, Linux, or Windows via WSL2) and pipes results to Telegram. No cloud VMs, no remote sessions.
 
 **"Does this work on Windows?"**
-Yes, through WSL2. Install WSL2, clone ClaudeClaw inside the WSL filesystem, and follow the normal Linux setup steps. The setup wizard detects Windows and offers WSL2 or PM2 options.
+Yes, through WSL2. Install WSL2, clone MyOS inside the WSL filesystem, and follow the normal Linux setup steps. The setup wizard detects Windows and offers WSL2 or PM2 options.
 
 **"What is GOOGLE_API_KEY for?"**
 Video analysis via Google Gemini. It is **not** for Gmail or Google Calendar (those use separate OAuth credentials via the gmail and google-calendar skills). Get it free at [aistudio.google.com](https://aistudio.google.com).
 
 **"Should I watch the Claude Code video first?"**
-Recommended but not required. The video covers how Claude Code works under the hood, which helps you understand what ClaudeClaw is actually doing. But you can set up ClaudeClaw first and watch it later.
+Recommended but not required. The video covers how Claude Code works under the hood, which helps you understand what MyOS is actually doing. But you can set up MyOS first and watch it later.
 
 **"How do I update when a new version drops?"**
-`cd claudeclaw-os && git pull && npm install && npm run migrate && npm run build` then restart. See [Updating ClaudeClaw](#updating-claudeclaw) above.
+`cd MyOS && git pull && npm install && npm run migrate && npm run build` then restart. See [Updating MyOS](#updating-myos) above.
 
 **"Telegram formatting looks broken / not formatting properly"**
-ClaudeClaw converts Claude's Markdown to Telegram-safe HTML (bold, italic, code blocks, links). Telegram's formatting support is limited compared to a full web page. If something looks off, it's usually Telegram's rendering, not a bug. For very long or complex responses, the formatting is intentionally kept simple to avoid Telegram parse errors.
+MyOS converts Claude's Markdown to Telegram-safe HTML (bold, italic, code blocks, links). Telegram's formatting support is limited compared to a full web page. If something looks off, it's usually Telegram's rendering, not a bug. For very long or complex responses, the formatting is intentionally kept simple to avoid Telegram parse errors.
 
 **"Can I add extra security like 2FA?"**
 `ALLOWED_CHAT_ID` restricts the bot to your Telegram account, which is the default security layer. Community members have added Google Authenticator (TOTP) for tiered permissions (read-only vs elevated actions with time-limited re-auth). This isn't built in yet, but it's a straightforward addition to `handleMessage()` in `src/bot.ts` if you want that extra layer.
@@ -1552,7 +1552,7 @@ flowchart TD
     Dashboard["Dashboard\nHono + SSE"] --> Bot
     Mission["Mission Control\nTasks inbox + kanban"] --> Sched
 
-    DB[("SQLite\nstore/claudeclaw.db")] --- Mem
+    DB[("SQLite\nstore/myos.db")] --- Mem
     DB --- Sched
     DB --- WA
     DB --- Dashboard
@@ -1567,7 +1567,7 @@ flowchart TD
 ## Project structure
 
 ```
-claudeclaw/
+myos/
 │
 │  ← Files you'll actually touch
 ├── CLAUDE.md             ← START HERE: your assistant's personality and context
@@ -1576,7 +1576,7 @@ claudeclaw/
 │
 │  ← Configuration and setup
 ├── .env.example          Template for .env. shows all available variables
-├── claudeclaw.plist      macOS LaunchAgent template (setup wizard uses this)
+├── myos.plist      macOS LaunchAgent template (setup wizard uses this)
 ├── package.json          npm scripts and dependencies
 ├── tsconfig.json         TypeScript compiler config
 │
@@ -1625,8 +1625,8 @@ claudeclaw/
 │
 │  ← Runtime data (auto-created, gitignored)
 ├── store/
-│   ├── claudeclaw.db     SQLite database. created automatically on first run
-│   ├── claudeclaw.pid    Tracks the running process to prevent duplicates
+│   ├── myos.db     SQLite database. created automatically on first run
+│   ├── myos.pid    Tracks the running process to prevent duplicates
 │   └── waweb/            WhatsApp session. scan QR once, persists here
 │
 └── workspace/
@@ -1643,23 +1643,23 @@ Everything else runs without modification.
 
 ## Creating a Team of Agents
 
-This is a core feature, not experimental. Setting up multiple agents is straightforward and one of the most powerful things about ClaudeClaw.
+This is a core feature, not experimental. Setting up multiple agents is straightforward and one of the most powerful things about MyOS.
 
 **What are agents?** Instead of one bot doing everything, you can spin up specialist bots. Each one is its own Telegram chat with its own personality, its own context window, and its own focus area. Think of it like having a small team of people, each in their own DM thread on your phone.
 
-**How it works in plain English:** Each agent is just another Telegram bot running the same ClaudeClaw code, but with a different personality file (CLAUDE.md) and a different Telegram token. They all share your machine, your database, and your skills. The main agent can delegate work to specialists, and they ping you back on Telegram when they're done.
+**How it works in plain English:** Each agent is just another Telegram bot running the same MyOS code, but with a different personality file (CLAUDE.md) and a different Telegram token. They all share your machine, your database, and your skills. The main agent can delegate work to specialists, and they ping you back on Telegram when they're done.
 
-ClaudeClaw can run **specialist agents** alongside the main bot. Each agent is its own Telegram bot with its own personality, its own Claude Code session, and its own chat on your phone.
+MyOS can run **specialist agents** alongside the main bot. Each agent is its own Telegram bot with its own personality, its own Claude Code session, and its own chat on your phone.
 
 ![Agent avatars](assets/agent-comms.png) ![Agent avatars](assets/agent-content.png) ![Agent avatars](assets/agent-ops.png) ![Agent avatars](assets/agent-research.png)
 
 *Example setup: Comms, Content, Ops, and Research agents, each with a pop-art avatar generated via Gemini.*
 
-![ClaudeClaw OS multi-agent architecture](assets/multi-agent-architecture.jpeg)
+![MyOS multi-agent architecture](assets/multi-agent-architecture.jpeg)
 
 ### Why agents?
 
-Your main ClaudeClaw bot does everything. That's powerful but also means one long conversation, one context window, and one personality trying to handle email, research, billing, and content all at once.
+Your main MyOS bot does everything. That's powerful but also means one long conversation, one context window, and one personality trying to handle email, research, billing, and content all at once.
 
 Agents let you split the work:
 
@@ -1759,7 +1759,7 @@ npm start -- --agent research   # Terminal 4
 
 Each will show:
 ```
-ClaudeClaw agent [comms] online: @yourname_comms_bot
+MyOS agent [comms] online: @yourname_comms_bot
 ```
 
 Your main bot keeps running in its own terminal as usual (`npm start`). Close the terminal and the agent dies.
@@ -1789,11 +1789,11 @@ This script:
 
 After installation you'll see:
 ```
-com.claudeclaw.main:     running (PID: 12345)
-com.claudeclaw.comms:    running (PID: 12346)
-com.claudeclaw.content:  running (PID: 12347)
-com.claudeclaw.ops:      running (PID: 12348)
-com.claudeclaw.research: running (PID: 12349)
+com.myos.main:     running (PID: 12345)
+com.myos.comms:    running (PID: 12346)
+com.myos.content:  running (PID: 12347)
+com.myos.ops:      running (PID: 12348)
+com.myos.research: running (PID: 12349)
 
 All agents installed and running.
 ```
@@ -1802,21 +1802,21 @@ All agents installed and running.
 
 ```bash
 # Check which agents are running
-launchctl list | grep claudeclaw
+launchctl list | grep myos
 
 # View logs for a specific agent
 tail -f logs/main.log
 tail -f logs/comms.log
 
 # Restart a single agent (e.g., after code changes)
-launchctl unload ~/Library/LaunchAgents/com.claudeclaw.comms.plist
-launchctl load ~/Library/LaunchAgents/com.claudeclaw.comms.plist
+launchctl unload ~/Library/LaunchAgents/com.myos.comms.plist
+launchctl load ~/Library/LaunchAgents/com.myos.comms.plist
 
 # Restart ALL agents after a rebuild
 npm run build
 for agent in main comms ops content research; do
-  launchctl unload ~/Library/LaunchAgents/com.claudeclaw.$agent.plist 2>/dev/null
-  launchctl load ~/Library/LaunchAgents/com.claudeclaw.$agent.plist
+  launchctl unload ~/Library/LaunchAgents/com.myos.$agent.plist 2>/dev/null
+  launchctl load ~/Library/LaunchAgents/com.myos.$agent.plist
 done
 
 # Remove all agents (stop everything)
@@ -1863,8 +1863,8 @@ npm run build
 
 # If running via launchd (recommended): reload each agent
 for agent in main comms ops content research; do
-  launchctl unload ~/Library/LaunchAgents/com.claudeclaw.$agent.plist 2>/dev/null
-  launchctl load ~/Library/LaunchAgents/com.claudeclaw.$agent.plist
+  launchctl unload ~/Library/LaunchAgents/com.myos.$agent.plist 2>/dev/null
+  launchctl load ~/Library/LaunchAgents/com.myos.$agent.plist
 done
 
 # If running in terminals: Ctrl+C each agent, then restart
@@ -2033,14 +2033,14 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setMyProfilePhoto" \
 
 ## Uninstalling
 
-To completely remove ClaudeClaw OS (services, config, database, temp files):
+To completely remove MyOS (services, config, database, temp files):
 
 ```bash
 npm run uninstall
-cd .. && rm -rf claudeclaw-os
+cd .. && rm -rf MyOS
 ```
 
-This stops all background services, removes `~/.claudeclaw`, clears the SQLite database and session data, and wipes temp files. The final `rm -rf` deletes the repo itself.
+This stops all background services, removes `~/.myos`, clears the SQLite database and session data, and wipes temp files. The final `rm -rf` deletes the repo itself.
 
 ---
 

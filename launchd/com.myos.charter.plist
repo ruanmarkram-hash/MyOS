@@ -3,11 +3,13 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.claudeclaw.main</string>
+  <string>com.myos.charter</string>
   <key>ProgramArguments</key>
   <array>
     <string>__NODE_PATH__</string>
     <string>dist/index.js</string>
+    <string>--agent</string>
+    <string>charter</string>
   </array>
   <key>WorkingDirectory</key>
   <string>__PROJECT_DIR__</string>
@@ -25,8 +27,8 @@
   <key>ThrottleInterval</key>
   <integer>30</integer>
   <key>StandardOutPath</key>
-  <string>__PROJECT_DIR__/logs/main.log</string>
+  <string>__PROJECT_DIR__/logs/charter.log</string>
   <key>StandardErrorPath</key>
-  <string>__PROJECT_DIR__/logs/main.log</string>
+  <string>__PROJECT_DIR__/logs/charter.log</string>
 </dict>
 </plist>

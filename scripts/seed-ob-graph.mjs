@@ -80,7 +80,7 @@ async function ensureEdge(source, target, relationship_type, properties = {}) {
 
 const nodes = {};
 for (const [key, label, type, properties] of [
-  ['os', 'ClaudeClaw OS', 'system', { source: 'mission-control-seed' }],
+  ['os', 'MyOS', 'system', { source: 'mission-control-seed' }],
   ['mc', 'Mission Control', 'interface', { source: 'mission-control-seed' }],
   ['brain', 'OpenBrain', 'memory_system', { source: 'mission-control-seed' }],
   ['graph', 'OB-Graph', 'knowledge_graph', { source: 'mission-control-seed' }],

@@ -258,7 +258,7 @@ describe('agent provider configuration', () => {
     await runAgent('ship it', undefined, () => {}, undefined, undefined, undefined, undefined, undefined, undefined, 'You are Sage.');
 
     expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({
-      message: expect.stringContaining('[ClaudeClaw runtime contract]'),
+      message: expect.stringContaining('[MyOS runtime contract]'),
     }));
     expect(runAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       message: expect.stringContaining('[Agent role - follow these instructions]\nYou are Sage.\n[End agent role]'),

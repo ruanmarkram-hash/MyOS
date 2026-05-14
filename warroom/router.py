@@ -1,6 +1,6 @@
 """
 AgentRouter: a Pipecat FrameProcessor that inspects transcribed speech
-and decides which ClaudeClaw agent should handle the message.
+and decides which MyOS agent should handle the message.
 
 Routing rules (in priority order):
   1. Broadcast triggers: "everyone, status update" -> round-robin all agents
@@ -52,7 +52,7 @@ def _load_agent_names() -> set[str]:
     return fallback
 
 
-# Agent identifiers that match the configured ClaudeClaw agents.
+# Agent identifiers that match the configured MyOS agents.
 AGENT_NAMES = _load_agent_names()
 
 # Phrases that deliberately trigger a broadcast to all agents. Keep these

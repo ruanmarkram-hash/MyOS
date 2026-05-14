@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.claudeclaw.marlow</string>
+  <string>com.myos.ember</string>
   <key>ProgramArguments</key>
   <array>
     <string>__NODE_PATH__</string>
     <string>dist/index.js</string>
     <string>--agent</string>
-    <string>marlow</string>
+    <string>ember</string>
   </array>
   <key>WorkingDirectory</key>
   <string>__PROJECT_DIR__</string>
@@ -27,8 +27,8 @@
   <key>ThrottleInterval</key>
   <integer>30</integer>
   <key>StandardOutPath</key>
-  <string>__PROJECT_DIR__/logs/marlow.log</string>
+  <string>__PROJECT_DIR__/logs/ember.log</string>
   <key>StandardErrorPath</key>
-  <string>__PROJECT_DIR__/logs/marlow.log</string>
+  <string>__PROJECT_DIR__/logs/ember.log</string>
 </dict>
 </plist>

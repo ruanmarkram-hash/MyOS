@@ -33,6 +33,21 @@ function fail(msg: string) {
   console.log(`  ${c.red}✗${c.reset}  ${msg}`);
 }
 
+function launchctlServiceState(label: string): 'running' | 'loaded' | 'missing' {
+  try {
+    const output = execSync(`launchctl list ${label}`, {
+      stdio: 'pipe',
+    })
+      .toString()
+      .trim();
+    const pidMatch = output.match(/"PID"\s*=\s*(\d+)/);
+    if (pidMatch) return 'running';
+    return 'loaded';
+  } catch {
+    return 'missing';
+  }
+}
+
 function parseEnvFile(filePath: string): Record<string, string> {
   const result: Record<string, string> = {};
   let content: string;
@@ -61,7 +76,7 @@ function parseEnvFile(filePath: string): Record<string, string> {
 
 async function main() {
   console.log();
-  console.log(`  ${c.bold}${c.cyan}ClaudeClaw Status${c.reset}`);
+  console.log(`  ${c.bold}${c.cyan}MyOS Status${c.reset}`);
   console.log(`  ${c.gray}${'─'.repeat(17)}${c.reset}`);
 
   // Node version
@@ -139,37 +154,27 @@ async function main() {
 
   // Service status
   if (process.platform === 'darwin') {
-    try {
-      const output = execSync('launchctl list com.claudeclaw.app', {
-        stdio: 'pipe',
-      })
-        .toString()
-        .trim();
-      const pidMatch = output.match(/"PID"\s*=\s*(\d+)/);
-      if (pidMatch) {
-        ok(`Service: running (PID ${pidMatch[1]})`);
-      } else {
-        const lines = output.split('\n');
-        let pid = '';
-        for (const line of lines) {
-          const parts = line.split('\t');
-          if (parts.length >= 3 && parts[2] === 'com.claudeclaw.app') {
-            pid = parts[0].trim();
-            break;
-          }
-        }
-        if (pid && pid !== '-') {
-          ok(`Service: running (PID ${pid})`);
-        } else {
-          warn('Service: loaded but not running');
-        }
-      }
-    } catch {
+    const mainState = launchctlServiceState('com.myos.main');
+    const appState = launchctlServiceState('com.myos.app');
+    const legacyMainState = launchctlServiceState('com.claudeclaw.main');
+    const legacyAppState = launchctlServiceState('com.claudeclaw.app');
+
+    if (mainState === 'running') {
+      ok('Service: running (launchd com.myos.main)');
+    } else if (appState === 'running') {
+      ok('Service: running (launchd com.myos.app)');
+    } else if (mainState === 'loaded') {
+      warn('Service: loaded but not running (launchd com.myos.main)');
+    } else if (appState === 'loaded') {
+      warn('Service: loaded but not running (launchd com.myos.app)');
+    } else if (legacyMainState !== 'missing' || legacyAppState !== 'missing') {
+      warn('Service: legacy launchd label detected, reinstall launchd to migrate to MyOS');
+    } else {
       warn('Service: not installed');
     }
   } else if (process.platform === 'linux') {
     try {
-      const output = execSync('systemctl --user is-active claudeclaw', {
+      const output = execSync('systemctl --user is-active myos', {
         stdio: 'pipe',
       }).toString().trim();
       if (output === 'active') {
@@ -182,7 +187,7 @@ async function main() {
     }
   } else {
     try {
-      execSync('pm2 describe claudeclaw', { stdio: 'pipe' });
+      execSync('pm2 describe myos', { stdio: 'pipe' });
       ok('Service: running (PM2)');
     } catch {
       warn('Service: not detected (check PM2 or start manually)');
@@ -190,7 +195,7 @@ async function main() {
   }
 
   // Memory DB
-  const dbPath = path.join(PROJECT_ROOT, 'store', 'claudeclaw.db');
+  const dbPath = path.join(PROJECT_ROOT, 'store', 'myos.db');
   if (fs.existsSync(dbPath)) {
     try {
       const db = new Database(dbPath, { readonly: true });

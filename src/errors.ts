@@ -1,5 +1,5 @@
 /**
- * Structured error taxonomy for ClaudeClaw agent failures.
+ * Structured error taxonomy for MyOS agent failures.
  *
  * Classifies errors from the Claude Code SDK into actionable categories
  * with recovery hints, so the user gets helpful messages instead of

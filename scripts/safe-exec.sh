@@ -1,6 +1,6 @@
 #!/bin/bash
 # safe-exec.sh — wrapper for destructive commands (rm, mv, chmod, chown) that
-# refuses to operate on ClaudeClaw-critical paths.
+# refuses to operate on MyOS-critical paths.
 #
 # Usage:
 #   safe-exec.sh rm -rf /some/path
@@ -20,7 +20,7 @@ HQ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # These paths (and everything under them) cannot be rm'd, mv'd, chmod'd, or chown'd.
 # Add to this list as needed.
 PROTECTED_PATHS=(
-  "$HQ_DIR"                                    # ClaudeClaw itself
+  "$HQ_DIR"                                    # MyOS itself
   "$HQ_DIR/store"                              # Database, sessions, credentials
   "$HQ_DIR/scripts"                            # Safety scripts (including this one)
   "$HQ_DIR/src"                                # Source code

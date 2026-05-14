@@ -12,19 +12,19 @@ const PROJECT_DIR = path.resolve(__dirname, '..');
 describe('schedule-cli agent routing', () => {
   // These tests run the actual CLI as a child process to verify env var behavior
 
-  it('auto-detects agent from CLAUDECLAW_AGENT_ID env var', () => {
+  it('auto-detects agent from MYOS_AGENT_ID env var', () => {
     const result = createAndTrack(
       `node "${CLI_PATH}" create "test auto-detect" "0 9 * * *"`,
-      { ...process.env, CLAUDECLAW_AGENT_ID: 'comms' },
+      { ...process.env, MYOS_AGENT_ID: 'comms' },
     );
 
     expect(result).toContain('Agent:        comms');
   });
 
-  it('--agent flag overrides CLAUDECLAW_AGENT_ID env var', () => {
+  it('--agent flag overrides MYOS_AGENT_ID env var', () => {
     const result = createAndTrack(
       `node "${CLI_PATH}" create "test override" "0 9 * * *" --agent ops`,
-      { ...process.env, CLAUDECLAW_AGENT_ID: 'comms' },
+      { ...process.env, MYOS_AGENT_ID: 'comms' },
     );
 
     expect(result).toContain('Agent:        ops');
@@ -33,7 +33,7 @@ describe('schedule-cli agent routing', () => {
   it('defaults to main when no env var and no --agent flag', () => {
     const result = createAndTrack(
       `node "${CLI_PATH}" create "test default" "0 9 * * *"`,
-      { ...process.env, CLAUDECLAW_AGENT_ID: undefined },
+      { ...process.env, MYOS_AGENT_ID: undefined },
     );
 
     expect(result).toContain('Agent:        main');

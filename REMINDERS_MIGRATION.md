@@ -101,7 +101,7 @@ Expected: List of tasks from your Microsoft To-Do "Tasks" list (or empty if no t
 
 1. `/Users/sc/workspace/operations/engine-room/skills/msgraph/tasks_ops.py` (new)
 2. `/Users/sc/workspace/operations/engine-room/skills/msgraph/graph_client.py` (scope added)
-3. Scheduled tasks in `claudeclaw.db`:
+3. Scheduled tasks in `myos.db`:
    - `885bf4a5` (morning brief)
    - `e37c97f7` (mid-day pulse)
    - `2c9e2829` (evening wrap)

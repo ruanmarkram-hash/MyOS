@@ -5,7 +5,7 @@
 #   3. Base64/binary garbage thoughts (DELETE)
 # Silent when clean; Telegram-pings when action was taken or something breached.
 #
-# Called by com.claudeclaw.brain-drift-check launchd plist every Sunday 04:00
+# Called by com.myos.brain-drift-check launchd plist every Sunday 04:00
 # (one hour after brain-backup so we don't thrash at the same time).
 
 set -uo pipefail

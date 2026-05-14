@@ -4,7 +4,7 @@
  * Why this exists
  * ----------------
  * Codex's MCP config lives globally at `~/.codex/config.toml` and applies to
- * every `codex exec` invocation. ClaudeClaw's per-agent
+ * every `codex exec` invocation. MyOS's per-agent
  * `agent.yaml.mcp_servers` allowlist therefore has no effect under Codex
  * unless we filter the config at call time.
  *

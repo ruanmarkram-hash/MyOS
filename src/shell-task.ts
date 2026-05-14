@@ -21,7 +21,7 @@
  *
  * Anything else (audits, briefings, judgment-required prompts) is left alone.
  *
- * Aligned with claudeclaw-codex-migration PLAN.md Phase 4: trivial scheduled
+ * Aligned with myos-codex-migration PLAN.md Phase 4: trivial scheduled
  * tasks should be agent-free regardless of provider. Reduces the surface that
  * Phase 3 cutover has to revalidate on Codex.
  */
@@ -59,6 +59,7 @@ const SHELL_TASK_ENV_ALLOWLIST = [
   'TZ',
   'TMPDIR',
   // Keep the agent id so log lines / hive-mind writes know who fired.
+  'MYOS_AGENT_ID',
   'CLAUDECLAW_AGENT_ID',
 ] as const;
 

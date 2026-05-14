@@ -549,7 +549,11 @@ export function listAgentFileHistory(filePath: string, limit = 50): AgentFileHis
 
 export function initDatabase(): void {
   fs.mkdirSync(STORE_DIR, { recursive: true });
-  const dbPath = path.join(STORE_DIR, 'claudeclaw.db');
+  const preferredDbPath = path.join(STORE_DIR, 'myos.db');
+  const legacyDbPath = path.join(STORE_DIR, 'claudeclaw.db');
+  const dbPath = fs.existsSync(preferredDbPath) || !fs.existsSync(legacyDbPath)
+    ? preferredDbPath
+    : legacyDbPath;
 
   // Validate encryption key is available before proceeding
   getEncryptionKey();

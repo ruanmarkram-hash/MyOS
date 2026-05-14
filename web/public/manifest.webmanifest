@@ -1,7 +1,7 @@
 {
-  "name": "ClaudeClaw Mission Control",
-  "short_name": "ClaudeClaw",
-  "description": "Mission Control for ClaudeClaw.",
+  "name": "MyOS Mission Control",
+  "short_name": "MyOS",
+  "description": "Mission Control for MyOS.",
   "id": "/v2/",
   "start_url": "/v2/home",
   "scope": "/",

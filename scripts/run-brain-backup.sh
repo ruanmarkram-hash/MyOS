@@ -1,6 +1,6 @@
 #!/bin/bash
 # Weekly OB1 brain backup to store/brain-backups/
-# Called by com.claudeclaw.brain-backup launchd plist every Sunday 03:00.
+# Called by com.myos.brain-backup launchd plist every Sunday 03:00.
 
 set -uo pipefail
 cd /Users/sc/HQ

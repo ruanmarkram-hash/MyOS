@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make OpenBrain the portable memory and knowledge substrate for ClaudeClaw without making core mission execution depend on a remote brain being healthy.
+Make OpenBrain the portable memory and knowledge substrate for MyOS without making core mission execution depend on a remote brain being healthy.
 
 ## Stage 1: Truthful Wiring
 

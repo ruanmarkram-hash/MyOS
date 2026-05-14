@@ -1,4 +1,4 @@
-# ClaudeClaw
+# MyOS
 
 <!-- CRITICAL: NEVER commit personal data to this repo. This is a public template.
      Files that MUST remain generic (no real names, paths, vault locations, API keys):
@@ -94,7 +94,7 @@ Template (chat_id will match what's already in the DB; copy it):
 ```python
 import sqlite3, time, subprocess, os, json
 root = subprocess.check_output(['git','rev-parse','--show-toplevel']).decode().strip()
-db = sqlite3.connect(os.path.join(root,'store','claudeclaw.db'))
+db = sqlite3.connect(os.path.join(root,'store','myos.db'))
 chat_id = db.execute('SELECT chat_id FROM sessions LIMIT 1').fetchone()[0]
 now = int(time.time())
 db.execute(
@@ -109,7 +109,7 @@ db.commit()
 
 ## Specialist Agents
 
-Ruan has a team of specialist agents. Delegate to them when the task matches their domain. Each agent runs as a separate ClaudeClaw instance with its own Telegram bot.
+Ruan has a team of specialist agents. Delegate to them when the task matches their domain. Each agent runs as a separate MyOS instance with its own Telegram bot.
 
 | Agent | Domain | Mission CLI |
 |-------|--------|-------------|
@@ -128,7 +128,7 @@ Ruan has a team of specialist agents. Delegate to them when the task matches the
 
 ## Workspace
 
-Ruan's operational files live at `~/workspace/`. This is separate from `~/HQ/` (the ClaudeClaw system itself).
+Ruan's operational files live at `~/workspace/`. This is separate from `~/HQ/` (the MyOS system itself).
 
 ```
 ~/workspace/
@@ -162,7 +162,7 @@ When Ruan asks you to save notes, create a brief, or store research — put it i
 
 Ruan runs a Mac mini and routinely asks you to free up RAM by killing background processes. You can do this. Use `~/HQ/scripts/safe-kill.sh` instead of `kill`, `pkill`, or `killall` directly.
 
-`safe-kill.sh` is a drop-in wrapper that passes through to real kill for any process EXCEPT ClaudeClaw processes (which it refuses with a clear error). This means you can kill anything without risk of accidentally taking yourself down.
+`safe-kill.sh` is a drop-in wrapper that passes through to real kill for any process EXCEPT MyOS processes (which it refuses with a clear error). This means you can kill anything without risk of accidentally taking yourself down.
 
 **Usage:**
 
@@ -183,13 +183,13 @@ Ruan runs a Mac mini and routinely asks you to free up RAM by killing background
 
 **If Ruan asks to restart Sage:** do not run any kill command. Tell him to send `/restart` in Telegram. The bot handles it cleanly and launchd brings Sage back automatically.
 
-**Never self-restart main from inside a Telegram conversation.** `launchctl kickstart -k com.claudeclaw.main` SIGTERMs the live bot mid-reply, drops the in-flight Telegram message, and orphans the assistant turn in `conversation_log` — Ruan sees ~5 minutes of activity then nothing. Use `~/HQ/scripts/safe-launchctl.sh` for any launchctl ops; it refuses the bad pattern and passes everything else through. Restarting OTHER agents (charter, ember, marlow, mason, warden) is fine and does not affect the live conversation.
+**Never self-restart main from inside a Telegram conversation.** `launchctl kickstart -k com.myos.main` SIGTERMs the live bot mid-reply, drops the in-flight Telegram message, and orphans the assistant turn in `conversation_log` — Ruan sees ~5 minutes of activity then nothing. Use `~/HQ/scripts/safe-launchctl.sh` for any launchctl ops; it refuses the bad pattern and passes everything else through. Restarting OTHER agents (charter, ember, marlow, mason, warden) is fine and does not affect the live conversation.
 
 ## Destructive Command Safety
 
 Use `~/HQ/scripts/safe-exec.sh` instead of bare `rm`, `mv`, `chmod`, or `chown` when operating on files you didn't just create in the current task.
 
-`safe-exec.sh` is a drop-in wrapper that blocks destructive operations on ClaudeClaw-critical paths (HQ source, store/, scripts/, .env, agent configs, ~/.claude/, ~/.ssh/, launchd plists). If the target is safe, the command passes through unchanged.
+`safe-exec.sh` is a drop-in wrapper that blocks destructive operations on MyOS-critical paths (HQ source, store/, scripts/, .env, agent configs, ~/.claude/, ~/.ssh/, launchd plists). If the target is safe, the command passes through unchanged.
 
 **Usage:**
 
@@ -263,7 +263,7 @@ The root `postbuild` step runs `scripts/build-web.mjs`, which:
 
 ```bash
 echo 'MISSION_CONTROL_V2=1' >> .env
-launchctl kickstart -k gui/$(id -u)/com.claudeclaw.main   # or `/restart` from Telegram
+launchctl kickstart -k gui/$(id -u)/com.myos.main   # or `/restart` from Telegram
 ```
 
 **Smoke test both UIs after a build:**
@@ -281,10 +281,10 @@ When `MISSION_CONTROL_V2=1`, unmatched non-`/api`, non-`/warroom` GETs fall back
 macOS launchd silently exits with code 78 (`EX_CONFIG`) when `StandardOutPath` or `StandardErrorPath` contain spaces. The `WorkingDirectory` key handles spaces fine, but log paths do not.
 
 When generating or troubleshooting launchd plists:
-- **Never use paths with spaces** in `StandardOutPath` or `StandardErrorPath`. Use `/tmp/claudeclaw-<agent>.log` or `~/Library/Logs/`.
-- If the project directory has spaces, create a symlink (e.g. `~/.claudeclaw-app`) and use that for `WorkingDirectory`.
+- **Never use paths with spaces** in `StandardOutPath` or `StandardErrorPath`. Use `/tmp/myos-<agent>.log` or `~/Library/Logs/`.
+- If the project directory has spaces, create a symlink (e.g. `~/.myos-app`) and use that for `WorkingDirectory`.
 - After a reboot, agents may crash-loop if the network isn't ready yet (DNS ENOTFOUND on Telegram API). The `KeepAlive` + `ThrottleInterval` will auto-recover once the network is up, but exit code 78 from bad log paths will not auto-recover.
-- To diagnose: check `launchctl print gui/$(id -u)/com.claudeclaw.<agent>` for `runs`, `last exit code`, and `state`. Empty logs + exit 78 = bad log path.
+- To diagnose: check `launchctl print gui/$(id -u)/com.myos.<agent>` for `runs`, `last exit code`, and `state`. Empty logs + exit 78 = bad log path.
 
 ## Scheduling Tasks
 
@@ -297,7 +297,7 @@ PROJECT_ROOT=$(git rev-parse --show-toplevel)
 node "$PROJECT_ROOT/dist/schedule-cli.js" create "PROMPT" "CRON"
 ```
 
-**Agent routing:** The schedule-cli auto-detects which agent you are via the `CLAUDECLAW_AGENT_ID` environment variable. Tasks you create will automatically be assigned to your agent. If you need to override, use `--agent <id>`.
+**Agent routing:** The schedule-cli auto-detects which agent you are via the `MYOS_AGENT_ID` environment variable. Tasks you create will automatically be assigned to your agent. If you need to override, use `--agent <id>`.
 
 Common cron patterns:
 - Daily at 9am: `0 9 * * *`
@@ -408,7 +408,7 @@ You have TWO memory systems. Use both before ever saying "I don't remember":
 2. **Persistent memory database**: A SQLite database stores extracted memories, conversation history, and consolidation insights across ALL sessions. This is injected automatically as `[Memory context]` at the top of each message. When [YOUR NAME] asks "do you remember" or "what do we know about X", check:
    - The `[Memory context]` block already in your prompt (extracted facts from past conversations)
    - The `[Conversation history recall]` block (raw exchanges matching the query, if present)
-   - The database directly: `sqlite3 $(git rev-parse --show-toplevel)/store/claudeclaw.db "SELECT role, substr(content, 1, 200) FROM conversation_log WHERE agent_id = 'AGENT_ID_HERE' AND content LIKE '%keyword%' ORDER BY created_at DESC LIMIT 10;"`
+   - The database directly: `sqlite3 $(git rev-parse --show-toplevel)/store/myos.db "SELECT role, substr(content, 1, 200) FROM conversation_log WHERE agent_id = 'AGENT_ID_HERE' AND content LIKE '%keyword%' ORDER BY created_at DESC LIMIT 10;"`
 
 **NEVER say "I don't have memory of that" or "each session starts fresh" without checking these sources first.** The memory system exists specifically so you retain knowledge across sessions.
 
@@ -416,10 +416,10 @@ You have TWO memory systems. Use both before ever saying "I don't remember":
 
 ### `convolife`
 When [YOUR NAME] says "convolife", check the remaining context window and report back. Steps:
-1. Get the current session ID: `sqlite3 $(git rev-parse --show-toplevel)/store/claudeclaw.db "SELECT session_id FROM sessions LIMIT 1;"`
+1. Get the current session ID: `sqlite3 $(git rev-parse --show-toplevel)/store/myos.db "SELECT session_id FROM sessions LIMIT 1;"`
 2. Query the token_usage table for context size and session stats:
 ```bash
-sqlite3 $(git rev-parse --show-toplevel)/store/claudeclaw.db "
+sqlite3 $(git rev-parse --show-toplevel)/store/myos.db "
   SELECT
     COUNT(*)                as turns,
     MAX(context_tokens)     as last_context,
@@ -431,7 +431,7 @@ sqlite3 $(git rev-parse --show-toplevel)/store/claudeclaw.db "
 ```
 3. Also get the first turn's context_tokens as baseline (system prompt overhead):
 ```bash
-sqlite3 $(git rev-parse --show-toplevel)/store/claudeclaw.db "
+sqlite3 $(git rev-parse --show-toplevel)/store/myos.db "
   SELECT context_tokens as baseline FROM token_usage
   WHERE session_id = '<SESSION_ID>'
   ORDER BY created_at ASC LIMIT 1;
@@ -448,15 +448,15 @@ Keep it short.
 ### `checkpoint`
 When [YOUR NAME] says "checkpoint", save a TLDR of the current conversation to SQLite so it survives a /newchat session reset. Steps:
 1. Write a tight 3-5 bullet summary of the key things discussed/decided in this session
-2. Find the DB path: `$(git rev-parse --show-toplevel)/store/claudeclaw.db`
-3. Get the actual chat_id from: `sqlite3 $(git rev-parse --show-toplevel)/store/claudeclaw.db "SELECT chat_id FROM sessions LIMIT 1;"`
+2. Find the DB path: `$(git rev-parse --show-toplevel)/store/myos.db`
+3. Get the actual chat_id from: `sqlite3 $(git rev-parse --show-toplevel)/store/myos.db "SELECT chat_id FROM sessions LIMIT 1;"`
 4. Insert it into the memories DB as a high-salience semantic memory:
 ```bash
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 python3 -c "
 import sqlite3, time, os, subprocess
 root = subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).decode().strip()
-db = sqlite3.connect(os.path.join(root, 'store', 'claudeclaw.db'))
+db = sqlite3.connect(os.path.join(root, 'store', 'myos.db'))
 now = int(time.time())
 summary = '''[SUMMARY OF CURRENT SESSION HERE]'''
 db.execute('INSERT INTO memories (chat_id, source, raw_text, summary, entities, topics, importance, salience, created_at, accessed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',

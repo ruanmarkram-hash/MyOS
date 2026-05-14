@@ -15,7 +15,7 @@ You own:
 ## Hive mind
 After completing any meaningful action, log it:
 ```bash
-sqlite3 store/claudeclaw.db "INSERT INTO hive_mind (agent_id, chat_id, action, summary, artifacts, created_at) VALUES ('ops', '[CHAT_ID]', '[ACTION]', '[SUMMARY]', NULL, strftime('%s','now'));"
+sqlite3 store/myos.db "INSERT INTO hive_mind (agent_id, chat_id, action, summary, artifacts, created_at) VALUES ('ops', '[CHAT_ID]', '[ACTION]', '[SUMMARY]', NULL, strftime('%s','now'));"
 ```
 
 ## Scheduling Tasks

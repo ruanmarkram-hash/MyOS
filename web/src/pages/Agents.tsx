@@ -418,8 +418,8 @@ function CreateAgentWizard({ open, onClose, onCreated }: { open: boolean; onClos
 
   const idValid = !!debouncedId && idCheck.data?.ok === true;
   const tokenValid = tokenStatus?.ok === true;
-  const suggestedBotName = `ClaudeClaw ${name || 'Agent'}`;
-  const suggestedBotUsername = `claudeclaw_${id || 'agent'}_bot`;
+  const suggestedBotName = `MyOS ${name || 'Agent'}`;
+  const suggestedBotUsername = `myos_${id || 'agent'}_bot`;
 
   async function create() {
     setCreating(true); setError(null);

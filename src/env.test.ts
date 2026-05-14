@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { readEnvFile } from './env.js';
 
-const TMP_DIR = '/tmp/claudeclaw-env-test';
+const TMP_DIR = '/tmp/myos-env-test';
 const TMP_ENV = path.join(TMP_DIR, '.env');
 
 function writeEnv(content: string): void {

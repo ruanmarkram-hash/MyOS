@@ -482,7 +482,7 @@ export async function pingBrain(): Promise<boolean> {
         params: {
           protocolVersion: '2024-11-05',
           capabilities: {},
-          clientInfo: { name: 'claudeclaw', version: '1.0' },
+          clientInfo: { name: 'myos', version: '1.0' },
         },
       }),
     });
@@ -510,7 +510,7 @@ export async function pingGraph(): Promise<boolean> {
         params: {
           protocolVersion: '2024-11-05',
           capabilities: {},
-          clientInfo: { name: 'claudeclaw', version: '1.0' },
+          clientInfo: { name: 'myos', version: '1.0' },
         },
       }),
     });

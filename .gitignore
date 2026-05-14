@@ -26,7 +26,7 @@ migrations/.applied.json
 
 # Logs
 *.log
-/tmp/claudeclaw.*
+/tmp/myos.*
 
 # Python
 __pycache__/
@@ -89,7 +89,7 @@ warroom/music.mp3
 warroom/avatars/backup-*/
 warroom/avatars/photoreal-backup/
 
-# Personal config — lives in CLAUDECLAW_CONFIG (default ~/.claudeclaw)
+# Personal config — lives in MYOS_CONFIG (default ~/.myos)
 CLAUDE.md
 agents/*/agent.yaml
 agents/*/CLAUDE.md

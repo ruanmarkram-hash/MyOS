@@ -137,6 +137,7 @@ const voiceEnabledChats = new Set<string>();
 // Per-chat model override (in-memory, resets on restart)
 // When not set, uses CLI default (Opus via Max/OAuth)
 const chatModelOverride = new Map<string, string>();
+let processMainModelOverride: string | undefined;
 
 const AVAILABLE_MODELS: Record<string, string> = {
   opus: 'claude-opus-4-7',
@@ -144,12 +145,13 @@ const AVAILABLE_MODELS: Record<string, string> = {
   haiku: 'claude-haiku-4-5',
 };
 export function setMainModelOverride(model: string): void {
+  processMainModelOverride = model;
   if (ALLOWED_CHAT_ID) chatModelOverride.set(ALLOWED_CHAT_ID, model);
 }
 
 export function getMainModelOverride(): string | undefined {
-  if (!ALLOWED_CHAT_ID) return undefined;
-  return chatModelOverride.get(ALLOWED_CHAT_ID);
+  if (!ALLOWED_CHAT_ID) return processMainModelOverride;
+  return chatModelOverride.get(ALLOWED_CHAT_ID) ?? processMainModelOverride;
 }
 
 // WhatsApp state per Telegram chat
@@ -401,7 +403,7 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     } catch (err) {
       logger.error({ err }, 'Could not auto-save chat ID');
       await ctx.reply(
-        `Your chat ID is ${chatId}.\n\nI couldn't save it automatically. Open the .env file in your claudeclaw-os folder and add this line:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart with: npm start`,
+        `Your chat ID is ${chatId}.\n\nI couldn't save it automatically. Open the .env file in your MyOS folder and add this line:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart with: npm start`,
       );
     }
     return;
@@ -888,7 +890,7 @@ export function createBot(): Bot {
 
   const bot = new Bot(token);
 
-  // Reject group chats. ClaudeClaw only works in private (1-on-1) chats.
+  // Reject group chats. MyOS only works in private (1-on-1) chats.
   // This prevents message leakage if the bot is added to a group.
   bot.use(async (ctx, next) => {
     if (ctx.chat && ctx.chat.type !== 'private') {
@@ -939,7 +941,7 @@ export function createBot(): Bot {
   bot.command('help', (ctx) => {
     if (!isAuthorised(ctx.chat!.id)) return;
     return ctx.reply(
-      'ClaudeClaw — Commands\n\n' +
+      'MyOS — Commands\n\n' +
       '/newchat — Start a new Claude session\n' +
       '/respin — Reload recent context\n' +
       '/voice — Toggle voice mode on/off\n' +
@@ -973,7 +975,7 @@ export function createBot(): Bot {
     if (AGENT_ID !== 'main') {
       return ctx.reply(`${AGENT_ID.charAt(0).toUpperCase() + AGENT_ID.slice(1)} agent online.`);
     }
-    return ctx.reply('ClaudeClaw online. What do you need?');
+    return ctx.reply('MyOS online. What do you need?');
   });
 
   // /newchat — clear Claude session, start fresh + auto-commit to hive mind
@@ -1316,7 +1318,7 @@ export function createBot(): Bot {
     if (!isAuthorised(ctx.chat!.id)) return;
     const s = getSecurityStatus();
     const stale = checkStale();
-    const agentId = process.env.CLAUDECLAW_AGENT_ID || 'main';
+    const agentId = process.env.MYOS_AGENT_ID || process.env.CLAUDECLAW_AGENT_ID || 'main';
     const lines = [
       'Sage status:',
       `- SHA: ${shortSha(stale.runtimeSha)} (built ${formatRelative(RUNTIME_BUILD_META.builtAt)})`,
@@ -1593,7 +1595,7 @@ export function createBot(): Bot {
     if (!isAuthorised(chatId)) return;
     if (!ALLOWED_CHAT_ID) {
       await ctx.reply(
-        `Your chat ID is ${chatId}.\n\nAdd this to your .env:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart ClaudeClaw OS.`,
+        `Your chat ID is ${chatId}.\n\nAdd this to your .env:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart MyOS.`,
       );
       return;
     }
@@ -1618,7 +1620,7 @@ export function createBot(): Bot {
     if (!isAuthorised(chatId)) return;
     if (!ALLOWED_CHAT_ID) {
       await ctx.reply(
-        `Your chat ID is ${chatId}.\n\nAdd this to your .env:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart ClaudeClaw OS.`,
+        `Your chat ID is ${chatId}.\n\nAdd this to your .env:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart MyOS.`,
       );
       return;
     }
@@ -1641,7 +1643,7 @@ export function createBot(): Bot {
     if (!isAuthorised(chatId)) return;
     if (!ALLOWED_CHAT_ID) {
       await ctx.reply(
-        `Your chat ID is ${chatId}.\n\nAdd this to your .env:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart ClaudeClaw OS.`,
+        `Your chat ID is ${chatId}.\n\nAdd this to your .env:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart MyOS.`,
       );
       return;
     }
@@ -1664,7 +1666,7 @@ export function createBot(): Bot {
     const chatId = ctx.chat!.id;
     if (!isAuthorised(chatId)) return;
     if (!ALLOWED_CHAT_ID) {
-      await ctx.reply(`Your chat ID is ${chatId}.\n\nAdd this to your .env:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart ClaudeClaw OS.`);
+      await ctx.reply(`Your chat ID is ${chatId}.\n\nAdd this to your .env:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart MyOS.`);
       return;
     }
 
@@ -1686,7 +1688,7 @@ export function createBot(): Bot {
     const chatId = ctx.chat!.id;
     if (!isAuthorised(chatId)) return;
     if (!ALLOWED_CHAT_ID) {
-      await ctx.reply(`Your chat ID is ${chatId}.\n\nAdd this to your .env:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart ClaudeClaw OS.`);
+      await ctx.reply(`Your chat ID is ${chatId}.\n\nAdd this to your .env:\n\nALLOWED_CHAT_ID=${chatId}\n\nThen restart MyOS.`);
       return;
     }
 

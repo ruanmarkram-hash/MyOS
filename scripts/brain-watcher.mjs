@@ -12,7 +12,7 @@
 //      file, embeds, inserts into OB1. Dedupe via content_fingerprint on
 //      thoughts table (the same pre-check pattern the one-off import uses).
 //
-// One tick every 10 min via launchd (com.claudeclaw.brain-watcher.plist).
+// One tick every 10 min via launchd (com.myos.brain-watcher.plist).
 
 import { readFileSync, readdirSync, statSync, appendFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -28,7 +28,7 @@ const ROOT = '/Users/sc/HQ';
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 const CODEX_SESSIONS_DIR = join(homedir(), '.codex', 'archived_sessions');
 const VAULT_DIR = join(homedir(), 'workspace');
-const STATE_DB = join(ROOT, 'store', 'claudeclaw.db');
+const STATE_DB = join(ROOT, 'store', 'myos.db');
 const LOG_PATH = join(ROOT, 'logs', 'brain-watcher.log');
 
 const MTIME_LOOKBACK_MS = process.env.MTIME_LOOKBACK_MS_OVERRIDE

@@ -1,6 +1,6 @@
 """
 ClaudeAgentBridge: a Pipecat FrameProcessor that takes routed messages,
-calls the appropriate ClaudeClaw agent via the Node.js voice bridge,
+calls the appropriate MyOS agent via the Node.js voice bridge,
 and emits TTS-ready speech frames with the correct agent voice.
 
 The bridge invokes:

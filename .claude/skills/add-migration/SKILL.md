@@ -1,6 +1,6 @@
 # Add Migration
 
-Creates a new versioned migration for ClaudeClaw.
+Creates a new versioned migration for MyOS.
 
 ## Steps
 
@@ -81,7 +81,7 @@ If `CHANGELOG.md` does not exist, create it with this header:
 ```md
 # Changelog
 
-All notable changes to ClaudeClaw will be documented here.
+All notable changes to MyOS will be documented here.
 ```
 
 For a **new version** (patch / minor / major), prepend a new section directly below

@@ -1,5 +1,5 @@
 #!/bin/bash
-# safe-kill.sh — kill wrapper that refuses to kill ClaudeClaw processes.
+# safe-kill.sh — kill wrapper that refuses to kill MyOS processes.
 # Usage:
 #   safe-kill.sh <pid>
 #   safe-kill.sh -<signal> <pid>
@@ -14,7 +14,7 @@ HQ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-is_claudeclaw_pid() {
+is_myos_pid() {
   local pid="$1"
   # Must be a running process
   if ! kill -0 "$pid" 2>/dev/null; then
@@ -28,8 +28,8 @@ is_claudeclaw_pid() {
   if echo "$cmd" | grep -qF "$HQ_DIR"; then
     return 0
   fi
-  # Match: 'claudeclaw' anywhere in the command
-  if echo "$cmd" | grep -qi "claudeclaw"; then
+  # Match: 'myos' anywhere in the command
+  if echo "$cmd" | grep -qi "myos"; then
     return 0
   fi
   # Match: PID file contents (main + agents)
@@ -45,7 +45,7 @@ is_claudeclaw_pid() {
 }
 
 refuse() {
-  echo "safe-kill: REFUSED — cannot kill ClaudeClaw process (PID $1)." >&2
+  echo "safe-kill: REFUSED — cannot kill MyOS process (PID $1)." >&2
   echo "Use /restart in Telegram to restart Sage, or use launchctl for other agents." >&2
   exit 1
 }
@@ -106,7 +106,7 @@ if $NAME_MODE; then
     exit 1
   fi
   for pid in "${MATCHING_PIDS[@]}"; do
-    if is_claudeclaw_pid "$pid"; then
+    if is_myos_pid "$pid"; then
       refuse "$pid"
     fi
   done
@@ -128,7 +128,7 @@ if [ ${#PIDS[@]} -eq 0 ]; then
 fi
 
 for pid in "${PIDS[@]}"; do
-  if is_claudeclaw_pid "$pid"; then
+  if is_myos_pid "$pid"; then
     refuse "$pid"
   fi
 done

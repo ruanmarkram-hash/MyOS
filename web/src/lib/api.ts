@@ -8,16 +8,16 @@ const url = new URL(window.location.href);
 
 let cachedToken = url.searchParams.get('token') || '';
 if (cachedToken) {
-  try { sessionStorage.setItem('claudeclaw.token', cachedToken); } catch {}
+  try { sessionStorage.setItem('myos.token', cachedToken); } catch {}
 } else {
-  try { cachedToken = sessionStorage.getItem('claudeclaw.token') || ''; } catch {}
+  try { cachedToken = sessionStorage.getItem('myos.token') || ''; } catch {}
 }
 
 let cachedChatId = url.searchParams.get('chatId') || '';
 if (cachedChatId) {
-  try { sessionStorage.setItem('claudeclaw.chatId', cachedChatId); } catch {}
+  try { sessionStorage.setItem('myos.chatId', cachedChatId); } catch {}
 } else {
-  try { cachedChatId = sessionStorage.getItem('claudeclaw.chatId') || ''; } catch {}
+  try { cachedChatId = sessionStorage.getItem('myos.chatId') || ''; } catch {}
 }
 
 export const dashboardToken = cachedToken;
@@ -31,7 +31,7 @@ function currentPathWithoutToken(): string {
 
 function redirectToLogin(): void {
   try {
-    sessionStorage.removeItem('claudeclaw.token');
+    sessionStorage.removeItem('myos.token');
   } catch {}
   const next = currentPathWithoutToken();
   if (window.location.pathname !== '/login') {

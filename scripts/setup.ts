@@ -35,7 +35,7 @@ function loadBanner(): string {
   try {
     return fs.readFileSync(path.join(PROJECT_ROOT, 'banner.txt'), 'utf-8');
   } catch {
-    return '\n  ClaudeClaw\n';
+    return '\n  MyOS\n';
   }
 }
 
@@ -151,17 +151,17 @@ async function main() {
 
   // ── 1. Banner + intro ────────────────────────────────────────────────────
   console.log(`${c.cyan}${c.bold}${loadBanner()}${c.reset}`);
-  console.log(`  ${c.bold}Welcome to ClaudeClaw.${c.reset}`);
+  console.log(`  ${c.bold}Welcome to MyOS.${c.reset}`);
   console.log();
   info('This wizard will get you set up in about 5 minutes.');
   info('Press Ctrl+C at any time to exit. You can re-run this at any time with: npm run setup');
   console.log();
 
-  // ── 2. What is ClaudeClaw ────────────────────────────────────────────────
-  section('What is ClaudeClaw?');
+  // ── 2. What is MyOS ────────────────────────────────────────────────
+  section('What is MyOS?');
 
-  console.log(`  ClaudeClaw bridges your Claude Code CLI to Telegram.`);
-  console.log(`  You message your bot from your phone. ClaudeClaw runs the`);
+  console.log(`  MyOS bridges your Claude Code CLI to Telegram.`);
+  console.log(`  You message your bot from your phone. MyOS runs the`);
   console.log(`  ${c.bold}actual${c.reset} ${c.cyan}claude${c.reset} CLI on your computer — with all your skills,`);
   console.log(`  tools, and context — and sends the result back to you.`);
   console.log();
@@ -179,12 +179,12 @@ async function main() {
   console.log(`  ${c.bold}FAQ${c.reset}`);
   console.log();
   console.log(`  ${c.cyan}Q:${c.reset} Does this cost anything?`);
-  info('ClaudeClaw itself is free. You need a Claude Code subscription (Max plan)');
+  info('MyOS itself is free. You need a Claude Code subscription (Max plan)');
   info('or an Anthropic API key. Optional features (voice, video) have their own');
   info('free tiers. Nothing is billed without your API keys.');
   console.log();
   console.log(`  ${c.cyan}Q:${c.reset} Does my computer need to stay on?`);
-  info('Yes. ClaudeClaw runs on your machine. When your computer sleeps or shuts');
+  info('Yes. MyOS runs on your machine. When your computer sleeps or shuts');
   info('down, the bot goes offline. Messages queue in Telegram and arrive when');
   info('you restart.');
   console.log();
@@ -298,7 +298,7 @@ async function main() {
   // ── 4. What do you want to enable? ──────────────────────────────────────
   section('Choose your features');
 
-  info('ClaudeClaw OS has several optional features. Tell us what you want.');
+  info('MyOS has several optional features. Tell us what you want.');
   info('You can always add more later by editing .env and restarting.');
   console.log();
 
@@ -315,7 +315,7 @@ async function main() {
     console.log();
     console.log(`  ${c.bold}How the WhatsApp bridge works:${c.reset}`);
     console.log();
-    info('ClaudeClaw uses whatsapp-web.js to connect to your existing WhatsApp');
+    info('MyOS uses whatsapp-web.js to connect to your existing WhatsApp');
     info('account via the Linked Devices feature (same as WhatsApp Web).');
     console.log();
     info('A separate process (wa-daemon) runs in the background:');
@@ -465,21 +465,21 @@ async function main() {
 
   // Ecosystem section removed — users can find alternatives in README "Other Channels".
 
-  // ── 6. Config directory (CLAUDECLAW_CONFIG) ──────────────────────────────
-  section('Config directory (CLAUDECLAW_CONFIG)');
+  // ── 6. Config directory (MYOS_CONFIG) ──────────────────────────────
+  section('Config directory (MYOS_CONFIG)');
 
   info('Personal config files (CLAUDE.md, agent configs) live outside the repo');
-  info('so they are never accidentally committed. Defaults to ~/.claudeclaw');
+  info('so they are never accidentally committed. Defaults to ~/.myos');
   console.log();
 
   const envForConfig = parseEnvFile(path.join(PROJECT_ROOT, '.env'));
   const defaultConfigDir = expandHome(
-    envForConfig.CLAUDECLAW_CONFIG || '~/.claudeclaw',
+    envForConfig.MYOS_CONFIG || envForConfig.CLAUDECLAW_CONFIG || '~/.myos',
   );
   info(`Current path: ${defaultConfigDir}`);
   console.log();
 
-  let claudeclawConfigDir = defaultConfigDir;
+  let myosConfigDir = defaultConfigDir;
   const configInput = await ask('Config directory (Enter to keep default)', defaultConfigDir);
   const trimmedConfig = configInput.trim();
   if (trimmedConfig && trimmedConfig !== defaultConfigDir) {
@@ -487,24 +487,24 @@ async function main() {
     if (trimmedConfig.length < 3 || (!trimmedConfig.startsWith('/') && !trimmedConfig.startsWith('~') && !trimmedConfig.startsWith('.'))) {
       warn(`"${trimmedConfig}" doesn't look like a directory path. Using default: ${defaultConfigDir}`);
     } else {
-      claudeclawConfigDir = expandHome(trimmedConfig);
+      myosConfigDir = expandHome(trimmedConfig);
     }
   }
 
   // If the chosen directory already exists, just confirm
-  if (fs.existsSync(claudeclawConfigDir)) {
-    const hasClaudeMd = fs.existsSync(path.join(claudeclawConfigDir, 'CLAUDE.md'));
-    ok(`Using ${claudeclawConfigDir}${hasClaudeMd ? ' (CLAUDE.md found)' : ''}`);
+  if (fs.existsSync(myosConfigDir)) {
+    const hasClaudeMd = fs.existsSync(path.join(myosConfigDir, 'CLAUDE.md'));
+    ok(`Using ${myosConfigDir}${hasClaudeMd ? ' (CLAUDE.md found)' : ''}`);
   }
 
   // Create the directory if needed
-  if (!fs.existsSync(claudeclawConfigDir)) {
-    fs.mkdirSync(claudeclawConfigDir, { recursive: true });
-    ok(`Created ${claudeclawConfigDir}`);
+  if (!fs.existsSync(myosConfigDir)) {
+    fs.mkdirSync(myosConfigDir, { recursive: true });
+    ok(`Created ${myosConfigDir}`);
   }
 
   // Ensure CLAUDE.md exists in the config dir (copy from example if needed)
-  const claudeMdDest = path.join(claudeclawConfigDir, 'CLAUDE.md');
+  const claudeMdDest = path.join(myosConfigDir, 'CLAUDE.md');
   if (!fs.existsSync(claudeMdDest)) {
     const exampleSrc = path.join(PROJECT_ROOT, 'CLAUDE.md.example');
     if (fs.existsSync(exampleSrc)) {
@@ -543,7 +543,7 @@ async function main() {
   // ── 7. Skills to install ─────────────────────────────────────────────────
   section('Skills you might want');
 
-  info('ClaudeClaw auto-loads every skill in ~/.claude/skills/.');
+  info('MyOS auto-loads every skill in ~/.claude/skills/.');
   info('Here are the most useful ones to install:');
   console.log();
 
@@ -558,7 +558,7 @@ async function main() {
   if (wantVideo) {
     console.log(`  ${c.bold}Gemini skill (required for video analysis):${c.reset}`);
     console.log();
-    info('ClaudeClaw\'s video analysis uses the gemini-api-dev skill from Google.');
+    info('MyOS\'s video analysis uses the gemini-api-dev skill from Google.');
     info('It handles text, images, audio, video, function calling, and structured output.');
     info('Install it from: https://github.com/google-gemini/gemini-skills');
     console.log();
@@ -577,8 +577,8 @@ async function main() {
   const envPath = path.join(PROJECT_ROOT, '.env');
   const env: Record<string, string> = fs.existsSync(envPath) ? parseEnvFile(envPath) : {};
 
-  // Persist CLAUDECLAW_CONFIG determined in section 6
-  env.CLAUDECLAW_CONFIG = claudeclawConfigDir;
+  // Persist MYOS_CONFIG determined in section 6
+  env.MYOS_CONFIG = myosConfigDir;
 
   let botUsername = '';
   if (env.TELEGRAM_BOT_TOKEN) {
@@ -666,7 +666,7 @@ async function main() {
   // ── 9. Security ──────────────────────────────────────────────────────────
   section('Secure your bot');
 
-  info('ClaudeClaw has full access to your machine. If someone gets into');
+  info('MyOS has full access to your machine. If someone gets into');
   info('your Telegram account, they control the bot. These layers protect you.');
   console.log();
 
@@ -798,7 +798,7 @@ async function main() {
   // ── 11. Optional Claude API key ───────────────────────────────────────────
   section('Claude authentication');
 
-  info('By default, ClaudeClaw uses your existing claude login (Max plan).');
+  info('By default, MyOS uses your existing claude login (Max plan).');
   info('This is fine for personal use on your own machine.');
   console.log();
   info('Set an API key if you\'re deploying on a server, or want pay-per-token');
@@ -818,7 +818,7 @@ async function main() {
   await sleep(300);
 
   const lines = [
-    '# ClaudeClaw — generated by setup wizard',
+    '# MyOS — generated by setup wizard',
     '# Edit freely. Re-run: npm run setup',
     '',
     '# ── Required ──────────────────────────────────────────────────',
@@ -826,7 +826,7 @@ async function main() {
     `ALLOWED_CHAT_ID=${env.ALLOWED_CHAT_ID || ''}`,
     '',
     '# ── Config directory (personal config, never committed) ───────',
-    `CLAUDECLAW_CONFIG=${env.CLAUDECLAW_CONFIG || ''}`,
+    `MYOS_CONFIG=${env.MYOS_CONFIG || ''}`,
     '',
     '# ── Claude auth (optional — uses claude login by default) ─────',
     `ANTHROPIC_API_KEY=${env.ANTHROPIC_API_KEY || ''}`,
@@ -859,7 +859,7 @@ async function main() {
   ];
 
   // Preserve unknown keys
-  const known = new Set(['TELEGRAM_BOT_TOKEN','ALLOWED_CHAT_ID','CLAUDECLAW_CONFIG','ANTHROPIC_API_KEY','GROQ_API_KEY','ELEVENLABS_API_KEY','ELEVENLABS_VOICE_ID','GOOGLE_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','WHATSAPP_ENABLED','WARROOM_ENABLED','DB_ENCRYPTION_KEY','DASHBOARD_TOKEN','DASHBOARD_PORT','DASHBOARD_URL','SECURITY_PIN_HASH','IDLE_LOCK_MINUTES','EMERGENCY_KILL_PHRASE','DESTRUCTIVE_CONFIRM']);
+  const known = new Set(['TELEGRAM_BOT_TOKEN','ALLOWED_CHAT_ID','MYOS_CONFIG','CLAUDECLAW_CONFIG','ANTHROPIC_API_KEY','GROQ_API_KEY','ELEVENLABS_API_KEY','ELEVENLABS_VOICE_ID','GOOGLE_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','WHATSAPP_ENABLED','WARROOM_ENABLED','DB_ENCRYPTION_KEY','DASHBOARD_TOKEN','DASHBOARD_PORT','DASHBOARD_URL','SECURITY_PIN_HASH','IDLE_LOCK_MINUTES','EMERGENCY_KILL_PHRASE','DESTRUCTIVE_CONFIRM']);
   for (const [k, v] of Object.entries(env)) {
     if (!known.has(k) && v) lines.push(`${k}=${v}`);
   }
@@ -880,7 +880,7 @@ async function main() {
   } else {
     section('Auto-start');
     info('Unknown platform. Start manually: npm start');
-    info('Or use PM2: pm2 start dist/index.js --name claudeclaw && pm2 save');
+    info('Or use PM2: pm2 start dist/index.js --name myos && pm2 save');
   }
 
   // ── macOS permissions warning ──────────────────────────────────────────
@@ -911,7 +911,7 @@ async function main() {
   // ── 15. Multi-agent setup (optional) ────────────────────────────────────
   section('Agent team (optional)');
 
-  info('ClaudeClaw can run specialist agents alongside the main bot.');
+  info('MyOS can run specialist agents alongside the main bot.');
   info('Each agent is its own Telegram bot with a focused role, its own');
   info('context window, and its own chat on your phone.');
   console.log();
@@ -1037,7 +1037,7 @@ async function main() {
       env[envKey] = token;
 
       // Create agent config directory
-      const configDir = env.CLAUDECLAW_CONFIG || path.join(os.homedir(), '.claudeclaw');
+      const configDir = env.MYOS_CONFIG || path.join(os.homedir(), '.myos');
       const agentDir = path.join(configDir, 'agents', agentId);
       fs.mkdirSync(agentDir, { recursive: true });
 
@@ -1101,7 +1101,7 @@ async function main() {
   // ── 16. Summary ───────────────────────────────────────────────────────────
   console.log();
   console.log(`  ${c.cyan}╔════════════════════════════════════════════╗${c.reset}`);
-  console.log(`  ${c.cyan}║${c.reset}${c.bold}           ClaudeClaw is ready!             ${c.reset}${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}${c.bold}           MyOS is ready!             ${c.reset}${c.cyan}║${c.reset}`);
   console.log(`  ${c.cyan}╚════════════════════════════════════════════╝${c.reset}`);
   console.log();
 
@@ -1131,7 +1131,7 @@ async function main() {
     } else {
       ok('Build complete');
       console.log();
-      info('Starting ClaudeClaw... (press Ctrl+C to stop)');
+      info('Starting MyOS... (press Ctrl+C to stop)');
       console.log();
       // Close readline before handing off to the bot process
       rl.close();
@@ -1154,9 +1154,9 @@ async function main() {
   console.log(`  ${c.cyan}npm run status${c.reset}`);
   console.log();
   if (PLATFORM === 'darwin') {
-    info('Logs: tail -f /tmp/claudeclaw.log');
+    info('Logs: tail -f /tmp/myos.log');
   } else if (PLATFORM === 'linux') {
-    info('Logs: journalctl --user -u claudeclaw -f');
+    info('Logs: journalctl --user -u myos -f');
   }
   console.log();
 }
@@ -1165,7 +1165,11 @@ async function main() {
 async function setupMacOS() {
   section('Auto-start (macOS)');
 
-  const dest = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.claudeclaw.app.plist');
+  const launchAgentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
+  const dest = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.myos.app.plist');
+  const legacyDest = path.join(launchAgentsDir, 'com.claudeclaw.app.plist');
+  const legacyBareDest = path.join(launchAgentsDir, 'com.claudeclaw.plist');
+  const myosBareDest = path.join(launchAgentsDir, 'com.myos.plist');
   const installed = fs.existsSync(dest);
 
   if (installed) {
@@ -1179,11 +1183,33 @@ async function setupMacOS() {
 
   const s = spinner('Installing launchd service...');
   try {
+    const unload = (plistPath: string, label: string) => {
+      if (!fs.existsSync(plistPath)) return;
+      const domain = `gui/${process.getuid?.() ?? ''}`;
+      try {
+        execSync(`launchctl bootout "${domain}/${label}"`, { stdio: 'pipe' });
+      } catch {
+        try {
+          execSync(`launchctl unload "${plistPath}"`, { stdio: 'pipe' });
+        } catch {
+          // Already unloaded or not bootstrapped.
+        }
+      }
+    };
+
+    unload(dest, 'com.myos.app');
+    unload(legacyDest, 'com.claudeclaw.app');
+    unload(legacyBareDest, 'com.claudeclaw');
+    unload(myosBareDest, 'com.myos');
+    if (fs.existsSync(legacyDest)) fs.rmSync(legacyDest);
+    if (fs.existsSync(legacyBareDest)) fs.rmSync(legacyBareDest);
+    if (fs.existsSync(myosBareDest)) fs.rmSync(myosBareDest);
+
     const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.claudeclaw.app</string>
+  <key>Label</key><string>com.myos.app</string>
   <key>ProgramArguments</key>
   <array>
     <string>${process.execPath}</string>
@@ -1193,8 +1219,8 @@ async function setupMacOS() {
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>5</integer>
-  <key>StandardOutPath</key><string>/tmp/claudeclaw.log</string>
-  <key>StandardErrorPath</key><string>/tmp/claudeclaw.err</string>
+  <key>StandardOutPath</key><string>/tmp/myos.log</string>
+  <key>StandardErrorPath</key><string>/tmp/myos.err</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>NODE_ENV</key><string>production</string>
@@ -1207,7 +1233,7 @@ async function setupMacOS() {
     fs.writeFileSync(dest, plist, 'utf-8');
     execSync(`launchctl load "${dest}"`, { stdio: 'pipe' });
     s.stop('ok', 'Service installed — starts automatically on login');
-    info('Logs: tail -f /tmp/claudeclaw.log');
+    info('Logs: tail -f /tmp/myos.log');
   } catch {
     s.stop('warn', 'Could not install automatically');
     info(`Manual install: launchctl load "${dest}"`);
@@ -1221,16 +1247,16 @@ async function setupLinux() {
   const install = await confirm('Install as a systemd user service?');
   if (!install) {
     info('Start manually: npm start');
-    info('Or: pm2 start dist/index.js --name claudeclaw && pm2 save');
+    info('Or: pm2 start dist/index.js --name myos && pm2 save');
     return;
   }
 
   const s = spinner('Installing systemd service...');
   try {
     const serviceDir = path.join(os.homedir(), '.config', 'systemd', 'user');
-    const servicePath = path.join(serviceDir, 'claudeclaw.service');
+    const servicePath = path.join(serviceDir, 'myos.service');
     const service = `[Unit]
-Description=ClaudeClaw Telegram Bot
+Description=MyOS Telegram Bot
 After=network.target
 
 [Service]
@@ -1250,10 +1276,10 @@ WantedBy=default.target
     fs.mkdirSync(serviceDir, { recursive: true });
     fs.writeFileSync(servicePath, service, 'utf-8');
     execSync('systemctl --user daemon-reload', { stdio: 'pipe' });
-    execSync('systemctl --user enable claudeclaw', { stdio: 'pipe' });
-    execSync('systemctl --user start claudeclaw', { stdio: 'pipe' });
+    execSync('systemctl --user enable myos', { stdio: 'pipe' });
+    execSync('systemctl --user start myos', { stdio: 'pipe' });
     s.stop('ok', `Service installed at ${servicePath}`);
-    info('Logs: journalctl --user -u claudeclaw -f');
+    info('Logs: journalctl --user -u myos -f');
   } catch {
     s.stop('warn', 'Could not install automatically');
     info('See README.md for manual systemd setup instructions.');
@@ -1267,12 +1293,12 @@ function setupWindows() {
   warn('Windows detected.');
   console.log();
   info('Option A — WSL2 (recommended):');
-  info('  Install WSL2, clone ClaudeClaw inside the WSL2 filesystem,');
+  info('  Install WSL2, clone MyOS inside the WSL2 filesystem,');
   info('  and re-run setup. Keep ~/.claude/ inside WSL2, not the Windows mount.');
   console.log();
   info('Option B — PM2 (native Windows):');
   console.log(`  ${c.cyan}npm install -g pm2${c.reset}`);
-  console.log(`  ${c.cyan}pm2 start dist/index.js --name claudeclaw${c.reset}`);
+  console.log(`  ${c.cyan}pm2 start dist/index.js --name myos${c.reset}`);
   console.log(`  ${c.cyan}pm2 save${c.reset}`);
   console.log(`  ${c.cyan}pm2 startup${c.reset}  ${c.gray}# follow the instructions it prints${c.reset}`);
 }

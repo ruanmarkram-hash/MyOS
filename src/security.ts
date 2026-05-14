@@ -1,5 +1,5 @@
 /**
- * Security module for ClaudeClaw.
+ * Security module for MyOS.
  *
  * Layers:
  * 1. PIN lock + idle auto-lock: session must be unlocked before commands execute
@@ -132,7 +132,7 @@ export function checkKillPhrase(message: string): boolean {
 
 /**
  * Execute the emergency shutdown.
- * Stops all ClaudeClaw services and force-exits after a brief timeout.
+ * Stops all MyOS services and force-exits after a brief timeout.
  */
 export function executeEmergencyKill(): void {
   logger.warn('EMERGENCY KILL activated');
@@ -142,20 +142,20 @@ export function executeEmergencyKill(): void {
 
   try {
     if (os.platform() === 'darwin') {
-      // Stop all ClaudeClaw launchd services
+      // Stop all MyOS launchd services
       try {
         const output = execSync('launchctl list 2>/dev/null', { encoding: 'utf-8', timeout: 3000 });
         for (const line of output.split('\n')) {
           const cols = line.trim().split(/\s+/);
           const label = cols[cols.length - 1]; // label is the last column
-          if (label && label.startsWith('com.claudeclaw.')) {
+          if (label && (label.startsWith('com.myos.') || label.startsWith('com.claudeclaw.'))) {
             try { execSync(`launchctl stop "${label}"`, { stdio: 'ignore', timeout: 2000 }); } catch { /* ok */ }
           }
         }
       } catch { /* launchctl failed, still exit */ }
     } else if (os.platform() === 'linux') {
       try {
-        execSync('systemctl --user stop "com.claudeclaw.*" 2>/dev/null', { stdio: 'ignore', timeout: 3000 });
+        execSync('systemctl --user stop "com.myos.*" "com.claudeclaw.*" 2>/dev/null', { stdio: 'ignore', timeout: 3000 });
       } catch { /* ok */ }
     }
   } catch { /* don't let anything prevent exit */ }
@@ -214,7 +214,7 @@ export function audit(entry: AuditEntry): void {
 //     the caller passed (SDK auth requires one of them; without one, the
 //     subprocess exits 1).
 //
-// Ported from upstream (earlyaidopters/claudeclaw-os) src/security.ts.
+// Ported from upstream security hardening.
 // Fork additions: drop CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST and any
 // other CLAUDE_CODE_* prefix (except the auth tokens), and drop
 // __CFBundleIdentifier — these matched the bespoke scrub the fork
@@ -309,7 +309,7 @@ const SDK_AUTH_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'] as const;
 
 // Fork-specific: vars that are safe (or required) to pass through
 // despite matching one of the patterns above. Non-secret config only.
-const SDK_KEEP_VARS = ['CLAUDECLAW_AGENT_ID'] as const;
+const SDK_KEEP_VARS = ['MYOS_AGENT_ID', 'CLAUDECLAW_AGENT_ID'] as const;
 
 /**
  * Return a scrubbed env dict suitable for passing to `query({ env, ... })`

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'claudeclaw-pwa-v1';
+const CACHE_NAME = 'myos-pwa-v1';
 const STATIC_ALLOWLIST = [
   '/favicon.svg',
   '/manifest.webmanifest',

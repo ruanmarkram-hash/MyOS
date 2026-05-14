@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.claudeclaw.embedder</string>
+  <string>com.myos.embedder</string>
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/llama-server</string>
@@ -39,8 +39,8 @@
   <key>ThrottleInterval</key>
   <integer>30</integer>
   <key>StandardOutPath</key>
-  <string>/tmp/claudeclaw-embedder.log</string>
+  <string>/tmp/myos-embedder.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/claudeclaw-embedder.err</string>
+  <string>/tmp/myos-embedder.err</string>
 </dict>
 </plist>

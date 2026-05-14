@@ -1,7 +1,7 @@
 ---
 name: google-calendar
 description: Manage your Google Calendar from Claude Code. Create events with Meet links, send invites, check availability.
-allowed-tools: Bash(CLAUDECLAW_DIR=* ~/.venv/bin/python3 ~/.config/calendar/gcal.py *)
+allowed-tools: Bash(MYOS_DIR=* ~/.venv/bin/python3 ~/.config/calendar/gcal.py *)
 ---
 
 # Google Calendar Skill
@@ -12,10 +12,10 @@ Create meetings with Google Meet links, send invites, check availability, and ma
 
 ## Environment
 
-The calendar CLI reads credential paths from environment variables, loaded from ClaudeClaw's `.env` via `CLAUDECLAW_DIR`. Every command MUST use this prefix:
+The calendar CLI reads credential paths from environment variables, loaded from MyOS's `.env` via `MYOS_DIR`. Every command MUST use this prefix:
 
 ```
-CLAUDECLAW_DIR=/path/to/claudeclaw
+MYOS_DIR=/path/to/myos
 ```
 
 Your `.env` should contain:
@@ -32,7 +32,7 @@ If these aren't set, the script falls back to `~/.config/gmail/credentials.json`
 ### List upcoming events
 
 ```bash
-CLAUDECLAW_DIR=/path/to/claudeclaw ~/.venv/bin/python3 ~/.config/calendar/gcal.py list
+MYOS_DIR=/path/to/myos ~/.venv/bin/python3 ~/.config/calendar/gcal.py list
 ```
 
 Returns next 10 events as JSON. Each entry has: `id`, `summary`, `start`, `end`, `attendees`, `meet_link`.
@@ -40,19 +40,19 @@ Returns next 10 events as JSON. Each entry has: `id`, `summary`, `start`, `end`,
 ### List events within N days
 
 ```bash
-CLAUDECLAW_DIR=/path/to/claudeclaw ~/.venv/bin/python3 ~/.config/calendar/gcal.py list --days 7
+MYOS_DIR=/path/to/myos ~/.venv/bin/python3 ~/.config/calendar/gcal.py list --days 7
 ```
 
 ### Get event details
 
 ```bash
-CLAUDECLAW_DIR=/path/to/claudeclaw ~/.venv/bin/python3 ~/.config/calendar/gcal.py get <event_id>
+MYOS_DIR=/path/to/myos ~/.venv/bin/python3 ~/.config/calendar/gcal.py get <event_id>
 ```
 
 ### Create event with Meet link and invites
 
 ```bash
-CLAUDECLAW_DIR=/path/to/claudeclaw ~/.venv/bin/python3 ~/.config/calendar/gcal.py create "Meeting Title" "2026-03-15 10:00" --duration 30 --attendees "person@example.com,other@example.com" --meet
+MYOS_DIR=/path/to/myos ~/.venv/bin/python3 ~/.config/calendar/gcal.py create "Meeting Title" "2026-03-15 10:00" --duration 30 --attendees "person@example.com,other@example.com" --meet
 ```
 
 - `--duration` in minutes (default: 30)
@@ -64,7 +64,7 @@ CLAUDECLAW_DIR=/path/to/claudeclaw ~/.venv/bin/python3 ~/.config/calendar/gcal.p
 ### Update an event
 
 ```bash
-CLAUDECLAW_DIR=/path/to/claudeclaw ~/.venv/bin/python3 ~/.config/calendar/gcal.py update <event_id> --title "New Title" --start "2026-03-16 14:00" --duration 60 --add-attendees "new@example.com" --meet
+MYOS_DIR=/path/to/myos ~/.venv/bin/python3 ~/.config/calendar/gcal.py update <event_id> --title "New Title" --start "2026-03-16 14:00" --duration 60 --add-attendees "new@example.com" --meet
 ```
 
 All flags are optional. Only provided fields are updated. Attendees are notified of changes.
@@ -72,7 +72,7 @@ All flags are optional. Only provided fields are updated. Attendees are notified
 ### Cancel an event
 
 ```bash
-CLAUDECLAW_DIR=/path/to/claudeclaw ~/.venv/bin/python3 ~/.config/calendar/gcal.py cancel <event_id>
+MYOS_DIR=/path/to/myos ~/.venv/bin/python3 ~/.config/calendar/gcal.py cancel <event_id>
 ```
 
 Cancels the event and sends cancellation notices to all attendees.
@@ -80,7 +80,7 @@ Cancels the event and sends cancellation notices to all attendees.
 ### Check free/busy
 
 ```bash
-CLAUDECLAW_DIR=/path/to/claudeclaw ~/.venv/bin/python3 ~/.config/calendar/gcal.py freebusy "2026-03-15 09:00" "2026-03-15 17:00"
+MYOS_DIR=/path/to/myos ~/.venv/bin/python3 ~/.config/calendar/gcal.py freebusy "2026-03-15 09:00" "2026-03-15 17:00"
 ```
 
 Shows busy time slots in the given range. If no conflicts, says "Time range is free."
@@ -88,7 +88,7 @@ Shows busy time slots in the given range. If no conflicts, says "Time range is f
 ### Re-authenticate
 
 ```bash
-CLAUDECLAW_DIR=/path/to/claudeclaw ~/.venv/bin/python3 ~/.config/calendar/gcal.py auth
+MYOS_DIR=/path/to/myos ~/.venv/bin/python3 ~/.config/calendar/gcal.py auth
 ```
 
 ## CRITICAL: Day-of-Week Verification
@@ -144,7 +144,7 @@ The script defaults to **America/New_York**. To change it, edit the `TIMEZONE` c
 Uses the same Google Cloud project as Gmail. If `token.json` is missing:
 
 ```bash
-CLAUDECLAW_DIR=/path/to/claudeclaw ~/.venv/bin/python3 ~/.config/calendar/gcal.py auth
+MYOS_DIR=/path/to/myos ~/.venv/bin/python3 ~/.config/calendar/gcal.py auth
 ```
 
 Browser opens, sign in, approve Calendar access, done.

@@ -2,7 +2,7 @@ import { signal, effect } from '@preact/signals';
 
 export type ThemeName = 'graphite' | 'midnight' | 'crimson';
 
-const STORAGE_KEY = 'claudeclaw.theme';
+const STORAGE_KEY = 'myos.theme';
 
 function loadInitial(): ThemeName {
   try {

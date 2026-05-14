@@ -1,6 +1,6 @@
 #!/bin/bash
 # Wrapper for scripts/monitor-brain.mjs — pipes output to log, alerts on critical.
-# Called every 6h by launchd (com.claudeclaw.brain-monitor.plist).
+# Called every 6h by launchd (com.myos.brain-monitor.plist).
 
 set -uo pipefail
 cd /Users/sc/HQ

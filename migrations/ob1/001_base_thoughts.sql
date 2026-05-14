@@ -1,4 +1,4 @@
--- ClaudeClaw / OB1 Brain — base schema (PATCHED for VECTOR(1536) + Gemini)
+-- MyOS / OB1 Brain — base schema (PATCHED for VECTOR(1536) + Gemini)
 -- Source: vendor/ob1/docs/01-getting-started.md steps 2.2 through 2.6
 -- Idempotent. Safe to re-run.
 

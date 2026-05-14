@@ -163,12 +163,12 @@ describe('mission manifest routing', () => {
       status: 'completed',
       title: 'Missing deliverable',
       prompt: 'produce a file',
-      result: 'Deliverable: /tmp/claudeclaw-missing-contract-file.pdf\nReady for review.',
+      result: 'Deliverable: /tmp/myos-missing-contract-file.pdf\nReady for review.',
     });
 
     expect(manifest.route).toBe('needs_triage');
     expect(manifest.nextAction).toBe('Fix or provide the missing deliverable path.');
-    expect(manifest.blockers).toContain('Deliverable file not found: /tmp/claudeclaw-missing-contract-file.pdf');
+    expect(manifest.blockers).toContain('Deliverable file not found: /tmp/myos-missing-contract-file.pdf');
     expect(manifest.deliverables[0]).toMatchObject({ kind: 'file', exists: false });
   });
 
@@ -176,7 +176,7 @@ describe('mission manifest routing', () => {
     const manifest = buildMissionManifest({
       status: 'completed',
       title: 'Prompt path only',
-      prompt: 'Create /tmp/claudeclaw-prompt-only-deliverable.pdf if needed.',
+      prompt: 'Create /tmp/myos-prompt-only-deliverable.pdf if needed.',
       result: 'Completed cleanly. No deliverable and no human action required.',
     });
 

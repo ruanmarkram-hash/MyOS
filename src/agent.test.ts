@@ -3,8 +3,8 @@ import fs from 'fs';
 import { AgentError } from './errors.js';
 
 const testPaths = vi.hoisted(() => ({
-  projectRoot: '/tmp/claudeclaw-agent-test',
-  home: '/tmp/claudeclaw-agent-home',
+  projectRoot: '/tmp/myos-agent-test',
+  home: '/tmp/myos-agent-home',
 }));
 
 // Mock the SDK query function before importing agent
