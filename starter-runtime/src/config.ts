@@ -1,5 +1,6 @@
 import os from 'os';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 import { readEnvFile } from './env.js';
@@ -41,10 +42,24 @@ const envConfig = readEnvFile([
   'PIPELINE_SUPABASE_SERVICE_ROLE_KEY',
   'PIPELINE_WEBHOOK_URL',
   'PIPELINE_ENABLED',
+  'LLM_PROVIDER',
+  'CODEX_HAIKU_MODEL',
+  'CODEX_SONNET_MODEL',
+  'CODEX_OPUS_MODEL',
   'BRAIN',
   'OB1_SUPABASE_URL',
   'MCP_ACCESS_KEY',
+  'OB1_SUPABASE_ANON_KEY',
+  'OB1_SUPABASE_SERVICE_KEY',
+  'OB1_SUPABASE_SERVICE_ROLE_KEY',
   'OB1_BRAIN_FUNCTION',
+  'OB1_GRAPH_FUNCTION',
+  'EMBEDDING_PROVIDER',
+  'EMBEDDING_MODEL',
+  'LLAMACPP_EMBEDDING_URL',
+  'LLAMACPP_EMBEDDING_MODEL',
+  'LOCAL_EMBEDDING_MODEL_PATH',
+  'MISSION_CONTROL_V2',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -54,6 +69,7 @@ export let activeBotToken =
   process.env.TELEGRAM_BOT_TOKEN || envConfig.TELEGRAM_BOT_TOKEN || '';
 export let agentCwd: string | undefined; // undefined = use PROJECT_ROOT
 export let agentDefaultModel: string | undefined; // from agent.yaml
+export let agentProviderOverride: string | undefined; // from agent.yaml provider
 export let agentObsidianConfig: { vault: string; folders: string[]; readOnly?: string[] } | undefined;
 export let agentSystemPrompt: string | undefined; // loaded from agents/{id}/CLAUDE.md
 export let agentMcpAllowlist: string[] | undefined; // from agent.yaml mcp_servers
@@ -63,6 +79,7 @@ export function setAgentOverrides(opts: {
   botToken: string;
   cwd: string;
   model?: string;
+  provider?: string;
   obsidian?: { vault: string; folders: string[]; readOnly?: string[] };
   systemPrompt?: string;
   mcpServers?: string[];
@@ -71,9 +88,20 @@ export function setAgentOverrides(opts: {
   activeBotToken = opts.botToken;
   agentCwd = opts.cwd;
   agentDefaultModel = opts.model;
+  agentProviderOverride = opts.provider;
   agentObsidianConfig = opts.obsidian;
   agentSystemPrompt = opts.systemPrompt;
   agentMcpAllowlist = opts.mcpServers;
+}
+
+/**
+ * Hot-reload entry point: refresh ONLY the in-memory CLAUDE.md system prompt
+ * without disturbing botToken / cwd / model / mcp overrides. Called by the
+ * dashboard's agent-files editor after a successful atomic write so a brand-
+ * new session (no SDK resume) immediately picks up the new rules.
+ */
+export function setAgentSystemPrompt(newPrompt: string | undefined): void {
+  agentSystemPrompt = newPrompt;
 }
 
 export const TELEGRAM_BOT_TOKEN =
@@ -125,6 +153,13 @@ const rawConfigDir =
  */
 export const CLAUDECLAW_CONFIG = expandHome(rawConfigDir);
 
+/** Active main CLAUDE.md path, matching startup's external-config preference. */
+export function resolveMainClaudeMdPath(): string {
+  const externalPath = path.join(CLAUDECLAW_CONFIG, 'CLAUDE.md');
+  if (fs.existsSync(externalPath)) return externalPath;
+  return path.join(PROJECT_ROOT, 'CLAUDE.md');
+}
+
 // Telegram limits
 export const MAX_MESSAGE_LENGTH = 4096;
 
@@ -168,6 +203,15 @@ export const DASHBOARD_TOKEN =
 export const DASHBOARD_URL =
   process.env.DASHBOARD_URL || envConfig.DASHBOARD_URL || '';
 
+// Mission Control v2 (React/Vite) router shim.
+//   0 (default) — legacy single-file dashboard served at `/`,
+//                 v2 (if built) reachable at `/v2` for cutover smoke-tests.
+//   1           — v2 React app served at `/`, legacy reachable at `/legacy`.
+// Either way, both UIs are reachable as long as `dist/web/` exists
+// (produced by the root `npm run build` postbuild step that builds web/).
+export const MISSION_CONTROL_V2 =
+  (process.env.MISSION_CONTROL_V2 ?? envConfig.MISSION_CONTROL_V2 ?? '0') === '1';
+
 // Database encryption key (SQLCipher). Required for encrypted database access.
 export const DB_ENCRYPTION_KEY =
   process.env.DB_ENCRYPTION_KEY || envConfig.DB_ENCRYPTION_KEY || '';
@@ -175,6 +219,31 @@ export const DB_ENCRYPTION_KEY =
 // Google API key for Gemini (memory extraction + consolidation)
 export const GOOGLE_API_KEY =
   process.env.GOOGLE_API_KEY || envConfig.GOOGLE_API_KEY || '';
+
+// Embeddings. Gemini remains the default cloud provider. llama.cpp is
+// available through its OpenAI-compatible /v1/embeddings endpoint.
+export type EmbeddingProvider = 'gemini' | 'llamacpp';
+export const EMBEDDING_PROVIDER =
+  ((process.env.EMBEDDING_PROVIDER || envConfig.EMBEDDING_PROVIDER || 'gemini').toLowerCase() as EmbeddingProvider);
+export const EMBEDDING_MODEL =
+  process.env.EMBEDDING_MODEL || envConfig.EMBEDDING_MODEL || 'gemini-embedding-001';
+export const LLAMACPP_EMBEDDING_URL =
+  process.env.LLAMACPP_EMBEDDING_URL || envConfig.LLAMACPP_EMBEDDING_URL || 'http://127.0.0.1:8081/v1/embeddings';
+export const LLAMACPP_EMBEDDING_MODEL =
+  process.env.LLAMACPP_EMBEDDING_MODEL || envConfig.LLAMACPP_EMBEDDING_MODEL || 'bge-m3';
+export const LOCAL_EMBEDDING_MODEL_PATH =
+  process.env.LOCAL_EMBEDDING_MODEL_PATH || envConfig.LOCAL_EMBEDDING_MODEL_PATH || '';
+
+// LLM provider for agent execution. Claude remains the production default.
+export const LLM_PROVIDER =
+  process.env.LLM_PROVIDER || envConfig.LLM_PROVIDER || 'claude';
+
+export const CODEX_HAIKU_MODEL =
+  process.env.CODEX_HAIKU_MODEL || envConfig.CODEX_HAIKU_MODEL || 'gpt-5.4-nano';
+export const CODEX_SONNET_MODEL =
+  process.env.CODEX_SONNET_MODEL || envConfig.CODEX_SONNET_MODEL || 'gpt-5.4';
+export const CODEX_OPUS_MODEL =
+  process.env.CODEX_OPUS_MODEL || envConfig.CODEX_OPUS_MODEL || 'gpt-5.5';
 
 // ── Brain backend ────────────────────────────────────────────────────
 // BRAIN=sqlite (default, legacy path) | BRAIN=ob1 (Supabase + pgvector via OB1 MCP)
@@ -186,9 +255,21 @@ export const OB1_SUPABASE_URL =
   process.env.OB1_SUPABASE_URL || envConfig.OB1_SUPABASE_URL || '';
 export const MCP_ACCESS_KEY =
   process.env.MCP_ACCESS_KEY || envConfig.MCP_ACCESS_KEY || '';
+export const OB1_SUPABASE_ANON_KEY =
+  process.env.OB1_SUPABASE_ANON_KEY || envConfig.OB1_SUPABASE_ANON_KEY || '';
+export const OB1_SUPABASE_SERVICE_KEY =
+  process.env.OB1_SUPABASE_SERVICE_KEY
+  || process.env.OB1_SUPABASE_SERVICE_ROLE_KEY
+  || process.env.SUPABASE_SERVICE_ROLE_KEY
+  || envConfig.OB1_SUPABASE_SERVICE_KEY
+  || envConfig.OB1_SUPABASE_SERVICE_ROLE_KEY
+  || envConfig.SUPABASE_SERVICE_ROLE_KEY
+  || '';
 // Edge function name. Default matches Phase 2 deployment.
 export const OB1_BRAIN_FUNCTION =
   process.env.OB1_BRAIN_FUNCTION || envConfig.OB1_BRAIN_FUNCTION || 'brain-mcp';
+export const OB1_GRAPH_FUNCTION =
+  process.env.OB1_GRAPH_FUNCTION || envConfig.OB1_GRAPH_FUNCTION || 'ob-graph-mcp';
 
 // Streaming strategy for progressive Telegram updates.
 // 'global-throttle' (default): edits a placeholder message with streamed text,
@@ -274,3 +355,23 @@ export const WARROOM_PORT = parseInt(
   10,
 );
 
+// ── Staff-intake pipeline (custom workflow) ───────────────────────────────
+// When PIPELINE_ENABLED=true, the bot intercepts Telegram replies to
+// custom assistant pipeline deliverable pings (human gates) and forwards the
+// resolution to pipeline-webhook. Requires Supabase URL + service role
+// key so the bot can match telegram_message_id to an open gate and POST
+// the manual path with bearer auth.
+//
+// URL-button taps (inline_keyboard with url=...) do not touch the bot
+// runtime at all; they hit pipeline-webhook directly in the browser.
+// This handler covers the text-reply path only.
+export const PIPELINE_ENABLED =
+  (process.env.PIPELINE_ENABLED || envConfig.PIPELINE_ENABLED || 'false').toLowerCase() === 'true';
+export const PIPELINE_SUPABASE_URL =
+  process.env.PIPELINE_SUPABASE_URL || envConfig.PIPELINE_SUPABASE_URL || '';
+export const PIPELINE_SUPABASE_SERVICE_ROLE_KEY =
+  process.env.PIPELINE_SUPABASE_SERVICE_ROLE_KEY ||
+  envConfig.PIPELINE_SUPABASE_SERVICE_ROLE_KEY ||
+  '';
+export const PIPELINE_WEBHOOK_URL =
+  process.env.PIPELINE_WEBHOOK_URL || envConfig.PIPELINE_WEBHOOK_URL || '';

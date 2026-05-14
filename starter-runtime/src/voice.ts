@@ -4,20 +4,17 @@ import https from 'https';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-
 import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
-
-const execFileAsync = promisify(execFile);
+import { safeExecFileAsync } from './safe-spawn.js';
 
 // Cache ffmpeg availability check (only needs to run once)
 let _ffmpegAvailable: boolean | null = null;
 async function hasFfmpeg(): Promise<boolean> {
   if (_ffmpegAvailable !== null) return _ffmpegAvailable;
   try {
-    await execFileAsync('ffmpeg', ['-version']);
+    // ffmpeg version probe. System tool, no agent-controlled args.
+    await safeExecFileAsync('ffmpeg', ['-version'], { envClass: 'system-tool' });
     _ffmpegAvailable = true;
   } catch {
     _ffmpegAvailable = false;
@@ -236,16 +233,16 @@ async function transcribeAudioLocal(filePath: string): Promise<string> {
 
   // whisper-cpp needs WAV input — convert from ogg/mp3/etc.
   const wavPath = filePath.replace(/\.[^.]+$/, '.wav');
-  await execFileAsync('ffmpeg', ['-i', filePath, '-ar', '16000', '-ac', '1', '-y', wavPath]);
+  await safeExecFileAsync('ffmpeg', ['-i', filePath, '-ar', '16000', '-ac', '1', '-y', wavPath], { envClass: 'system-tool' });
 
   try {
-    const { stdout } = await execFileAsync(whisperPath, [
+    const { stdout } = await safeExecFileAsync(whisperPath, [
       '-m', modelPath,
       '-f', wavPath,
       '--output-json',
       '--no-timestamps',
       '-l', 'auto',
-    ]);
+    ], { envClass: 'system-tool' });
     const result = JSON.parse(stdout);
     return (result.transcription || []).map((s: { text: string }) => s.text).join(' ').trim();
   } finally {
@@ -419,14 +416,14 @@ export async function synthesizeSpeechLocal(text: string): Promise<Buffer> {
   const oggPath = path.join(tmpDir, `tts_${id}.ogg`);
 
   try {
-    await execFileAsync('/usr/bin/say', ['-v', voice, '-o', aiffPath, text]);
-    await execFileAsync('ffmpeg', [
+    await safeExecFileAsync('/usr/bin/say', ['-v', voice, '-o', aiffPath, text], { envClass: 'system-tool' });
+    await safeExecFileAsync('ffmpeg', [
       '-i', aiffPath,
       '-c:a', 'libopus',
       '-b:a', '48k',
       '-y',
       oggPath,
-    ]);
+    ], { envClass: 'system-tool' });
     return fs.readFileSync(oggPath);
   } finally {
     try { fs.unlinkSync(aiffPath); } catch { /* ignore */ }

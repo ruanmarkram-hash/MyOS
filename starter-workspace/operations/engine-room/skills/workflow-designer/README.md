@@ -7,17 +7,17 @@
 Generate a standardized workflow brief in 10-15 minutes:
 
 ```bash
-cd ~/workspace
-python skills/workflow-designer/scripts/workflow-design.py \
+cd /Users/sagecos1/workspace
+python skills/workflow-designer/scripts/sage-workflow-design.py \
   --type compliance \
   --name "quarterly-internal-audit" \
-  --path ~/workspace/<example-project>/compliance/<example-audit>
+  --path /Users/sagecos1/workspace/sonke-support/compliance/Quarterly\ Internal\ Audit
 ```
 
 Or start interactive mode:
 
 ```bash
-python skills/workflow-designer/scripts/workflow-design.py
+python skills/workflow-designer/scripts/sage-workflow-design.py
 ```
 
 Output: `[workflow-path]/brief.md`
@@ -36,7 +36,7 @@ Transforms your workflow requirements into a **standardized, executable brief** 
 ## Files in This Skill
 
 - **SKILL.md** — Full skill documentation (read this first)
-- **scripts/workflow-design.py** — Interactive brief generator
+- **scripts/sage-workflow-design.py** — Interactive brief generator
 - **README.md** — This file
 
 ---
@@ -46,7 +46,7 @@ Transforms your workflow requirements into a **standardized, executable brief** 
 | Type | Use For | Examples |
 |------|---------|----------|
 | **compliance** | Audits, gap assessments, policy reviews | Quarterly Internal Audit, Policy Gap Assessment |
-| **incident** | Incident investigations, root cause analysis, regulatory reporting determination | Critical Incident Assessment, Escalation Decision |
+| **incident** | Incident investigations, root cause analysis, RCS determination | Critical Incident Assessment, Escalation Decision |
 | **recruitment** | Onboarding, screening, probation reviews | New Worker Onboarding, Probation Review |
 | **reconciliation** | Financial reconciliation, data sync, verification | Monthly Reconciliation, Invoice Matching |
 | **research** | Market analysis, competitive intelligence, discovery | Market Analysis, Trend Research |
@@ -60,7 +60,7 @@ Transforms your workflow requirements into a **standardized, executable brief** 
 ## Key Features
 
 ✅ **Adaptive questions** — Asks only questions relevant to your workflow type  
-✅ **Resource discovery** — Your agent finds exact file paths for data/documents  
+✅ **Resource discovery** — Sage finds exact file paths for data/documents  
 ✅ **One-page briefs** — Concise, readable, ready to hand to an executor  
 ✅ **Workspace-aware** — Generates briefs in workflow folders with correct structure  
 ✅ **Scalable** — Same skill for compliance audits, incident assessments, recruiting, research, code sprints  
@@ -86,7 +86,7 @@ Every generated brief contains these sections:
 
 **Command:**
 ```bash
-python skills/workflow-designer/scripts/workflow-design.py \
+python skills/workflow-designer/scripts/sage-workflow-design.py \
   --type compliance \
   --name "quarterly-internal-audit"
 ```
@@ -94,19 +94,19 @@ python skills/workflow-designer/scripts/workflow-design.py \
 **Questions Asked:**
 1. Workflow name? → "Quarterly Internal Audit"
 2. Workflow type? → "Compliance Audit"
-3. Objective? → "Identify gaps in work practices vs. the user's industry legislative requirements"
+3. Objective? → "Identify gaps in work practices vs. relevant legislative requirements"
 4. Context? → "Quarterly audits ensure compliance and catch process gaps early"
 5. In scope? → Work practices, staff induction, incident reporting, policies
 6. Out of scope? → Financial controls, facility management
 7. Success criteria? → "5-10 gaps listed, grouped by severity, with evidence + fixes"
 8. Output format? → "Word doc"
-9. Where? → "/<example-domain>/compliance/audit-reports/Q1-2026-findings.docx"
+9. Where? → "/sonke-support/compliance/audit-reports/Q1-2026-findings.docx"
 10. Audience? → "Leadership + regulatory auditors"
 ... (continues with resources, blockers, timeline)
 
 **Output:**
 ```
-~/workspace/<example-project>/compliance/<example-audit>/brief.md
+/Users/sagecos1/workspace/sonke-support/compliance/Quarterly Internal Audit/brief.md
 ```
 
 Ready for an agent to execute.
@@ -123,7 +123,7 @@ Ready for an agent to execute.
 
 3. **Clarify decision authority.** "Agent decides + acts" vs. "Agent surfaces findings + you decide" are different workflows.
 
-4. **Resource pointers are critical.** The executor shouldn't hunt for documents. Let your agent find exact paths.
+4. **Resource pointers are critical.** The executor shouldn't hunt for documents. Let Sage find exact paths.
 
 5. **Flag edge cases.** "Sharepoint doc might be stale" beats discovering it mid-execution.
 
@@ -150,7 +150,7 @@ Ready for an agent to execute.
 ### Compliance Audits
 
 **Additional questions:**
-- Regulatory framework? (the user's industry, GDPR, HIPAA, etc.)
+- Regulatory framework? (regulatory framework, privacy law, safety standards, etc.)
 - Policy document age? (Are docs current?)
 
 **Output typically:** Word doc, shared with leadership + regulators
@@ -159,7 +159,7 @@ Ready for an agent to execute.
 
 **Additional questions:**
 - Root cause framework? (5-Whys, Timeline-Based, Process Failure, etc.)
-- Is this reportable? (Does it trigger a regulatory notification obligation?)
+- Is this reportable? (Does it trigger RCS notification?)
 
 **Output typically:** Incident report, decision memo, action plan
 
@@ -195,7 +195,7 @@ Ready for an agent to execute.
 - A: This is normal. Answer with 5+ specific, testable outcomes. Skill will prompt for specificity.
 
 **Q: I don't know the answer to a question**
-- A: Skip it (skill will note TBD). Edit brief.md manually afterward or ask your agent for help.
+- A: Skip it (skill will note TBD). Edit brief.md manually afterward or ask Sage for help.
 
 ---
 
@@ -216,7 +216,7 @@ skills/workflow-designer/
 ├── SKILL.md                          (Full documentation)
 ├── README.md                         (This file)
 └── scripts/
-    └── workflow-design.py       (Interactive script)
+    └── sage-workflow-design.py       (Interactive script)
 ```
 
 Generated briefs land in:
@@ -225,9 +225,9 @@ Generated briefs land in:
 ```
 
 Examples:
-- `<example-project>/compliance/<example-audit>/brief.md`
-- `<example-domain>/incident-management/Critical Incident Assessment/brief.md`
-- `projects/<your-project>/sprints/[sprint-name]/brief.md`
+- `sonke-support/compliance/Quarterly Internal Audit/brief.md`
+- `sonke-support/incident-management/Critical Incident Assessment/brief.md`
+- `projects/sonke-hub/sprints/[sprint-name]/brief.md`
 
 ---
 
@@ -239,4 +239,4 @@ Examples:
 
 ## Questions?
 
-Ask your agent. This skill is designed to scale across the workspace, so feedback on the question flow, output format, and resource discovery is valuable for iteration.
+Ask Sage. This skill is designed to scale across the workspace, so feedback on the question flow, output format, and resource discovery is valuable for iteration.

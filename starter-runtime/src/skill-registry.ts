@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { logger } from './logger.js';
 
@@ -17,6 +18,11 @@ export interface SkillMeta {
 // ── Internal state ──────────────────────────────────────────────────
 
 const skills: Map<string, SkillMeta> = new Map();
+
+export interface SkillRegistryScanDirs {
+  projectSkillsDir?: string;
+  globalSkillsDir?: string;
+}
 
 // ── Frontmatter parsing ─────────────────────────────────────────────
 
@@ -196,19 +202,18 @@ function scanDirectory(dir: string): void {
  * Scan skills/ (relative to project root) and ~/.claude/skills/ to
  * populate the registry. Safe to call multiple times; clears previous state.
  */
-export function initSkillRegistry(): void {
+export function initSkillRegistry(scanDirs: SkillRegistryScanDirs = {}): void {
   skills.clear();
 
-  // Find project root by walking up from this file looking for CLAUDE.md
-  let projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   // Fallback: look for CLAUDE.md to confirm
   if (!fs.existsSync(path.join(projectRoot, 'CLAUDE.md'))) {
     // Already at a reasonable default, just continue
     logger.debug({ projectRoot }, 'CLAUDE.md not found at expected project root');
   }
 
-  const projectSkillsDir = path.join(projectRoot, 'skills');
-  const globalSkillsDir = path.join(os.homedir(), '.claude', 'skills');
+  const projectSkillsDir = scanDirs.projectSkillsDir ?? path.join(projectRoot, 'skills');
+  const globalSkillsDir = scanDirs.globalSkillsDir ?? path.join(os.homedir(), '.claude', 'skills');
 
   // Scan project skills first (they take priority)
   scanDirectory(projectSkillsDir);

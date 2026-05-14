@@ -3,7 +3,7 @@ import path from 'path';
 import os from 'os';
 import { Api, Bot, Context, InputFile, RawApi } from 'grammy';
 
-import { runAgent, runAgentWithRetry, UsageInfo, AgentProgressEvent } from './agent.js';
+import { runAgent, runAgentWithRetry, UsageInfo, AgentProgressEvent, getActiveProviderName } from './agent.js';
 import { AgentError } from './errors.js';
 import {
   AGENT_ID,
@@ -30,7 +30,7 @@ import {
   HOURLY_TOKEN_BUDGET,
   PROJECT_ROOT,
 } from './config.js';
-import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage, saveCompactionEvent, getCompactionCount } from './db.js';
+import { clearAllSessions, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage, saveCompactionEvent, getCompactionCount, getOutboxStats } from './db.js';
 import { logger } from './logger.js';
 import { downloadMedia, buildPhotoMessage, buildDocumentMessage, buildVideoMessage } from './media.js';
 import { buildMemoryContext, evaluateMemoryRelevance, saveConversationTurn, shouldNudgeMemory, MEMORY_NUDGE_TEXT } from './memory.js';
@@ -38,8 +38,17 @@ import { classifyMessageComplexity } from './message-classifier.js';
 import { scanForSecrets, redactSecrets } from './exfiltration-guard.js';
 import { trackUsage, getRateStatus } from './rate-tracker.js';
 import { buildCostFooter } from './cost-footer.js';
+import { resolveModelForProvider } from './model-router.js';
 import { setHighImportanceCallback } from './memory-ingest.js';
 import { messageQueue } from './message-queue.js';
+import {
+  RUNTIME_BUILD_META,
+  RUNTIME_STARTED_AT,
+  checkStale,
+  shortSha,
+  formatRelative,
+  formatUptime,
+} from './build-meta.js';
 import { parseDelegation, delegateToAgent, getAvailableAgents } from './orchestrator.js';
 import { emitChatEvent, setProcessing, setActiveAbort, abortActiveQuery } from './state.js';
 import {
@@ -53,6 +62,12 @@ import {
   getSecurityStatus,
   audit,
 } from './security.js';
+import {
+  handlePipelineReply,
+  handlePipelineCallback,
+  parsePipelineCallback,
+} from './pipeline-handler.js';
+
 // ── Streaming rate limiter ───────────────────────────────────────────
 const globalStreamLastEdit = new Map<string, number>();
 const GLOBAL_STREAM_INTERVAL_MS = 2500;
@@ -113,6 +128,8 @@ import {
 } from './voice.js';
 import { getSlackConversations, getSlackMessages, sendSlackMessage, SlackConversation } from './slack.js';
 import { getWaChats, getWaChatMessages, sendWhatsAppMessage, WaChat } from './whatsapp.js';
+import { enqueueTelegramSend } from './telegram-outbox.js';
+import { createProgressPulse, readProgressPulseDefaults } from './progress-pulse.js';
 
 // Per-chat voice mode toggle (in-memory, resets on restart)
 const voiceEnabledChats = new Set<string>();
@@ -126,10 +143,13 @@ const AVAILABLE_MODELS: Record<string, string> = {
   sonnet: 'claude-sonnet-4-5',
   haiku: 'claude-haiku-4-5',
 };
-const DEFAULT_MODEL_LABEL = 'opus';
-
 export function setMainModelOverride(model: string): void {
   if (ALLOWED_CHAT_ID) chatModelOverride.set(ALLOWED_CHAT_ID, model);
+}
+
+export function getMainModelOverride(): string | undefined {
+  if (!ALLOWED_CHAT_ID) return undefined;
+  return chatModelOverride.get(ALLOWED_CHAT_ID);
 }
 
 // WhatsApp state per Telegram chat
@@ -452,6 +472,10 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: response, source: 'telegram' });
 
       for (const part of splitMessage(formatForTelegram(`${header}\n\n${response}`))) {
+        // OUTBOX-EXEMPT: in-band reply during user message handling.
+        // ctx.reply preserves the reply-to threading and is awaited so
+        // the message-queue serialises correctly. The outbox is for
+        // background sends; foreign-function-call style stays direct.
         await ctx.reply(part, { parse_mode: 'HTML' });
       }
     } catch (err) {
@@ -465,12 +489,12 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
   }
 
   // Fetch session first: if resuming, the model already has the system prompt in context.
-  const sessionId = getSession(chatIdStr, AGENT_ID);
+  const activeProvider = getActiveProviderName();
+  const sessionId = getSession(chatIdStr, AGENT_ID, activeProvider);
 
   // Build memory context and prepend to message
   const { contextText: memCtx, surfacedMemoryIds, surfacedMemorySummaries } = await buildMemoryContext(chatIdStr, message, AGENT_ID);
   const parts: string[] = [];
-  if (agentSystemPrompt && !sessionId) parts.push(`[Agent role — follow these instructions]\n${agentSystemPrompt}\n[End agent role]`);
   if (memCtx) parts.push(memCtx);
 
   // Inject recent scheduled task outputs so the user can reply to them naturally.
@@ -507,32 +531,47 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
 
   setProcessing(chatIdStr, true);
 
+  // Codex HIGH #1: pulse holds an internal setInterval. Whoever creates
+  // it owns the dispose. handleMessage is the owner; the outer finally
+  // calls pulse.dispose() so we never leak timers across requests.
+  // Declared in the outer scope so it's visible in the finally block.
+  let pulse: ReturnType<typeof createProgressPulse> | null = null;
+
   try {
-    // Progress callback: surface agent activity to Telegram + SSE.
-    // Tool activity is throttled to one Telegram update per 30s to avoid spam.
-    let lastToolNotifyTime = 0;
-    let lastToolDesc = '';
-    const TOOL_NOTIFY_INTERVAL_MS = 30_000;
+    // Progress callback: surface agent activity to the dashboard SSE
+    // bus. Telegram surface stays muted for tool activity (locked
+    // 2026-05-04 — descriptions are raw shell commands and bloat the
+    // chat). The progress-pulse adds a coalesced "agent still alive"
+    // heartbeat so the dashboard / streaming-off sessions don't go dark
+    // between user-visible events. Defaults: every 8 tool calls or 45s,
+    // whichever first; both env-tunable.
+    const pulseDefaults = readProgressPulseDefaults();
+    pulse = createProgressPulse({
+      everyNTools: pulseDefaults.everyNTools,
+      everyMs: pulseDefaults.everyMs,
+      emit: (description) => emitChatEvent({ type: 'progress', chatId: chatIdStr, description }),
+    });
 
     const onProgress = (event: AgentProgressEvent) => {
       if (event.type === 'task_started') {
+        // Subagent task lifecycle stays on the dashboard but is NOT
+        // mirrored to Telegram — same lock as tool_active. Counts as a
+        // user-visible event (the dashboard renders it) so the pulse
+        // window resets.
         emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
-        void ctx.reply(`🔄 ${event.description}`).catch(() => {});
+        pulse?.onUserVisibleEvent();
       } else if (event.type === 'task_completed') {
         emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
-        void ctx.reply(`✓ ${event.description}`).catch(() => {});
+        pulse?.onUserVisibleEvent();
       } else if (event.type === 'tool_active') {
+        // Per-tool dashboard event preserved so the activity panel
+        // shows what's actually running. The pulse below ALSO fires
+        // periodically with a coalesced summary — useful for the
+        // streaming-off case where the activity panel may not be
+        // visible (mobile dashboard, SSE consumer that only listens
+        // for pulses, etc.).
         emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
-        lastToolDesc = event.description;
-        // Only send tool notifications to Telegram if streaming is off.
-        // When streaming is active, the live text updates already show progress.
-        if (!streamingEnabled) {
-          const now = Date.now();
-          if (now - lastToolNotifyTime >= TOOL_NOTIFY_INTERVAL_MS) {
-            lastToolNotifyTime = now;
-            void ctx.reply(`⚙️ ${event.description}...`).catch(() => {});
-          }
-        }
+        pulse?.onTool(event.description);
       }
     };
 
@@ -565,6 +604,9 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
 
       globalStreamLastEdit.set(chatIdStr, now);
       lastEditLength = accumulated.length;
+      // The user just saw fresh content — reset the pulse window so
+      // the heartbeat doesn't fire redundantly right after.
+      pulse?.onUserVisibleEvent();
 
       if (!streamMsgId) {
         void ctx.reply(displayText).then((sent) => {
@@ -588,6 +630,8 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       },
       MODEL_FALLBACK_CHAIN.length > 0 ? MODEL_FALLBACK_CHAIN : undefined,
       agentMcpAllowlist,
+      undefined,
+      agentSystemPrompt,
     );
 
     clearTimeout(timeoutId);
@@ -611,7 +655,7 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     }
 
     if (result.newSessionId) {
-      setSession(chatIdStr, result.newSessionId, AGENT_ID);
+      setSession(chatIdStr, result.newSessionId, AGENT_ID, activeProvider);
       logger.info({ newSessionId: result.newSessionId }, 'Session saved');
     }
 
@@ -636,7 +680,8 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     const { text: responseText, files: fileMarkers } = extractFileMarkers(rawResponse);
 
     // Add cost footer
-    const costFooter = buildCostFooter(SHOW_COST_FOOTER, result.usage, effectiveModel);
+    const footerModel = resolveModelForProvider(activeProvider, effectiveModel);
+    const costFooter = buildCostFooter(SHOW_COST_FOOTER, result.usage, footerModel);
 
     // Save conversation turn to memory (including full log).
     // Skip logging for synthetic messages like /respin to avoid self-referential growth.
@@ -659,6 +704,9 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
           continue;
         }
         const input = new InputFile(file.filePath);
+        // OUTBOX-EXEMPT: file/photo uploads use grammY's InputFile stream
+        // which can't be JSON-serialised into the outbox payload. These
+        // are also in-band replies during user message handling.
         if (file.type === 'photo') {
           await ctx.replyWithPhoto(input, file.caption ? { caption: file.caption } : undefined);
         } else {
@@ -772,6 +820,11 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       logger.error({ err }, 'Agent error (unclassified)');
       await ctx.reply('Something went wrong. Check the logs and try again.');
     }
+  } finally {
+    // Codex HIGH #1: tear down the progress-pulse interval timer when
+    // the request finishes. Without this, every handleMessage call leaks
+    // an unref'd setInterval for the life of the process.
+    pulse?.dispose();
   }
 }
 
@@ -852,7 +905,7 @@ export function createBot(): Bot {
   if (ALLOWED_CHAT_ID) {
     setHighImportanceCallback((memoryId, summary, importance) => {
       const msg = `🧠 New memory #${memoryId} [${importance.toFixed(1)}]: ${summary.slice(0, 200)}\n\n/pin ${memoryId} to make permanent`;
-      bot.api.sendMessage(ALLOWED_CHAT_ID, msg).catch(() => {});
+      enqueueTelegramSend({ agentId: AGENT_ID, chatId: ALLOWED_CHAT_ID, method: 'sendMessage', params: { text: msg } });
     });
   }
 
@@ -927,7 +980,8 @@ export function createBot(): Bot {
   bot.command('newchat', async (ctx) => {
     if (await replyIfLocked(ctx)) return;
     const chatIdStr = ctx.chat!.id.toString();
-    const oldSessionId = getSession(chatIdStr, AGENT_ID);
+    const activeProvider = getActiveProviderName();
+    const oldSessionId = getSession(chatIdStr, AGENT_ID, activeProvider);
 
     // Auto-commit session summary to hive mind (async, don't block the user)
     if (oldSessionId) {
@@ -951,6 +1005,10 @@ export function createBot(): Bot {
             undefined,
             undefined,
             summaryAbort,
+            undefined,
+            undefined,
+            undefined,
+            agentSystemPrompt,
           );
           clearTimeout(summaryTimer);
 
@@ -973,7 +1031,7 @@ export function createBot(): Bot {
       })();
     }
 
-    clearSession(chatIdStr, AGENT_ID);
+    clearAllSessions(chatIdStr, AGENT_ID);
     sessionBaseline.delete(chatIdStr);
     await ctx.reply('Session cleared. Starting fresh.');
     logger.info({ chatId: ctx.chat!.id }, 'Session cleared by user');
@@ -1031,31 +1089,45 @@ export function createBot(): Bot {
     if (await replyIfLocked(ctx)) return;
     const chatIdStr = ctx.chat!.id.toString();
     const arg = ctx.match?.trim().toLowerCase();
+    const activeProvider = getActiveProviderName();
+    const configuredDefaultModel = agentDefaultModel ?? 'claude-opus-4-7';
+    const formatRuntimeModel = (configured: string): string => {
+      const resolved = resolveModelForProvider(activeProvider, configured) || configured;
+      return resolved === configured
+        ? `${resolved} via ${activeProvider}`
+        : `${resolved} via ${activeProvider} (configured tier: ${configured})`;
+    };
+    const codexModels = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2'];
 
     if (!arg) {
-      const current = chatModelOverride.get(chatIdStr);
-      const currentLabel = current
-        ? Object.entries(AVAILABLE_MODELS).find(([, v]) => v === current)?.[0] ?? current
-        : DEFAULT_MODEL_LABEL + ' (default)';
-      const models = Object.keys(AVAILABLE_MODELS).join(', ');
+      const current = chatModelOverride.get(chatIdStr) ?? configuredDefaultModel;
+      const currentLabel = chatModelOverride.has(chatIdStr)
+        ? formatRuntimeModel(current)
+        : `${formatRuntimeModel(current)} (default)`;
+      const models = activeProvider === 'codex'
+        ? `${Object.keys(AVAILABLE_MODELS).join(', ')}, or ${codexModels.join(', ')}`
+        : Object.keys(AVAILABLE_MODELS).join(', ');
       await ctx.reply(`Current model: ${currentLabel}\nAvailable: ${models}\n\nUsage: /model haiku`);
       return;
     }
 
     if (arg === 'reset' || arg === 'default' || arg === 'opus') {
       chatModelOverride.delete(chatIdStr);
-      await ctx.reply('Model reset to default (opus)');
+      await ctx.reply(`Model reset to default: ${formatRuntimeModel(configuredDefaultModel)}`);
       return;
     }
 
-    const modelId = AVAILABLE_MODELS[arg];
+    const modelId = AVAILABLE_MODELS[arg] ?? (activeProvider === 'codex' && codexModels.includes(arg) ? arg : undefined);
     if (!modelId) {
-      await ctx.reply(`Unknown model: ${arg}\nAvailable: ${Object.keys(AVAILABLE_MODELS).join(', ')}`);
+      const models = activeProvider === 'codex'
+        ? `${Object.keys(AVAILABLE_MODELS).join(', ')}, or ${codexModels.join(', ')}`
+        : Object.keys(AVAILABLE_MODELS).join(', ');
+      await ctx.reply(`Unknown model: ${arg}\nAvailable: ${models}`);
       return;
     }
 
     chatModelOverride.set(chatIdStr, modelId);
-    await ctx.reply(`Model changed: ${arg} (${modelId})`);
+    await ctx.reply(`Model changed: ${formatRuntimeModel(modelId)}`);
   });
 
   // /memory — show recent memories for this chat
@@ -1103,7 +1175,7 @@ export function createBot(): Bot {
   // /forget — clear session (memory decay handles the rest)
   bot.command('forget', async (ctx) => {
     if (await replyIfLocked(ctx)) return;
-    clearSession(ctx.chat!.id.toString(), AGENT_ID);
+    clearAllSessions(ctx.chat!.id.toString(), AGENT_ID);
     await ctx.reply('Session cleared. Memories will fade naturally over time.');
   });
 
@@ -1239,11 +1311,21 @@ export function createBot(): Bot {
     await ctx.reply('Session locked. Send your PIN to unlock.');
   });
 
-  // /status — show security status
+  // /status — show security status + outbox health
   bot.command('status', async (ctx) => {
     if (!isAuthorised(ctx.chat!.id)) return;
     const s = getSecurityStatus();
+    const stale = checkStale();
+    const agentId = process.env.CLAUDECLAW_AGENT_ID || 'main';
     const lines = [
+      'Sage status:',
+      `- SHA: ${shortSha(stale.runtimeSha)} (built ${formatRelative(RUNTIME_BUILD_META.builtAt)})`,
+      `- Disk SHA: ${shortSha(stale.diskSha)} (built ${formatRelative(stale.diskMeta.builtAt)})`,
+      `- Stale: ${stale.stale ? 'YES' : 'NO'}`,
+      `- PID: ${process.pid}`,
+      `- Uptime: ${formatUptime(Date.now() - RUNTIME_STARTED_AT)}`,
+      `- Mode: ${agentId}`,
+      '',
       `PIN lock: ${s.pinEnabled ? 'enabled' : 'disabled'}`,
       `Session: ${s.locked ? 'LOCKED' : 'unlocked'}`,
       s.idleLockMinutes > 0 ? `Idle lock: ${s.idleLockMinutes}m` : 'Idle lock: disabled',
@@ -1253,6 +1335,28 @@ export function createBot(): Bot {
       const idleSec = Math.round((Date.now() - s.lastActivity) / 1000);
       lines.push(`Last activity: ${idleSec < 60 ? idleSec + 's ago' : Math.round(idleSec / 60) + 'm ago'}`);
     }
+
+    // Outbox health: pending + in_flight + dead-letter counts and the
+    // age of the oldest unsent row. Anything other than 0 pending /
+    // 0 dead-lettered / no stale unsent age means delivery is degraded.
+    try {
+      const stats = getOutboxStats();
+      const fmtAge = (s: number | null): string => {
+        if (s == null) return '—';
+        if (s < 60) return `${s}s`;
+        if (s < 3600) return `${Math.round(s / 60)}m`;
+        return `${Math.round(s / 3600)}h`;
+      };
+      lines.push('');
+      lines.push('Telegram outbox:');
+      lines.push(`  pending: ${stats.pending}`);
+      lines.push(`  in-flight: ${stats.in_flight}`);
+      lines.push(`  dead-lettered: ${stats.deadLettered}`);
+      lines.push(`  oldest unsent: ${fmtAge(stats.oldestUnsentAgeSeconds)}`);
+    } catch (err) {
+      logger.warn({ err }, '/status: failed to read outbox stats');
+    }
+
     await ctx.reply(lines.join('\n'));
   });
 
@@ -1304,6 +1408,25 @@ export function createBot(): Bot {
       return;
     }
     touchActivity();
+
+    // ── custom workflow pipeline reply interceptor ──────────────────────
+    // If this is a Telegram-native reply to one of our pipeline
+    // deliverable pings (human gate) AND the text contains a
+    // pipeline keyword, forward to pipeline-webhook and stop here.
+    // No LLM call, no other routing. Silent no-op otherwise.
+    try {
+      const pipelineReply = await handlePipelineReply({
+        text: ctx.message.text,
+        replyToMessageId: ctx.message.reply_to_message?.message_id,
+      });
+      if (pipelineReply) {
+        await ctx.reply(pipelineReply);
+        return;
+      }
+    } catch (err) {
+      logger.error({ err }, 'pipeline reply handler threw');
+      // Fall through to normal routing on any unexpected error.
+    }
 
     // ── WhatsApp state machine ──────────────────────────────────────
     const state = waState.get(chatIdStr);
@@ -1580,6 +1703,36 @@ export function createBot(): Bot {
     }
   });
 
+  // ── Pipeline inline button taps (callback_query) ────────────────
+  // Human-gate APPROVE / HALT buttons emit callback_data of the form
+  // "pl:<action>:<gate_id>". Forward the tap to pipeline-webhook and
+  // answer with an in-Telegram toast. The message edit (remove
+  // buttons + append resolved state) is done server-side in
+  // pipeline-advance.resolveGate() so every resolution path fires it.
+  bot.on('callback_query:data', async (ctx) => {
+    const data = ctx.callbackQuery.data;
+    const match = parsePipelineCallback(data);
+    if (!match) {
+      // Not ours; answer with an empty ack so Telegram stops spinning.
+      await ctx.answerCallbackQuery().catch(() => {});
+      return;
+    }
+    try {
+      const result = await handlePipelineCallback(match);
+      await ctx
+        .answerCallbackQuery({
+          text: result.toast,
+          show_alert: !result.ok,
+        })
+        .catch(() => {});
+    } catch (err) {
+      logger.error({ err }, 'pipeline callback handler threw');
+      await ctx
+        .answerCallbackQuery({ text: 'Error. See logs.', show_alert: true })
+        .catch(() => {});
+    }
+  });
+
   // Graceful error handling — log but don't crash
   bot.catch((err) => {
     logger.error({ err: err.message }, 'Telegram bot error');
@@ -1617,11 +1770,11 @@ async function processDashboardMessage(
   setProcessing(chatIdStr, true);
 
   try {
-    const sessionId = getSession(chatIdStr, AGENT_ID);
+    const activeProvider = getActiveProviderName();
+    const sessionId = getSession(chatIdStr, AGENT_ID, activeProvider);
 
     const { contextText: memCtx, surfacedMemoryIds: dashSurfacedIds, surfacedMemorySummaries: dashSummaries } = await buildMemoryContext(chatIdStr, text, AGENT_ID);
     const dashParts: string[] = [];
-    if (agentSystemPrompt && !sessionId) dashParts.push(`[Agent role — follow these instructions]\n${agentSystemPrompt}\n[End agent role]`);
     if (memCtx) dashParts.push(memCtx);
 
     const recentDashTasks = getRecentTaskOutputs(AGENT_ID, 30);
@@ -1656,6 +1809,8 @@ async function processDashboardMessage(
       abortCtrl,
       undefined, // no streaming for dashboard
       agentMcpAllowlist,
+      undefined,
+      agentSystemPrompt,
     );
 
     clearTimeout(dashTimeout);
@@ -1671,7 +1826,7 @@ async function processDashboardMessage(
     }
 
     if (result.newSessionId) {
-      setSession(chatIdStr, result.newSessionId, AGENT_ID);
+      setSession(chatIdStr, result.newSessionId, AGENT_ID, activeProvider);
     }
 
     const rawResponse = result.text?.trim() || 'Done.';
@@ -1685,11 +1840,20 @@ async function processDashboardMessage(
     // Emit assistant response to SSE clients
     emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: rawResponse, source: 'dashboard' });
 
-    // Relay to Telegram so the user sees it there too
+    // Relay to Telegram so the user sees it there too. This is a
+    // background relay (the dashboard is the user-facing channel here)
+    // so it MUST go through the durable outbox — a transient Telegram
+    // failure must not silently drop the message.
+    void botApi; // retained for backwards-compat callers
     const { text: responseText } = extractFileMarkers(rawResponse);
     if (responseText) {
       for (const part of splitMessage(formatForTelegram(responseText))) {
-        await botApi.sendMessage(parseInt(chatIdStr), part, { parse_mode: 'HTML' });
+        enqueueTelegramSend({
+          agentId: AGENT_ID,
+          chatId: chatIdStr,
+          method: 'sendMessage',
+          params: { text: part, parse_mode: 'HTML' },
+        });
       }
     }
 
@@ -1736,9 +1900,14 @@ export async function notifyWhatsAppIncoming(
   const origin = isGroup && groupName ? groupName : contactName;
   const text = `📱 <b>${escapeHtml(origin)}</b> — new message\n<i>/wa to view &amp; reply</i>`;
 
-  try {
-    await api.sendMessage(parseInt(ALLOWED_CHAT_ID), text, { parse_mode: 'HTML' });
-  } catch (err) {
-    logger.error({ err }, 'Failed to send WhatsApp notification');
-  }
+  // Route through the durable outbox so a flaky Telegram doesn't drop
+  // the WhatsApp ping. `api` arg is preserved for backward compatibility
+  // but is no longer used directly.
+  void api;
+  enqueueTelegramSend({
+    agentId: AGENT_ID,
+    chatId: ALLOWED_CHAT_ID,
+    method: 'sendMessage',
+    params: { text, parse_mode: 'HTML' },
+  });
 }

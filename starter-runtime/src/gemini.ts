@@ -4,6 +4,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import { GOOGLE_API_KEY } from './config.js';
 import { readEnvFile } from './env.js';
+import { getScrubbedSdkEnv } from './security.js';
 import { logger } from './logger.js';
 
 // ── Gemini client (primary for text generation, always for embeddings) ──
@@ -108,6 +109,17 @@ export async function generateContent(
   // Single-turn, no tools, no MCP, no settings — pure text completion.
   try {
     let collected = '';
+    // Scrub secrets from the subprocess env. The SDK does not need
+    // DASHBOARD_TOKEN, DB_ENCRYPTION_KEY, third-party API keys, etc.
+    // Round-4 structural fix: explicit re-injection (no
+    // SDK_NATURAL_PASS_VARS). Fall back to process.env only for
+    // ANTHROPIC_API_KEY; CLAUDE_CODE_OAUTH_TOKEN must never ride along
+    // from the harness session.
+    const dotenv = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+    const sdkEnv = getScrubbedSdkEnv({
+      CLAUDE_CODE_OAUTH_TOKEN: dotenv.CLAUDE_CODE_OAUTH_TOKEN,
+      ANTHROPIC_API_KEY: dotenv.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+    });
     for await (const event of query({
       prompt,
       options: {
@@ -116,6 +128,7 @@ export async function generateContent(
         settingSources: [],            // do NOT load CLAUDE.md or skills
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
+        env: sdkEnv,
       },
     })) {
       const ev = event as Record<string, unknown>;

@@ -7,7 +7,7 @@ description: |
   projects, config, code, or history. Fires silently — search first, answer from
   results. Only say "I don't know" after search_thoughts returns nothing.
   Also fires on topic shifts (new person, project, or technology mentioned).
-author: <USER_NAME>
+author: your name
 version: 2.0.0
 ---
 

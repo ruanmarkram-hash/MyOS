@@ -2,6 +2,16 @@
 .env
 .env.local
 .env.*.local
+.claude/settings.json
+CLAUDE.md
+agents/*/agent.yaml
+agents/*/CLAUDE.md
+store/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 
 # macOS noise
 .DS_Store
@@ -14,6 +24,12 @@
 # Node if anyone adds one
 node_modules/
 dist/
+starter-runtime/node_modules/
+starter-runtime/dist/
+starter-runtime/web/node_modules/
+starter-runtime/web/dist/
+starter-runtime/vendor/ob1/docs/walkthroughs/**/output/
+starter-runtime/vendor/ob1/docs/**/*.mp4
 
 # Local logs
 logs/

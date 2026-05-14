@@ -3,9 +3,9 @@
 # Called every 6h by launchd (com.claudeclaw.brain-monitor.plist).
 
 set -uo pipefail
-cd $HOME/claudeclaw
+cd ~/HQ
 
-LOG=$HOME/claudeclaw/logs/brain-monitor.log
+LOG=~/HQ/logs/brain-monitor.log
 OUT=$(/opt/homebrew/bin/node scripts/monitor-brain.mjs 6 2>&1)
 CODE=$?
 
@@ -17,9 +17,9 @@ CODE=$?
 
 # Alert on CRITICAL (exit 2) and WARN (exit 1). OK (exit 0) = silent.
 if [ "$CODE" -ge 2 ]; then
-  bash $HOME/claudeclaw/scripts/notify.sh "🚨 brain-monitor CRITICAL: $(echo "$OUT" | head -6 | tr '\n' ' ')"
+  bash ~/HQ/scripts/notify.sh "🚨 brain-monitor CRITICAL: $(echo "$OUT" | head -6 | tr '\n' ' ')"
 elif [ "$CODE" -eq 1 ]; then
-  bash $HOME/claudeclaw/scripts/notify.sh "⚠️ brain-monitor WARN: $(echo "$OUT" | head -6 | tr '\n' ' ')"
+  bash ~/HQ/scripts/notify.sh "⚠️ brain-monitor WARN: $(echo "$OUT" | head -6 | tr '\n' ' ')"
 fi
 
 exit 0

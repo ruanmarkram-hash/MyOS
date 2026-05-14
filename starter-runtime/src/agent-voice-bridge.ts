@@ -2,7 +2,7 @@
  * Agent Voice Bridge
  *
  * Lightweight CLI script that the War Room Pipecat server calls to invoke
- * a ClaudeClaw agent via the Claude Code SDK and return the text response.
+ * a ClaudeClaw agent via the active LLM provider and return the text response.
  *
  * Usage: node dist/agent-voice-bridge.js --agent research --message "What did you find?"
  *
@@ -12,25 +12,20 @@
  * reads the JSON response, and pipes the text to TTS.
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'fs';
+import path from 'path';
 import yaml from 'js-yaml';
-import { readEnvFile } from './env.js';
 import { initDatabase, getSession, setSession } from './db.js';
 import { buildMemoryContext } from './memory.js';
-import { loadMcpServers } from './agent.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { getActiveProviderName, runAgent } from './agent.js';
+import { resolveAgentClaudeMd, resolveAgentDir } from './agent-config.js';
+import { activeBotToken, PROJECT_ROOT, resolveMainClaudeMdPath, setAgentOverrides } from './config.js';
 
 // The voice bridge is a standalone subprocess — initialize the DB
 // connection before any getSession/setSession calls run. Without this,
 // db is undefined and every call fails with "Cannot read properties of
 // undefined (reading 'prepare')".
 initDatabase();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 // Parse CLI args
 const args = process.argv.slice(2);
@@ -47,10 +42,9 @@ for (let i = 0; i < args.length; i++) {
   } else if (args[i] === '--chat-id' && args[i + 1]) {
     chatId = args[++i];
   } else if (args[i] === '--quick') {
-    // Quick mode: cap turns hard, used by warroom auto-routing where
-    // voice latency matters more than thoroughness. The agent still has
-    // MCP access but can only do ~1 tool call round-trip before it has
-    // to answer.
+    // Quick mode is used by warroom auto-routing where voice latency
+    // matters more than thoroughness. The prompt below asks for a short
+    // spoken answer and the provider call gets a tighter timeout.
     quickMode = true;
   }
 }
@@ -60,79 +54,75 @@ if (!message) {
   process.exit(1);
 }
 
-async function* singleTurn(text: string): AsyncGenerator<{
-  type: 'user';
-  message: { role: 'user'; content: string };
-  parent_tool_use_id: null;
-  session_id: string;
-}> {
-  yield {
-    type: 'user',
-    message: { role: 'user', content: text },
-    parent_tool_use_id: null,
-    session_id: '',
-  };
-}
-
 async function main() {
   try {
-    const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
-    const sdkEnv: Record<string, string | undefined> = { ...process.env };
-    // Strip ALL Claude Code env vars from the child subprocess. When this
-    // process runs inside another Claude Code session (e.g. launched from
-    // Claude Desktop), the parent injects session-scoped vars that break
-    // the child (expired OAuth tokens, anti-nesting guards, host-managed
-    // auth flags). Stripping all CLAUDE* vars forces the child to use its
-    // own ~/.claude/ OAuth credentials which auto-refresh.
-    for (const k of Object.keys(sdkEnv)) {
-      if (k === 'CLAUDECLAW_AGENT_ID') continue;
-      if (k.startsWith('CLAUDE') || k === '__CFBundleIdentifier') {
-        delete sdkEnv[k];
-      }
-    }
-    if (secrets.CLAUDE_CODE_OAUTH_TOKEN) sdkEnv.CLAUDE_CODE_OAUTH_TOKEN = secrets.CLAUDE_CODE_OAUTH_TOKEN;
-    if (secrets.ANTHROPIC_API_KEY) sdkEnv.ANTHROPIC_API_KEY = secrets.ANTHROPIC_API_KEY;
-
     // Validate agent ID format (prevent path traversal)
     if (agentId !== 'main' && !/^[a-z][a-z0-9_-]{0,29}$/.test(agentId)) {
       throw new Error(`Invalid agent ID: ${agentId}`);
     }
 
-    // Resolve agent directory and verify it's within the project
-    const agentDir = agentId === 'main'
-      ? PROJECT_ROOT
-      : path.join(PROJECT_ROOT, 'agents', agentId);
-    const resolved = path.resolve(agentDir);
-    if (!resolved.startsWith(path.resolve(PROJECT_ROOT) + path.sep) && resolved !== path.resolve(PROJECT_ROOT)) {
-      throw new Error(`Agent path outside project: ${resolved}`);
-    }
-
-    // Read the agent's MCP allowlist from its agent.yaml (if present). The
-    // text bot does this via loadAgentConfig in src/bot.ts; we do a minimal
-    // inline read to avoid pulling bot.ts's heavy init chain into the voice
-    // bridge subprocess.
+    let agentDir = PROJECT_ROOT;
+    let systemPrompt: string | undefined;
+    let model: string | undefined;
     let mcpAllowlist: string[] | undefined;
-    try {
+    let obsidian: {
+      vault: string;
+      folders: string[];
+      readOnly?: string[];
+    } | undefined;
+
+    if (agentId === 'main') {
+      const mainClaudeMd = resolveMainClaudeMdPath();
+      if (fs.existsSync(mainClaudeMd)) {
+        systemPrompt = fs.readFileSync(mainClaudeMd, 'utf-8');
+      }
+      setAgentOverrides({
+        agentId: 'main',
+        botToken: activeBotToken,
+        cwd: PROJECT_ROOT,
+        systemPrompt,
+      });
+    } else {
+      agentDir = resolveAgentDir(agentId);
       const yamlPath = path.join(agentDir, 'agent.yaml');
       if (fs.existsSync(yamlPath)) {
         const raw = yaml.load(fs.readFileSync(yamlPath, 'utf-8')) as Record<string, unknown> | undefined;
+        model = typeof raw?.['model'] === 'string' ? raw['model'] as string : undefined;
         const list = raw?.['mcp_servers'];
         if (Array.isArray(list)) mcpAllowlist = list.filter((x): x is string => typeof x === 'string');
+        const obsRaw = raw?.['obsidian'] as Record<string, unknown> | undefined;
+        if (obsRaw && typeof obsRaw['vault'] === 'string') {
+          obsidian = {
+            vault: obsRaw['vault'] as string,
+            folders: Array.isArray(obsRaw['folders'])
+              ? obsRaw['folders'].filter((x): x is string => typeof x === 'string')
+              : [],
+            readOnly: Array.isArray(obsRaw['read_only'])
+              ? obsRaw['read_only'].filter((x): x is string => typeof x === 'string')
+              : [],
+          };
+        }
       }
-    } catch (err) {
-      // Non-fatal: fall through with undefined allowlist (loads all MCPs)
-      process.stderr.write(`[voice-bridge] agent.yaml read failed: ${err}\n`);
+      const claudeMdPath = resolveAgentClaudeMd(agentId);
+      if (claudeMdPath) {
+        systemPrompt = fs.readFileSync(claudeMdPath, 'utf-8');
+      }
+      setAgentOverrides({
+        agentId,
+        botToken: '',
+        cwd: agentDir,
+        model,
+        obsidian,
+        systemPrompt,
+        mcpServers: mcpAllowlist,
+      });
     }
 
-    // Load MCP servers for this agent, mirroring the text-bot's behavior.
-    // Without this, voice-invoked agents can only use built-in tools (Bash,
-    // Read, Grep, etc.) — no Gmail, Slack, Linear, Fireflies, etc.
-    const mcpServers = loadMcpServers(mcpAllowlist, agentDir);
-    const mcpServerNames = Object.keys(mcpServers);
-    process.stderr.write(`[voice-bridge] agent=${agentId} mcpServers=${JSON.stringify(mcpServerNames)}\n`);
+    const activeProvider = getActiveProviderName();
+    process.stderr.write(`[voice-bridge] agent=${agentId} provider=${activeProvider} mcpAllowlist=${JSON.stringify(mcpAllowlist ?? null)}\n`);
 
     // Resume session if one exists for this chat+agent
-    const sessionId = getSession(chatId, agentId) ?? undefined;
+    const sessionId = getSession(chatId, agentId, activeProvider) ?? undefined;
 
     // Build memory context
     const { contextText: memCtx } = await buildMemoryContext(chatId, message, agentId);
@@ -150,52 +140,36 @@ async function main() {
     parts.push(message);
     const fullMessage = parts.join('\n\n');
 
-    let resultText: string | null = null;
-    let newSessionId: string | undefined;
-    let usage: Record<string, number> = {};
-
-    for await (const event of query({
-      prompt: singleTurn(fullMessage),
-      options: {
-        cwd: agentDir,
-        resume: sessionId,
-        settingSources: ['project', 'user'],
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
-        // Quick mode caps turns hard so an auto-routed voice answer
-        // can't spiral into a 30s tool-use loop. Direct mode keeps the
-        // higher ceiling for more substantive voice conversations.
-        maxTurns: quickMode ? 3 : 15,
-        env: sdkEnv,
-        ...(mcpServerNames.length > 0 ? { mcpServers } : {}),
-      },
-    })) {
-      const ev = event as Record<string, unknown>;
-
-      if (ev['type'] === 'system' && ev['subtype'] === 'init') {
-        newSessionId = ev['session_id'] as string;
-      }
-
-      if (ev['type'] === 'result') {
-        resultText = (ev['result'] as string | null | undefined) ?? null;
-        const evUsage = ev['usage'] as Record<string, number> | undefined;
-        if (evUsage) {
-          usage = {
-            input_tokens: evUsage['input_tokens'] ?? 0,
-            output_tokens: evUsage['output_tokens'] ?? 0,
-            cost_usd: (ev['total_cost_usd'] as number) ?? 0,
-          };
-        }
-      }
-    }
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), quickMode ? 45_000 : 180_000);
+    const result = await runAgent(
+      fullMessage,
+      sessionId,
+      () => {},
+      undefined,
+      model,
+      abortController,
+      undefined,
+      mcpAllowlist,
+      undefined,
+      systemPrompt,
+      quickMode ? 3 : 15,
+    );
+    clearTimeout(timeout);
 
     // Save session for continuity
-    if (newSessionId) {
-      setSession(chatId, newSessionId, agentId);
+    if (result.newSessionId) {
+      setSession(chatId, result.newSessionId, agentId, activeProvider);
     }
 
+    const usage = result.usage ? {
+      input_tokens: result.usage.inputTokens,
+      output_tokens: result.usage.outputTokens,
+      cost_usd: result.usage.totalCostUsd,
+    } : {};
+
     console.log(JSON.stringify({
-      response: resultText,
+      response: result.text,
       usage,
       error: null,
     }));

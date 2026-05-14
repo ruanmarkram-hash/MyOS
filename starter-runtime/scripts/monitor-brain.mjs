@@ -12,11 +12,15 @@
 //
 // Exit code: 0 healthy, 1 warnings, 2 critical.
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import pg from 'pg';
+import { classifyGrowth } from './monitor-brain-classify.mjs';
+import { isJsonlIncluded } from './brain-watcher-parser.mjs';
 
-const ROOT = process.env.HOME + '/claudeclaw';
+const ROOT = '~/HQ';
 const env = Object.fromEntries(
   readFileSync(`${ROOT}/.env`, 'utf-8').split(/\r?\n/)
     .filter((l) => l && !l.startsWith('#') && l.includes('='))
@@ -64,6 +68,73 @@ const stats = await db.query(`
 const s = stats.rows[0];
 if (s.no_embedding > 0) issues.push(`${s.no_embedding} rows without embedding`);
 
+// Count NEW upstream jsonl files in the same window so we can tell "watcher
+// broke" apart from "user was asleep, nothing to ingest". See
+// ./monitor-brain-classify.mjs for the threshold rationale.
+function walkAndCount(dir, cutoff, folderFilter, fileMatch, count = { n: 0 }) {
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return count; }
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!folderFilter(entry.name)) continue;
+      walkAndCount(full, cutoff, folderFilter, fileMatch, count);
+    } else if (entry.isFile() && fileMatch(entry.name)) {
+      let st; try { st = statSync(full); } catch { continue; }
+      if (st.mtimeMs >= cutoff) count.n++;
+    }
+  }
+  return count;
+}
+
+function countRecentJsonlFiles(windowHours) {
+  const cutoff = Date.now() - windowHours * 60 * 60 * 1000;
+  let total = 0;
+  // Filters mirror brain-watcher.mjs's ingest universe so this count answers
+  // "how many files did the watcher have a chance to ingest", not "how many
+  // files exist on disk". Folders the watcher deliberately skips (e.g. ad-hoc
+  // claude-worktrees, workspace agent dirs) would otherwise trip a CRITICAL
+  // "watcher dropping data" false alarm.
+  const roots = [
+    {
+      dir: join(homedir(), '.claude', 'projects'),
+      recurse: true,
+      folderFilter: isJsonlIncluded,
+      match: (n) => n.endsWith('.jsonl'),
+    },
+    {
+      dir: join(homedir(), '.codex', 'archived_sessions'),
+      recurse: true,
+      folderFilter: () => true,
+      match: (n) => n.startsWith('rollout-') && n.endsWith('.jsonl'),
+    },
+    {
+      dir: join(homedir(), '.codex', 'sessions'),
+      recurse: true,
+      folderFilter: () => true,
+      match: (n) => n.startsWith('rollout-') && n.endsWith('.jsonl'),
+    },
+  ];
+  for (const r of roots) {
+    if (!r.recurse) {
+      // Flat scan (kept for backwards compat, though all current roots recurse)
+      let entries; try { entries = readdirSync(r.dir); } catch { continue; }
+      for (const name of entries) {
+        if (!r.match(name)) continue;
+        let st; try { st = statSync(join(r.dir, name)); } catch { continue; }
+        if (st.mtimeMs >= cutoff) total++;
+      }
+    } else {
+      const count = walkAndCount(r.dir, cutoff, r.folderFilter, r.match);
+      total += count.n;
+    }
+  }
+  return total;
+}
+const newInputFiles = countRecentJsonlFiles(WINDOW_HOURS);
+const growth = classifyGrowth({ recentThoughts: s.recent, newInputFiles, windowHours: WINDOW_HOURS });
+if (growth.level === 'critical') issues.push(growth.message);
+
 // 5. grep ClaudeClaw logs for OB1 errors in window
 const logPaths = [
   '/tmp/claudeclaw-main.log',
@@ -84,7 +155,7 @@ const status = issues.length ? 'CRITICAL' : warnings.length ? 'WARN' : 'OK';
 console.log(`[brain monitor] ${status} | ${new Date().toISOString()}`);
 console.log(`  ping:            ${pingOk ? `OK (${pingMs}ms)` : 'FAIL'}`);
 console.log(`  thoughts total:  ${s.total}`);
-console.log(`  last ${WINDOW_HOURS}h growth: +${s.recent}`);
+console.log(`  last ${WINDOW_HOURS}h growth: +${s.recent} (input files in window: ${newInputFiles}; ${growth.level}: ${growth.message})`);
 console.log(`  by source:       mcp=${s.from_mcp}, sqlite_memory=${s.from_memories}, conv_log=${s.from_convlog}`);
 console.log(`  embeddings:      ${s.no_embedding === 0 ? '100%' : `MISSING: ${s.no_embedding}`}`);
 console.log(`  latest capture:  ${s.latest}`);

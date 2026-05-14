@@ -1,0 +1,196 @@
+{
+  "skills": [
+    {
+      "name": "brainstorming",
+      "description": "Refine rough ideas into validated designs",
+      "triggers": [
+        "let's build",
+        "feature idea",
+        "should we add",
+        "how should we approach",
+        "what if we",
+        "rough idea",
+        "unclear scope",
+        "need to design",
+        "exploring",
+        "new feature"
+      ],
+      "next": "planning"
+    },
+    {
+      "name": "planning",
+      "description": "Break approved design into tasks",
+      "triggers": [
+        "design approved",
+        "ready to plan",
+        "break this down",
+        "create task list",
+        "implementation plan",
+        "ready to code",
+        "task breakdown"
+      ],
+      "next": "sprint-execution"
+    },
+    {
+      "name": "sprint-execution",
+      "description": "Dispatch and manage agents for each task",
+      "triggers": [
+        "let's code",
+        "start the sprint",
+        "dispatch agents",
+        "implement tasks",
+        "ready to execute",
+        "execute plan"
+      ],
+      "next": "code-review"
+    },
+    {
+      "name": "task-driven-development",
+      "description": "One agent per task with two-stage review",
+      "triggers": [
+        "dispatch implementer",
+        "agent review",
+        "task dispatch",
+        "implement task",
+        "review task"
+      ],
+      "next": "code-review"
+    },
+    {
+      "name": "test-driven-development",
+      "description": "RED-GREEN-REFACTOR for new code",
+      "triggers": [
+        "writing code",
+        "new feature",
+        "bug fix",
+        "implement task",
+        "add tests",
+        "test first",
+        "tdd",
+        "failing test",
+        "red green"
+      ],
+      "next": "code-review"
+    },
+    {
+      "name": "code-review",
+      "description": "Two-stage review: spec compliance then quality",
+      "triggers": [
+        "review this",
+        "code review",
+        "before merge",
+        "spec compliance",
+        "quality review",
+        "second opinion",
+        "review code"
+      ],
+      "next": "verification-and-closure"
+    },
+    {
+      "name": "systematic-debugging",
+      "description": "Find root causes before fixing",
+      "triggers": [
+        "broken",
+        "bug",
+        "error",
+        "why is",
+        "debug",
+        "doesn't work",
+        "test fails",
+        "unexpected behavior",
+        "investigation",
+        "root cause"
+      ],
+      "next": "test-driven-development"
+    },
+    {
+      "name": "verification-and-closure",
+      "description": "Confirm feature works and decide next step",
+      "triggers": [
+        "is this done",
+        "verify",
+        "test it",
+        "does it work",
+        "confirm",
+        "check if",
+        "validation",
+        "before merge"
+      ],
+      "next": "feature-completion"
+    },
+    {
+      "name": "git-workflow",
+      "description": "Branch strategy and commit management",
+      "triggers": [
+        "branch",
+        "commit",
+        "merge",
+        "git",
+        "push",
+        "pull",
+        "rebase",
+        "worktree",
+        "git strategy"
+      ],
+      "next": "sprint-execution"
+    },
+    {
+      "name": "feature-completion",
+      "description": "Merge to main or create PR",
+      "triggers": [
+        "merge",
+        "ready to ship",
+        "release",
+        "production",
+        "deploy",
+        "ship",
+        "complete",
+        "discard"
+      ],
+      "next": null
+    },
+    {
+      "name": "skill-selection",
+      "description": "Determine which skill to activate",
+      "triggers": [
+        "which skill",
+        "where do i start",
+        "what's next",
+        "what skill",
+        "unsure which",
+        "decision tree"
+      ],
+      "next": null
+    }
+  ],
+  "sonke_hub_workflows": {
+    "add_database_field": [
+      "brainstorming",
+      "planning",
+      "sprint-execution (Forge for schema, Mason for UI)",
+      "test-driven-development",
+      "code-review",
+      "verification-and-closure",
+      "feature-completion"
+    ],
+    "fix_supabase_query": [
+      "systematic-debugging",
+      "test-driven-development",
+      "code-review",
+      "verification-and-closure"
+    ],
+    "add_tests_to_existing_code": [
+      "test-driven-development",
+      "code-review",
+      "verification-and-closure"
+    ],
+    "redesign_react_component": [
+      "brainstorming",
+      "planning",
+      "sprint-execution",
+      "test-driven-development",
+      "code-review",
+      "verification-and-closure"
+    ]
+  }
+}

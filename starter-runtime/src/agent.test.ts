@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'fs';
 import { AgentError } from './errors.js';
+
+const testPaths = vi.hoisted(() => ({
+  projectRoot: '/tmp/claudeclaw-agent-test',
+  home: '/tmp/claudeclaw-agent-home',
+}));
 
 // Mock the SDK query function before importing agent
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -11,9 +17,15 @@ vi.mock('./env.js', () => ({
 }));
 
 vi.mock('./config.js', () => ({
+  AGENT_ID: 'main',
   AGENT_MAX_TURNS: 30,
-  PROJECT_ROOT: '/tmp/test',
+  LLM_PROVIDER: 'claude',
+  PROJECT_ROOT: testPaths.projectRoot,
   agentCwd: undefined,
+  agentProviderOverride: undefined,
+  CODEX_HAIKU_MODEL: 'gpt-5.4-nano',
+  CODEX_SONNET_MODEL: 'gpt-5.4',
+  CODEX_OPUS_MODEL: 'gpt-5.5',
 }));
 
 vi.mock('./logger.js', () => ({
@@ -24,7 +36,7 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-import { runAgentWithRetry } from './agent.js';
+import { runAgent, runAgentWithRetry } from './agent.js';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -55,6 +67,10 @@ function resultEvent(text: string) {
 describe('runAgentWithRetry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('CLAUDE_EXECUTABLE', '/tmp/claude');
+    vi.stubEnv('HOME', testPaths.home);
+    fs.rmSync(testPaths.projectRoot, { recursive: true, force: true });
+    fs.rmSync(testPaths.home, { recursive: true, force: true });
   });
 
   it('returns result on first try when no error', async () => {
@@ -201,4 +217,74 @@ describe('runAgentWithRetry', () => {
     expect(capturedModels[0]).toBe('claude-opus-4-6');
     expect(capturedModels[1]).toBe('claude-sonnet-4-6');
   }, 15000);
+
+  it('forwards run options across the provider boundary', async () => {
+    fs.mkdirSync(`${testPaths.projectRoot}/.claude`, { recursive: true });
+    fs.writeFileSync(
+      `${testPaths.projectRoot}/.claude/settings.json`,
+      JSON.stringify({
+        mcpServers: {
+          allowed: { command: 'node', args: ['server.js'], env: { TEST: '1' } },
+          blocked: { command: 'node', args: ['blocked.js'] },
+        },
+      }),
+    );
+
+    const abortCtrl = new AbortController();
+    const progress = vi.fn();
+    const stream = vi.fn();
+
+    mockQuery.mockReturnValue(mockQueryEvents([
+      { type: 'system', subtype: 'init', session_id: 'sess-2' },
+      {
+        type: 'assistant',
+        message: {
+          usage: { input_tokens: 321, cache_read_input_tokens: 123 },
+          content: [{ type: 'tool_use', name: 'Bash' }],
+        },
+      },
+      {
+        type: 'stream_event',
+        parent_tool_use_id: null,
+        event: { type: 'message_start' },
+      },
+      {
+        type: 'stream_event',
+        parent_tool_use_id: null,
+        event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'partial' } },
+      },
+      resultEvent('Forwarded'),
+    ])() as any);
+
+    const result = await runAgent(
+      'hello',
+      'resume-session',
+      noop,
+      progress,
+      'claude-sonnet-4-5',
+      abortCtrl,
+      stream,
+      ['allowed'],
+      undefined,
+      undefined,
+      7,
+    );
+
+    expect(result.text).toBe('Forwarded');
+    expect(progress).toHaveBeenCalledWith({ type: 'tool_active', description: 'Running command' });
+    expect(stream).toHaveBeenCalledWith('partial');
+
+    const call = mockQuery.mock.calls[0][0] as Record<string, unknown>;
+    const options = call.options as Record<string, unknown>;
+    expect(options.cwd).toBe(testPaths.projectRoot);
+    expect(options.resume).toBe('resume-session');
+    expect(options.model).toBe('claude-sonnet-4-5');
+    expect(options.maxTurns).toBe(7);
+    expect(options.abortController).toBe(abortCtrl);
+    expect(options.includePartialMessages).toBe(true);
+    expect(options.pathToClaudeCodeExecutable).toBe('/tmp/claude');
+    expect(options.mcpServers).toEqual({
+      allowed: { command: 'node', args: ['server.js'], env: { TEST: '1' } },
+    });
+  });
 });

@@ -80,3 +80,14 @@ export function abortActiveQuery(chatId: string): boolean {
   }
   return false;
 }
+
+export function abortByPrefix(prefix: string): number {
+  let count = 0;
+  for (const [key, ctrl] of Array.from(_activeAbort.entries())) {
+    if (!key.startsWith(prefix)) continue;
+    ctrl.abort();
+    _activeAbort.delete(key);
+    count += 1;
+  }
+  return count;
+}

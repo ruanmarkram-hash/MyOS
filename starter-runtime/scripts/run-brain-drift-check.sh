@@ -9,12 +9,12 @@
 # (one hour after brain-backup so we don't thrash at the same time).
 
 set -uo pipefail
-cd $HOME/claudeclaw
+cd ~/HQ
 export PATH="/opt/homebrew/opt/libpq/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-LOG=$HOME/claudeclaw/logs/brain-drift.log
+LOG=~/HQ/logs/brain-drift.log
 set -a
-source $HOME/claudeclaw/.env
+source ~/HQ/.env
 set +a
 
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -37,24 +37,24 @@ report_lines=()
 action_taken=false
 
 # ── 1. Duplicate entities (actionable by consolidate-entities.mjs) ───
-dup_plan=$(planned_count $HOME/claudeclaw/scripts/consolidate-entities.mjs)
+dup_plan=$(planned_count ~/HQ/scripts/consolidate-entities.mjs)
 report_lines+=("actionable duplicate entities: ${dup_plan:-0}")
 if [ "${dup_plan:-0}" -gt "$DUP_THRESHOLD" ]; then
   report_lines+=("  -> running consolidate-entities.mjs")
-  node $HOME/claudeclaw/scripts/consolidate-entities.mjs >> "$LOG" 2>&1
+  node ~/HQ/scripts/consolidate-entities.mjs >> "$LOG" 2>&1
   action_taken=true
-  dup_after=$(planned_count $HOME/claudeclaw/scripts/consolidate-entities.mjs)
+  dup_after=$(planned_count ~/HQ/scripts/consolidate-entities.mjs)
   report_lines+=("  -> actionable after: ${dup_after:-0}")
 fi
 
 # ── 2. Degraded canonicals (actionable by unpolish-entity-names.mjs) ─
-polish_plan=$(planned_count $HOME/claudeclaw/scripts/unpolish-entity-names.mjs)
+polish_plan=$(planned_count ~/HQ/scripts/unpolish-entity-names.mjs)
 report_lines+=("actionable degraded canonicals: ${polish_plan:-0}")
 if [ "${polish_plan:-0}" -gt "$POLISH_THRESHOLD" ]; then
   report_lines+=("  -> running unpolish-entity-names.mjs")
-  node $HOME/claudeclaw/scripts/unpolish-entity-names.mjs >> "$LOG" 2>&1
+  node ~/HQ/scripts/unpolish-entity-names.mjs >> "$LOG" 2>&1
   action_taken=true
-  polish_after=$(planned_count $HOME/claudeclaw/scripts/unpolish-entity-names.mjs)
+  polish_after=$(planned_count ~/HQ/scripts/unpolish-entity-names.mjs)
   report_lines+=("  -> actionable after: ${polish_after:-0}")
 fi
 
@@ -91,7 +91,7 @@ fi
 
 if [ "$action_taken" = true ]; then
   summary=$(printf '%s\n' "${report_lines[@]}" | tr '\n' ' ' | head -c 800)
-  bash $HOME/claudeclaw/scripts/notify.sh "brain drift: action taken — ${summary}"
+  bash ~/HQ/scripts/notify.sh "brain drift: action taken — ${summary}"
 fi
 
 exit 0

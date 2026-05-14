@@ -525,7 +525,7 @@ async function main() {
   console.log();
   info('At minimum, replace the [BRACKETED] placeholders:');
   bullet('[YOUR ASSISTANT NAME]  — what you want to call the bot');
-  bullet('[YOUR NAME]            — your name (so it knows who it\'s talking to)');
+  bullet('user            — your name (so it knows who it\'s talking to)');
   bullet('[YOUR_OBSIDIAN_VAULT]  — path to your Obsidian vault, if you use one');
   console.log();
   info('The more context you add, the better it performs without explaining things');

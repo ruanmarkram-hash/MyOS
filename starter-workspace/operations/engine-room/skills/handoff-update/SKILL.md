@@ -7,7 +7,7 @@ description: |
   a dense per-session record to the right folder (projects/ or operations/),
   updates HANDOFF.md's current-state sections, auto-archives stale entries,
   and files any locked decisions as separate MD files.
-author: <USER_NAME>
+author: your name
 version: 1.0.0
 ---
 
@@ -51,14 +51,14 @@ the user cancels mid-flow, leave the proposed diff in
    LIMIT 100;
    ```
 
-   Connect via `psql "$OB1_SUPABASE_DB_URL"` (sourcing `~/claudeclaw/.env` first).
+   Connect via `psql "$OB1_SUPABASE_DB_URL"` (sourcing `~/HQ/.env` first).
 
 2. List any new per-sprint session docs in:
    - `~/workspace/projects/*/sessions/` modified since last update
    - `~/workspace/operations/*/sessions/` modified since last update
 
-3. Check git activity in active worktrees under `~/workspace/<your-project>*`,
-   `~/workspace/<another-project>*` etc. for branch names and latest commits.
+3. Check git activity in active worktrees under `~/workspace/sonke-hub*`,
+   `~/workspace/pilot-tool*` etc. for branch names and latest commits.
 
 4. Note any unresolved "blocked on X" or "waiting for Y" language from the
    captured thoughts.
@@ -71,9 +71,9 @@ Decide whether the session being handed off is primarily:
 - `operations/<other-domain>/` — marketing, recruitment, compliance, etc.
 
 **Rules:**
-1. If the work touched `<your-project>`, `<another-project>`, `<third-project>`, or any
+1. If the work touched `sonke-hub-app`, `pilot-tool`, `sonke-website`, or any
    other known project repo — goes to `projects/<project>/`.
-2. If the work touched `~/claudeclaw/`, `src/`, `scripts/`, `launchd plists`, brain
+2. If the work touched `~/HQ/`, `src/`, `scripts/`, `launchd plists`, brain
    services, agents, or the OB1/Supabase stack — goes to
    `operations/engine-room/`.
 3. If the work was marketing/recruitment/compliance/support-work — goes to
@@ -126,27 +126,27 @@ Rewrite the top sections in place (not the whole file). The structure:
 ```markdown
 # HANDOFF
 **Updated:** <current ISO timestamp + one-line session summary>
-**Maintained by:** <AGENT_NAME> / Claude Code (on-demand via /handoff)
+**Maintained by:** Sage / Claude Code (on-demand via /handoff)
 
 ## ⭐ Current state
 <one paragraph: overall posture across projects/operations, what's live,
 what's notable>
 
 ## 🟢 Active projects
-### <your-project> [ACTIVE] [owner: mason]
+### sonke-hub [ACTIVE] [owner: mason]
 Status: <1-2 lines>
 Current work: <in-progress branches with refs + tips>
 Blocked on: <if anything, else drop this line>
 Next up: <if anything, else drop this line>
 
-### <example-domain> [ACTIVE] [owner: <AGENT_NAME>]
+### sonke-support [ACTIVE] [owner: sage]
 ...
 
-### claudeclaw / engine-room [ACTIVE] [owner: <AGENT_NAME>]
+### claudeclaw / engine-room [ACTIVE] [owner: sage]
 ...
 
 ## 🚧 Blocked / awaiting decision
-<cross-project list of things waiting on <USER_NAME> or external>
+<cross-project list of things waiting on [YOUR NAME] or external>
 
 ## 🔜 Next up (this week)
 <planned but not started>

@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 
+# Per-mission git worktrees (mission-worktree.ts). Created/destroyed
+# automatically by the Mason scheduler — never commit them.
+.worktrees/
+
 # Environment — never commit API keys
 .env
 
@@ -32,6 +36,7 @@ warroom/.venv/
 
 # Generated outputs — personal diagrams, not for sharing
 outputs/
+models/
 
 # macOS
 .DS_Store
@@ -46,6 +51,35 @@ outputs/
 scripts/waste-reminder.sh
 start-main.sh
 WARROOM_TEST_PLAN.md
+
+# Working docs / planning artifacts. Keep scratch planning out of the
+# public OS repo even when it is created in the repo root during a sprint.
+/PLAN*.md
+/SHIP*.md
+/TESTING*.md
+/AUDIT*.md
+/REPORT*.md
+/CHECKLIST*.md
+/REDTEAM*.md
+/SMOKE*.md
+/SCRATCH*.md
+/NOTES*.md
+/test_plan.md
+/update_plan.md
+/execute_plan_prompt.md
+/*_tldr.md
+/*_TLDR.md
+/PR[0-9]*_NOTES*.md
+/PR[0-9]*_TESTING*.md
+/docs/*-results.md
+/docs/*-smoke.md
+/docs/redteam-*.md
+/docs/scratch-*.md
+/docs/internal/
+/scripts/diagrams-test.json
+/scripts/diagrams-retry.json
+/scripts/diagrams-fix.json
+/scripts/diagrams-scratch*.json
 
 # War Room dev/test artifacts
 warroom/test-audio*.wav
@@ -64,6 +98,6 @@ agents/*/CLAUDE.md
 vendor/ob1/**/.env.local
 vendor/**/.env.local
 
-# Supabase CLI local state — contains real project refs after `supabase link`
-supabase/.temp/
-supabase/.branches/
+# Symlinked agent dirs live in ~/workspace/operations/engine-room/agents/
+# Don't track files at these symlinked paths — they're managed in workspace.
+agents/_template/

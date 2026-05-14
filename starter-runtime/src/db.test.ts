@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
 import {
+  _createSchema,
   _initTestDatabase,
+  _runMigrationsForTest,
   setSession,
   getSession,
   clearSession,
+  clearAllSessions,
   saveStructuredMemory,
   searchMemories,
   getRecentMemories,
@@ -21,6 +25,8 @@ import {
   getDashboardTopAccessedMemories,
   getDashboardMemoriesList,
   getDashboardMemoryTimeline,
+  getRecentConversation,
+  saveWarRoomConversationTurn,
 } from './db.js';
 
 describe('database', () => {
@@ -46,14 +52,157 @@ describe('database', () => {
       expect(getSession('chat1')).toBe('sess-2');
     });
 
+    it('isolates sessions by provider', () => {
+      setSession('chat1', 'claude-sess', 'main', 'claude');
+      setSession('chat1', 'codex-sess', 'main', 'codex');
+
+      expect(getSession('chat1', 'main', 'claude')).toBe('claude-sess');
+      expect(getSession('chat1', 'main', 'codex')).toBe('codex-sess');
+
+      clearSession('chat1', 'main', 'codex');
+      expect(getSession('chat1', 'main', 'claude')).toBe('claude-sess');
+      expect(getSession('chat1', 'main', 'codex')).toBeUndefined();
+    });
+
+    it('migrates legacy session rows into the Claude provider bucket', () => {
+      const database = new Database(':memory:');
+      _createSchema(database);
+      database.exec(`
+        DROP TABLE sessions;
+        CREATE TABLE sessions (
+          chat_id    TEXT NOT NULL,
+          agent_id   TEXT NOT NULL DEFAULT 'main',
+          session_id TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (chat_id, agent_id)
+        );
+        INSERT INTO sessions (chat_id, agent_id, session_id, updated_at)
+          VALUES
+            ('chat-claude-shaped', 'main', '3fbb8b12-b4cc-41ae-bf46-db2ad900eb6a', 'now'),
+            ('chat-codex-shaped', 'main', '019de375-ca31-7d12-9b37-62ffd7b26ca3', 'now');
+        CREATE TABLE sessions_new (leftover TEXT);
+      `);
+
+      _runMigrationsForTest(database);
+
+      const rows = database
+        .prepare('SELECT chat_id, provider, session_id FROM sessions ORDER BY chat_id')
+        .all() as Array<{ chat_id: string; provider: string; session_id: string }>;
+      expect(rows).toEqual([
+        {
+          chat_id: 'chat-claude-shaped',
+          provider: 'claude',
+          session_id: '3fbb8b12-b4cc-41ae-bf46-db2ad900eb6a',
+        },
+        {
+          chat_id: 'chat-codex-shaped',
+          provider: 'claude',
+          session_id: '019de375-ca31-7d12-9b37-62ffd7b26ca3',
+        },
+      ]);
+      const pkCols = database
+        .prepare('PRAGMA table_info(sessions)')
+        .all() as Array<{ pk: number }>;
+      expect(pkCols.filter((c) => c.pk > 0)).toHaveLength(3);
+    });
+
+    it('repairs legacy and non-Codex-looking provider rows back to Claude once', () => {
+      const database = new Database(':memory:');
+      _createSchema(database);
+      database.exec(`
+        INSERT INTO sessions (chat_id, agent_id, provider, session_id, updated_at)
+          VALUES
+            ('chat-codex-real', 'main', 'codex', '019de375-ca31-7d12-9b37-62ffd7b26ca3', 'now'),
+            ('chat-codex-guessed', 'main', 'codex', 'claude-session', 'now'),
+            ('chat-legacy', 'main', 'legacy', 'legacy-session', 'now');
+      `);
+
+      _runMigrationsForTest(database);
+
+      const rows = database
+        .prepare('SELECT chat_id, provider, session_id FROM sessions ORDER BY chat_id')
+        .all() as Array<{ chat_id: string; provider: string; session_id: string }>;
+      expect(rows).toEqual([
+        {
+          chat_id: 'chat-codex-guessed',
+          provider: 'claude',
+          session_id: 'claude-session',
+        },
+        {
+          chat_id: 'chat-codex-real',
+          provider: 'codex',
+          session_id: '019de375-ca31-7d12-9b37-62ffd7b26ca3',
+        },
+        {
+          chat_id: 'chat-legacy',
+          provider: 'claude',
+          session_id: 'legacy-session',
+        },
+      ]);
+
+      database
+        .prepare('INSERT INTO sessions (chat_id, agent_id, provider, session_id, updated_at) VALUES (?, ?, ?, ?, ?)')
+        .run('chat-new-codex', 'main', 'codex', 'new-codex-session', 'later');
+      _runMigrationsForTest(database);
+
+      const preserved = database
+        .prepare('SELECT provider, session_id FROM sessions WHERE chat_id = ?')
+        .get('chat-new-codex') as { provider: string; session_id: string };
+      expect(preserved).toEqual({ provider: 'codex', session_id: 'new-codex-session' });
+    });
+
     it('clearSession removes the session', () => {
       setSession('chat1', 'sess-abc');
       clearSession('chat1');
       expect(getSession('chat1')).toBeUndefined();
     });
 
+    it('clearSession without provider does not remove non-default provider sessions', () => {
+      setSession('chat1', 'claude-sess', 'main', 'claude');
+      setSession('chat1', 'codex-sess', 'main', 'codex');
+
+      clearSession('chat1');
+
+      expect(getSession('chat1', 'main', 'claude')).toBeUndefined();
+      expect(getSession('chat1', 'main', 'codex')).toBe('codex-sess');
+    });
+
+    it('clearAllSessions removes every provider session for the chat and agent', () => {
+      setSession('chat1', 'claude-sess', 'main', 'claude');
+      setSession('chat1', 'codex-sess', 'main', 'codex');
+
+      clearAllSessions('chat1', 'main');
+
+      expect(getSession('chat1', 'main', 'claude')).toBeUndefined();
+      expect(getSession('chat1', 'main', 'codex')).toBeUndefined();
+    });
+
     it('clearSession on missing session does not throw', () => {
       expect(() => clearSession('nonexistent')).not.toThrow();
+    });
+  });
+
+  describe('war room conversation log', () => {
+    it('stores the user prompt for each responding agent', () => {
+      saveWarRoomConversationTurn({
+        chatId: 'chat1',
+        agentId: 'mason',
+        originalUserText: 'Please compare both options.',
+        agentReply: 'Mason reply.',
+        meetingId: 'wr_test_abcdef',
+        turnId: 'turn-1',
+      });
+      saveWarRoomConversationTurn({
+        chatId: 'chat1',
+        agentId: 'warden',
+        originalUserText: 'Please compare both options.',
+        agentReply: 'Warden reply.',
+        meetingId: 'wr_test_abcdef',
+        turnId: 'turn-1',
+      });
+
+      expect(getRecentConversation('chat1', 10, 'mason').map((t) => t.role).sort()).toEqual(['assistant', 'user']);
+      expect(getRecentConversation('chat1', 10, 'warden').map((t) => t.role).sort()).toEqual(['assistant', 'user']);
     });
   });
 

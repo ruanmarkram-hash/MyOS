@@ -22,9 +22,9 @@ Do NOT use `workflow-designer` for:
 
 ### Design Philosophy
 
-**6 questions from the user. The agent fills the rest.**
+**6 questions from the user. Sage fills the rest.**
 
-The user answers only what <AGENT_NAME> can't infer:
+The user answers only what Sage can't infer:
 1. Workflow name
 2. Workflow type
 3. What outcome (objective)
@@ -32,20 +32,20 @@ The user answers only what <AGENT_NAME> can't infer:
 5. What does "done" look like (success criteria)
 6. When is it due (timeline)
 
-The agent automatically fills: tools, resources, model recommendation, reasoning toggle, output format, output path, audience, blockers, decision trees, escalation path, out-of-scope items, and reviewer.
+Sage automatically fills: tools, resources, model recommendation, reasoning toggle, output format, output path, audience, blockers, decision trees, escalation path, out-of-scope items, and reviewer.
 
-A review step at the end lets the user override any of the agent's defaults.
+A review step at the end lets the user override any of Sage's defaults.
 
 ### Invocation
 
 ```bash
 # Interactive (recommended)
-python ~/workspace/skills/workflow-designer/scripts/workflow-design.py
+python ~/workspace/skills/workflow-designer/scripts/sage-workflow-design.py
 
 # With pre-filled args
-python ~/workspace/skills/workflow-designer/scripts/workflow-design.py --type compliance --name "Quarterly Audit"
-workflow-design incident "critical-incident-assessment" --path ~/workspace/<example-domain>/incident-management/Critical\ Incident\ Assessment
-workflow-design research "market-analysis" --path ~/workspace/library/research/market-analysis
+python ~/workspace/skills/workflow-designer/scripts/sage-workflow-design.py --type compliance --name "Quarterly Audit"
+sage-workflow-design incident "critical-incident-assessment" --path ~/workspace/sonke-support/incident-management/Critical\ Incident\ Assessment
+sage-workflow-design research "market-analysis" --path ~/workspace/library/research/market-analysis
 ```
 
 ### Interactive Question Flow
@@ -64,7 +64,7 @@ The skill asks **one question at a time** and adapts based on workflow type. Que
 3. **One-Sentence Objective**
    - What is the outcome we're solving for?
    - Validation: Must be a clear outcome, not activity
-   - Example: "Identify gaps between current work practices and the user's industry legislative requirements"
+   - Example: "Identify gaps between current work practices and relevant legislative requirements"
 
 4. **Business Context**
    - Why does this workflow exist? What problem does it solve?
@@ -101,7 +101,7 @@ The skill asks **one question at a time** and adapts based on workflow type. Que
    - What does the deliverable look like?
    - Format options: Markdown, Word doc, PDF, JSON, email, Slack post, form entry, database record, code commit, other
    - Location: Where should output land?
-   - Example: "Word doc (for stakeholder review) → `/<example-domain>/compliance/audit-reports/Q1-2026-findings.docx`"
+   - Example: "Word doc (for stakeholder review) → `/sonke-support/compliance/audit-reports/Q1-2026-findings.docx`"
 
 10. **Output Audience**
     - Who will read/use this output?
@@ -112,14 +112,14 @@ The skill asks **one question at a time** and adapts based on workflow type. Que
 
 11. **Required Data/Documents**
     - What source documents will the executor need?
-    - Your agent searches workspace and returns exact paths
+    - Sage searches workspace and returns exact paths
     - Multi-answer: Can add multiple sources
-    - Example answer: "the user's industry Quality & Safeguarding Framework" → The agent points to `/<example-domain>/compliance/data/<industry-standards>/...`
+    - Example answer: "relevant regulatory framework" → Sage points to `/example-org/compliance/reference/standards/...`
 
 12. **Required Tools**
     - What tools are essential? (read, write, web_search, image, exec, etc.)
     - Multi-select with explanations
-    - The agent validates against available tools
+    - Sage validates against available tools
     - Example: read (for compliance docs), web_search (for updated legislation)
 
 13. **Required Skills**
@@ -153,7 +153,7 @@ The skill asks **one question at a time** and adapts based on workflow type. Que
 18. **Escalation Path**
     - If executor gets stuck, who do they ask?
     - What types of problems trigger escalation?
-    - Example: "Escalate to <USER_NAME> if: (a) cannot access a required document, (b) legislative requirement unclear, (c) gap appears systemic (affects 3+ areas)"
+    - Example: "Escalate to [YOUR NAME] if: (a) cannot access a required document, (b) legislative requirement unclear, (c) gap appears systemic (affects 3+ areas)"
 
 #### Phase 6: Timeline & Approval
 
@@ -165,7 +165,7 @@ The skill asks **one question at a time** and adapts based on workflow type. Que
 20. **Approval/Review Required?**
     - Does output need review before finalization?
     - By whom? When?
-    - Example: "Yes. <USER_NAME> reviews, provides feedback, approves final version."
+    - Example: "Yes. [YOUR NAME] reviews, provides feedback, approves final version."
 
 21. **Frequency** (if repeating)
     - How often does this workflow run?
@@ -175,7 +175,7 @@ The skill asks **one question at a time** and adapts based on workflow type. Que
 #### Phase 7: Refinement & Validation
 
 22. **Review**
-    - <AGENT_NAME> summarizes the brief
+    - Sage summarizes the brief
     - Ask: "Anything missing or need adjustment?"
     - Allow edits to any field
 
@@ -290,9 +290,9 @@ File is saved to: `[workflow-path]/brief.md`
 
 ---
 
-## Script: workflow-design
+## Script: sage-workflow-design
 
-Location: `~/workspace/skills/workflow-designer/scripts/workflow-design.py`
+Location: `~/workspace/skills/workflow-designer/scripts/sage-workflow-design.py`
 
 This script:
 1. Parses command-line arguments
@@ -306,16 +306,16 @@ This script:
 
 ```bash
 cd ~/workspace
-python skills/workflow-designer/scripts/workflow-design.py \
+python skills/workflow-designer/scripts/sage-workflow-design.py \
   --type compliance \
   --name "quarterly-internal-audit" \
-  --path ~/workspace/<example-project>/compliance/<example-audit>
+  --path ~/workspace/sonke-support/compliance/Quarterly\ Internal\ Audit
 ```
 
-Or via <AGENT_NAME> spawn (subagent):
+Or via Sage spawn (subagent):
 
 ```
-<AGENT_NAME> spawns workflow-designer subagent with:
+Sage spawns workflow-designer subagent with:
 - task: "Design workflow brief for [type] [name] at [path]"
 ```
 
@@ -327,7 +327,7 @@ Or via <AGENT_NAME> spawn (subagent):
 
 **Additional Q (after Q4):**
 - **Regulatory Framework:** Which regulations/standards apply?
-  - Help: "the user's industry, GDPR, HIPAA, other?"
+  - Help: "regulatory framework, privacy law, safety standards, other?"
   - Used in: Resource list, scope validation
 
 **Additional Q (after Q16):**
@@ -377,7 +377,7 @@ Or via <AGENT_NAME> spawn (subagent):
 | Type | Examples | Key Customizations |
 |------|----------|---|
 | **compliance** | Audit, gap assessment, policy review | Regulatory framework, policy age, reporting requirements |
-| **incident** | Incident assessment, regulatory reporting determination, escalation | Root cause framework, reportability, timeline |
+| **incident** | Incident assessment, RCS determination, escalation | Root cause framework, reportability, timeline |
 | **recruitment** | Onboarding, screening, probation review | Experience level, training requirements, checkpoints |
 | **onboarding** | New worker induction, system setup, training | Duration, hands-on vs. independent, sign-offs |
 | **reconciliation** | Financial reconciliation, data sync, verification | Systems involved, tolerance levels, discrepancy handling |
@@ -446,7 +446,7 @@ When a new workflow is created, the skill **automatically**:
 
 - **Skill does not execute the workflow.** It only generates the brief. An agent executes the brief.
 - **Resource paths rely on current workspace state.** If files move after brief generation, links break. Brief should be reviewed before handoff.
-- **Questions are sequential, not branching.** If you need to answer Q8 differently based on Q3, ask <AGENT_NAME> to re-run with adjusted answer.
+- **Questions are sequential, not branching.** If you need to answer Q8 differently based on Q3, ask Sage to re-run with adjusted answer.
 - **Doesn't handle complex multi-step workflows.** For workflows with >10 discrete steps, consider adding a "Execution Step-by-Step" section manually.
 
 ---
@@ -463,7 +463,7 @@ When a new workflow is created, the skill **automatically**:
 - A: This is normal. Answer Q8 with 5+ specific, testable outcomes. Skill will validate and prompt for specificity.
 
 **Q: I don't know the answer to a question**
-- A: Skip it (skill will note TBD). You can edit brief.md manually later. Or ask your agent for help.
+- A: Skip it (skill will note TBD). You can edit brief.md manually later. Or ask Sage for help.
 
 ---
 

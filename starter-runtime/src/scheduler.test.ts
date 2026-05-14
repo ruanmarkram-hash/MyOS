@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
+  withMissionResultContract,
+  withScheduledTaskContract,
+  computeNextRun,
+  stripAttentionActionsMarker,
+} from './scheduler.js';
+import {
   _initTestDatabase,
   createScheduledTask,
   getDueTasks,
@@ -12,6 +18,85 @@ import {
   resumeScheduledTask,
 } from './db.js';
 import type { ScheduledTask } from './db.js';
+
+describe('scheduler prompt contracts', () => {
+  it('adds the Mission Control result contract to mission prompts', () => {
+    const prompt = withMissionResultContract('Build the report.');
+
+    expect(prompt).toContain('MISSION_RESULT_JSON');
+    expect(prompt).toContain('"deliverables"');
+    expect(prompt).toContain('"review_required"');
+    expect(prompt).toContain('absolute file paths');
+  });
+
+  it('does not duplicate an existing mission result contract', () => {
+    const prompt = 'Do the work.\n\nMISSION_RESULT_JSON already present.';
+
+    expect(withMissionResultContract(prompt)).toBe(prompt);
+  });
+
+  it('adds the structured attention action contract to scheduled agent tasks', () => {
+    const prompt = withScheduledTaskContract('Produce user morning brief.');
+
+    expect(prompt).toContain('ATTENTION_ACTIONS');
+    expect(prompt).toContain('"suggested_agent"');
+    expect(prompt).toContain('"requires_ruan"');
+    expect(prompt).toContain('ATTENTION_ACTIONS: []');
+  });
+
+  it('does not duplicate an existing attention action contract', () => {
+    const prompt = 'Morning brief.\nATTENTION_ACTIONS: []';
+
+    expect(withScheduledTaskContract(prompt)).toBe(prompt);
+  });
+
+  it('strips bare ATTENTION_ACTIONS marker from response text', () => {
+    const response = "I'm here.\n\nATTENTION_ACTIONS: []";
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("I'm here.");
+  });
+
+  it('strips fenced-block ATTENTION_ACTIONS marker from response text', () => {
+    const response = "Task complete.\n\n```json\nATTENTION_ACTIONS\n[{\"title\":\"test\"}]\n```";
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("Task complete.");
+  });
+
+  it('strips fenced-block without json language tag', () => {
+    const response = "Done.\n\n```\nATTENTION_ACTIONS\n[]\n```";
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("Done.");
+  });
+
+  it('strips ATTENTION_ACTIONS with multi-line array', () => {
+    const response = `Status report here.
+
+ATTENTION_ACTIONS: [
+  {"title": "Action 1"},
+  {"title": "Action 2"}
+]`;
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("Status report here.");
+  });
+
+  it('handles text with no ATTENTION_ACTIONS marker', () => {
+    const response = "Just a normal response.";
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("Just a normal response.");
+  });
+
+  it('handles empty response after stripping marker', () => {
+    const response = "ATTENTION_ACTIONS: []";
+    const cleaned = stripAttentionActionsMarker(response);
+
+    expect(cleaned).toBe("");
+  });
+});
 
 describe('task state machine', () => {
   beforeEach(() => {

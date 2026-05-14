@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const mockConfig = vi.hoisted(() => ({ brain: 'sqlite' }));
+
 vi.mock('./db.js', () => ({
   searchMemories: vi.fn(),
   getRecentHighImportanceMemories: vi.fn(),
@@ -31,6 +33,19 @@ vi.mock('./gemini.js', () => ({
   parseJsonResponse: vi.fn(() => []),
 }));
 
+vi.mock('./config.js', () => ({
+  agentObsidianConfig: undefined,
+  get BRAIN() { return mockConfig.brain; },
+  GOOGLE_API_KEY: '',
+  MEMORY_NUDGE_INTERVAL_TURNS: 10,
+  MEMORY_NUDGE_INTERVAL_HOURS: 2,
+}));
+
+vi.mock('./brain/adapter.js', () => ({
+  ob1Available: vi.fn(() => false),
+  buildMemoryContextOb1: vi.fn(() => Promise.resolve('[OB1 memory]')),
+}));
+
 import {
   buildMemoryContext,
   saveConversationTurn,
@@ -48,6 +63,7 @@ import {
 } from './db.js';
 
 import { ingestConversationTurn } from './memory-ingest.js';
+import { buildMemoryContextOb1, ob1Available } from './brain/adapter.js';
 
 const mockSearchMemories = vi.mocked(searchMemories);
 const mockGetRecentHighImportance = vi.mocked(getRecentHighImportanceMemories);
@@ -57,6 +73,14 @@ const mockLogConversationTurn = vi.mocked(logConversationTurn);
 const mockSearchConsolidations = vi.mocked(searchConsolidations);
 const mockGetRecentConsolidations = vi.mocked(getRecentConsolidations);
 const mockIngest = vi.mocked(ingestConversationTurn);
+const mockOb1Available = vi.mocked(ob1Available);
+const mockBuildMemoryContextOb1 = vi.mocked(buildMemoryContextOb1);
+
+beforeEach(() => {
+  mockConfig.brain = 'sqlite';
+  mockOb1Available.mockReturnValue(false);
+  mockBuildMemoryContextOb1.mockResolvedValue('[OB1 memory]');
+});
 
 function makeMemory(overrides: Record<string, unknown> = {}) {
   return {
@@ -83,6 +107,9 @@ function makeMemory(overrides: Record<string, unknown> = {}) {
 describe('buildMemoryContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfig.brain = 'sqlite';
+    mockOb1Available.mockReturnValue(false);
+    mockBuildMemoryContextOb1.mockResolvedValue('[OB1 memory]');
     mockSearchConsolidations.mockReturnValue([]);
     mockGetRecentConsolidations.mockReturnValue([]);
   });
@@ -132,6 +159,44 @@ describe('buildMemoryContext', () => {
     expect(surfacedMemoryIds).toContain(10);
     expect(surfacedMemoryIds).toContain(20);
     expect(surfacedMemorySummaries.get(10)).toBe('A test memory');
+  });
+
+  it('passes strict agent isolation through memory retrieval and skips consolidation blocks when requested', async () => {
+    mockSearchMemories.mockReturnValue([
+      makeMemory({ id: 30, summary: 'Mason-only context', agent_id: 'mason' }),
+    ]);
+    mockGetRecentHighImportance.mockReturnValue([]);
+
+    const { contextText } = await buildMemoryContext('chat1', 'frontend', 'mason', {
+      strictAgentId: 'mason',
+      includeConsolidations: false,
+      includeTeamActivity: false,
+    });
+
+    expect(contextText).toContain('Mason-only context');
+    expect(mockSearchMemories).toHaveBeenCalledWith('chat1', 'frontend', 5, undefined, 'mason');
+    expect(mockGetRecentHighImportance).toHaveBeenCalledWith('chat1', 5, 'mason');
+    expect(mockSearchConsolidations).not.toHaveBeenCalled();
+    expect(mockGetRecentConsolidations).not.toHaveBeenCalled();
+  });
+
+  it('bypasses OB1 when strict agent isolation is requested', async () => {
+    mockConfig.brain = 'ob1';
+    mockOb1Available.mockReturnValue(true);
+    mockSearchMemories.mockReturnValue([
+      makeMemory({ id: 31, summary: 'Warden-only context', agent_id: 'warden' }),
+    ]);
+    mockGetRecentHighImportance.mockReturnValue([]);
+
+    const { contextText } = await buildMemoryContext('chat1', 'health', 'warden', {
+      strictAgentId: 'warden',
+      includeConsolidations: false,
+      includeTeamActivity: false,
+    });
+
+    expect(contextText).toContain('Warden-only context');
+    expect(mockBuildMemoryContextOb1).not.toHaveBeenCalled();
+    expect(mockSearchMemories).toHaveBeenCalledWith('chat1', 'health', 5, undefined, 'warden');
   });
 });
 

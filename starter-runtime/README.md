@@ -18,15 +18,11 @@
 
 > Your Claude Code CLI, delivered to your phone via Telegram.
 
-> **Note:** You're reading the bundled runtime inside the starter kit. You do **not** need to clone this separately or follow the "Getting Started" steps below — the starter kit's `intake-and-setup` skill handles installation for you. This README stays here as a reference for how the runtime works internally. To install, go back up one level and open `README.md` at the root of the starter kit.
-
-### Getting Started (standalone / advanced)
-
-If you want to run this runtime outside the starter kit:
+### Getting Started
 
 ```bash
-# (Already in this folder after the starter kit installs it to ~/claudeclaw/)
-cd ~/claudeclaw
+git clone https://github.com/earlyaidopters/claudeclaw-os.git
+cd claudeclaw-os
 npm install
 npm run setup
 ```
@@ -247,6 +243,39 @@ Then restart the bot (Ctrl+C and `npm start`, or restart the background service)
 **Do not** point Claude at the GitHub URL to read updates. Claude works with local files, so you need the repo cloned on your machine. `git pull` is how you stay current.
 
 **Upgrading from V1?** If you heavily customized V1, start fresh with V2 and copy over your `.env` and any CLAUDE.md customizations. If you kept V1 mostly stock, `git pull` will work.
+
+---
+
+## Cloud deployment (advanced)
+
+ClaudeClaw is designed to run on a local Mac or Linux host. Most setup paths assume you have run `claude login` on the host, you have a writable filesystem for SQLite plus skill caches, and process restarts mean your own machine or service manager restarts the bot. If you host it on Railway, Fly, Render, Hetzner, or another VM/container platform, two things break by default.
+
+### 1. Claude Code cannot authenticate
+
+The Claude Code CLI normally reads OAuth credentials created by `claude login` on the host. A fresh container has no such file. The subprocess exits immediately and ClaudeClaw retries, often surfacing only `Claude Code subprocess crashed. Retrying...`.
+
+Pick one of:
+
+- **Long-lived OAuth token (Max plan).** On your local machine run `claude setup-token`. Set the printed token on your cloud host as `CLAUDE_CODE_OAUTH_TOKEN=<token>`, then redeploy.
+- **API key (pay per token).** Get a key from [console.anthropic.com](https://console.anthropic.com). Set `ANTHROPIC_API_KEY=<key>`. This bypasses your subscription and bills per request.
+
+### 2. Container storage is ephemeral
+
+ClaudeClaw stores conversation history, extracted memories, scheduled tasks, messaging session keys, tokens, and audit logs in `store/claudeclaw.db`. Most cloud platforms wipe the filesystem on every redeploy. Without a persistent volume mount:
+
+- memory and session history reset
+- WhatsApp Web and similar browser sessions need reauthorization
+- scheduled tasks vanish
+- Mission Control queues drop
+
+Mount a persistent volume at the project root, or at minimum make `store/` persistent. If your platform does not offer persistence, ClaudeClaw can run as a stateless bot, but memory and messaging features will not behave like the local setup.
+
+### Other gotchas
+
+- **CPU/RAM:** each query can spawn a full Node plus Claude Code runtime. 512 MB minimum, 1 GB recommended.
+- **Outbound network:** the host must reach Anthropic, Telegram, and any optional services you enable.
+- **launchd/systemd:** skip local background-service setup if the platform manages the process.
+- **Cloudflare Tunnel:** if the dashboard is hosted on a public cloud URL, you usually do not need the local tunnel.
 
 ---
 

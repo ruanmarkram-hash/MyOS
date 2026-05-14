@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Video render temp (render-video.js output)
+.video-tmp-*/
+**/.video-tmp-*/
+
+# Personal asset index (real personal data — only keep the .example.json template)
+assets/personal-asset-index.json
+
+# Node / editor / OS
+node_modules/
+*.swp
+.idea/
+.vscode/
+Thumbs.db
+
+# Verification artifacts (screenshots, temporary test scripts)
+demos/_frames_*.png
+demos/_verify.js
+demos/_verify.mjs

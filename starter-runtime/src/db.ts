@@ -4,8 +4,9 @@ import fs from 'fs';
 import path from 'path';
 
 import { DB_ENCRYPTION_KEY, STORE_DIR } from './config.js';
-import { cosineSimilarity } from './embeddings.js';
+import { cosineSimilarity, getCompatibleEmbeddingModelNames, getEmbeddingModelName } from './embeddings.js';
 import { logger } from './logger.js';
+import { buildMissionManifest, parseMissionManifest, type MissionManifest } from './mission-manifest.js';
 
 // ── Field-Level Encryption (AES-256-GCM) ────────────────────────────
 // All message bodies (WhatsApp, Slack) are encrypted before storage
@@ -82,12 +83,18 @@ function createSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_tasks_next_run ON scheduled_tasks(status, next_run);
 
+    CREATE TABLE IF NOT EXISTS schema_state (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS sessions (
       chat_id    TEXT NOT NULL,
       agent_id   TEXT NOT NULL DEFAULT 'main',
+      provider   TEXT NOT NULL DEFAULT 'claude',
       session_id TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      PRIMARY KEY (chat_id, agent_id)
+      PRIMARY KEY (chat_id, agent_id, provider)
     );
 
     CREATE TABLE IF NOT EXISTS memories (
@@ -155,7 +162,10 @@ function createSchema(database: Database.Database): void {
       session_id  TEXT,
       role        TEXT NOT NULL,
       content     TEXT NOT NULL,
-      created_at  INTEGER NOT NULL
+      created_at  INTEGER NOT NULL,
+      source      TEXT NOT NULL DEFAULT 'telegram',
+      source_meeting_id TEXT,
+      source_turn_id TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_convo_log_chat ON conversation_log(chat_id, created_at DESC);
@@ -228,11 +238,55 @@ function createSchema(database: Database.Database): void {
       priority        INTEGER NOT NULL DEFAULT 0,
       created_at      INTEGER NOT NULL,
       started_at      INTEGER,
-      completed_at    INTEGER
+      completed_at    INTEGER,
+      manifest_json   TEXT,
+      notify_on_done  INTEGER NOT NULL DEFAULT 0,
+      notified_at     INTEGER,
+      delivered_at    INTEGER,
+      notify_attempt_count INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS idx_mission_status
       ON mission_tasks(assigned_agent, status, priority DESC, created_at ASC);
+
+    CREATE TABLE IF NOT EXISTS mission_reviews (
+      task_id          TEXT PRIMARY KEY,
+      review_status    TEXT NOT NULL,
+      resolution       TEXT,
+      followup_task_id TEXT,
+      instruction      TEXT,
+      snoozed_until    INTEGER,
+      reviewed_at      INTEGER,
+      created_at       INTEGER NOT NULL,
+      updated_at       INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mission_reviews_status
+      ON mission_reviews(review_status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mission_reviews_followup
+      ON mission_reviews(followup_task_id);
+
+    CREATE TABLE IF NOT EXISTS attention_items (
+      id                TEXT PRIMARY KEY,
+      source_kind       TEXT NOT NULL,
+      source_id         TEXT NOT NULL,
+      source_key        TEXT NOT NULL UNIQUE,
+      title             TEXT NOT NULL,
+      detail            TEXT NOT NULL,
+      severity          TEXT NOT NULL,
+      status            TEXT NOT NULL DEFAULT 'open',
+      linked_mission_id TEXT,
+      assigned_agent    TEXT,
+      href              TEXT,
+      created_at        INTEGER NOT NULL,
+      updated_at        INTEGER NOT NULL,
+      resolved_at       INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_attention_status
+      ON attention_items(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_attention_source
+      ON attention_items(source_kind, source_id);
+    CREATE INDEX IF NOT EXISTS idx_attention_mission
+      ON attention_items(linked_mission_id);
 
     CREATE TABLE IF NOT EXISTS meet_sessions (
       id              TEXT PRIMARY KEY,         -- session id from the provider's join response
@@ -261,7 +315,9 @@ function createSchema(database: Database.Database): void {
       duration_s  INTEGER,
       mode        TEXT NOT NULL DEFAULT 'direct',  -- direct | auto
       pinned_agent TEXT DEFAULT 'main',
-      entry_count INTEGER DEFAULT 0
+      entry_count INTEGER DEFAULT 0,
+      meeting_type TEXT NOT NULL DEFAULT 'voice',
+      chat_id TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_warroom_meetings_time ON warroom_meetings(started_at DESC);
 
@@ -345,6 +401,31 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_skill_usage_skill ON skill_usage(skill_id, triggered_at DESC);
 
+    -- Telegram durable outbox: every Telegram send is queued here so a
+    -- transient API failure (rate limit, network blip, Telegram outage)
+    -- doesn't drop the message. A scheduler-driven worker drains pending
+    -- rows with retries + dead-letter, the same model that mission-notify
+    -- uses for delivery confirmation but generalised to ALL sends.
+    CREATE TABLE IF NOT EXISTS telegram_outbox (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id            TEXT NOT NULL,
+      chat_id             TEXT NOT NULL,
+      payload             TEXT NOT NULL,
+      status              TEXT NOT NULL DEFAULT 'pending',
+      attempt_count       INTEGER NOT NULL DEFAULT 0,
+      last_error          TEXT,
+      last_attempt_at     INTEGER,
+      next_retry_at       INTEGER,
+      lease_expires_at    INTEGER,
+      telegram_message_id INTEGER,
+      created_at          INTEGER NOT NULL,
+      sent_at             INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_telegram_outbox_pending
+      ON telegram_outbox(status, next_retry_at);
+    -- idx_telegram_outbox_inflight is created in the migration block below
+    -- (after lease_expires_at is added to existing DBs).
+
     -- Phase 6.2: Session summaries
     CREATE TABLE IF NOT EXISTS session_summaries (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -355,7 +436,115 @@ function createSchema(database: Database.Database): void {
       total_cost  REAL NOT NULL DEFAULT 0,
       created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     );
+
+    -- Operation notifications: durable replacement for ScheduleWakeup.
+    -- An agent can promise "I'll check back in X" by enqueuing a row here;
+    -- the scheduler tick reads, fires, and stamps status='fired'. Survives
+    -- the agent's session ending (unlike ScheduleWakeup, which is cancelled
+    -- the moment the user replies).
+    CREATE TABLE IF NOT EXISTS operation_notifications (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id      TEXT NOT NULL,
+      chat_id       TEXT NOT NULL,
+      operation_id  TEXT NOT NULL,
+      fire_at       INTEGER NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'pending',
+      payload       TEXT NOT NULL,
+      fired_at      INTEGER,
+      cancelled_at  INTEGER,
+      created_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_op_notifications_pending
+      ON operation_notifications(status, fire_at);
+    CREATE INDEX IF NOT EXISTS idx_op_notifications_op
+      ON operation_notifications(operation_id);
+
+    -- Agent file edit history (Phase C1.a). Every successful save of a
+    -- gated agent file (initially just /HQ/CLAUDE.md, expands in C1.b)
+    -- appends a row here so we can revert from the dashboard and audit
+    -- who-changed-what. file_path is the user-facing logical path; real_path
+    -- is the post-realpath() absolute path written to disk (matters once
+    -- C1.b adds symlink-resolved per-agent files).
+    CREATE TABLE IF NOT EXISTS agent_file_history (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_path          TEXT NOT NULL,
+      real_path          TEXT NOT NULL,
+      content            TEXT NOT NULL,
+      content_sha        TEXT NOT NULL,
+      edited_by_chat_id  TEXT,
+      created_at         INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_file_history_path_time
+      ON agent_file_history(file_path, created_at DESC);
+
+    -- Dashboard settings/personalization KV. Used by newer dashboard
+    -- features such as text War Room standup roster configuration.
+    CREATE TABLE IF NOT EXISTS dashboard_settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
   `);
+}
+
+export interface AgentFileHistoryRow {
+  id: number;
+  file_path: string;
+  real_path: string;
+  content: string;
+  content_sha: string;
+  edited_by_chat_id: string | null;
+  created_at: number;
+}
+
+/**
+ * Append a row to agent_file_history. Returns the inserted row id.
+ * Caller is responsible for sha computation so the value stored here
+ * matches the bytes actually written to disk (atomic-write boundary).
+ */
+export function appendAgentFileHistory(row: {
+  filePath: string;
+  realPath: string;
+  content: string;
+  contentSha: string;
+  editedByChatId?: string | null;
+}): number {
+  // Encrypt content at rest. CLAUDE.md may contain operational rules,
+  // endpoints, kill-switch logic, or chat IDs. Same pattern as message stores.
+  // content_sha stays plaintext so the listing endpoint can show version IDs.
+  const now = Math.floor(Date.now() / 1000);
+  const result = db
+    .prepare(
+      `INSERT INTO agent_file_history
+         (file_path, real_path, content, content_sha, edited_by_chat_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      row.filePath,
+      row.realPath,
+      encryptField(row.content),
+      row.contentSha,
+      row.editedByChatId ?? null,
+      now,
+    );
+  return Number(result.lastInsertRowid);
+}
+
+/** Most-recent-first history for a single file_path. Decrypts content on read. */
+export function listAgentFileHistory(filePath: string, limit = 50): AgentFileHistoryRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, file_path, real_path, content, content_sha, edited_by_chat_id, created_at
+         FROM agent_file_history
+        WHERE file_path = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?`,
+    )
+    .all(filePath, limit) as AgentFileHistoryRow[];
+  return rows.map((r) => ({
+    ...r,
+    content: decryptField(r.content),
+  }));
 }
 
 export function initDatabase(): void {
@@ -380,8 +569,22 @@ export function initDatabase(): void {
   } catch { /* non-fatal on platforms that don't support chmod */ }
 }
 
+/** Add columns that may not exist in older databases.
+ * @internal — exported for migration upgrade tests.
+ */
+export function _runMigrations(database: Database.Database): void {
+  return runMigrations(database);
+}
+
 /** Add columns that may not exist in older databases. */
 function runMigrations(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS schema_state (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+
   // Add context_tokens column to token_usage (introduced for accurate context tracking)
   const cols = database.prepare(`PRAGMA table_info(token_usage)`).all() as Array<{ name: string }>;
   const hasContextTokens = cols.some((c) => c.name === 'context_tokens');
@@ -389,26 +592,77 @@ function runMigrations(database: Database.Database): void {
     database.exec(`ALTER TABLE token_usage ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 0`);
   }
 
-  // Multi-agent: migrate sessions table to composite primary key (chat_id, agent_id)
-  // Check if PK is composite by looking at pk column count in pragma
-  const sessionCols = database.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string; pk: number }>;
-  const pkCount = sessionCols.filter((c) => c.pk > 0).length;
-  if (pkCount < 2) {
-    // Need to recreate table with composite PK
-    database.exec(`
-      CREATE TABLE sessions_new (
-        chat_id    TEXT NOT NULL,
-        agent_id   TEXT NOT NULL DEFAULT 'main',
-        session_id TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (chat_id, agent_id)
-      );
-      INSERT OR IGNORE INTO sessions_new (chat_id, agent_id, session_id, updated_at)
-        SELECT chat_id, COALESCE(agent_id, 'main'), session_id, updated_at FROM sessions;
-      DROP TABLE sessions;
-      ALTER TABLE sessions_new RENAME TO sessions;
-    `);
-  }
+  // Multi-agent and multi-provider: sessions are isolated by chat, agent,
+  // and provider. Existing unscoped sessions were created before provider
+  // switching existed, so preserve continuity by treating them as Claude
+  // sessions. A one-shot repair also normalises any rows produced by the
+  // short-lived guessed-provider migration before this marker existed.
+  const migrateSessions = (): void => {
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      const marker = database
+        .prepare(`SELECT value FROM schema_state WHERE key = ?`)
+        .get('sessions_provider_scope_v2') as { value: string } | undefined;
+      if (marker?.value === 'complete') {
+        database.exec('COMMIT');
+        return;
+      }
+
+      const sessionCols = database.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string; pk: number }>;
+      const hasSessionAgentId = sessionCols.some((c) => c.name === 'agent_id');
+      const hasSessionProvider = sessionCols.some((c) => c.name === 'provider');
+      const pkCount = sessionCols.filter((c) => c.pk > 0).length;
+      const tempTable = `sessions_new_${process.pid}_${Date.now()}`;
+      const agentExpr = hasSessionAgentId ? `COALESCE(agent_id, 'main')` : `'main'`;
+      const providerExpr = hasSessionProvider ? `COALESCE(provider, 'claude')` : `'claude'`;
+
+      database.exec(`
+        CREATE TABLE ${tempTable} (
+          chat_id    TEXT NOT NULL,
+          agent_id   TEXT NOT NULL DEFAULT 'main',
+          provider   TEXT NOT NULL DEFAULT 'claude',
+          session_id TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (chat_id, agent_id, provider)
+        );
+      `);
+
+      if (!hasSessionAgentId || !hasSessionProvider || pkCount < 3) {
+        database.exec(`
+          INSERT OR IGNORE INTO ${tempTable} (chat_id, agent_id, provider, session_id, updated_at)
+            SELECT chat_id, ${agentExpr}, ${providerExpr}, session_id, updated_at FROM sessions;
+          DROP TABLE sessions;
+          ALTER TABLE ${tempTable} RENAME TO sessions;
+        `);
+      } else {
+        database.exec(`
+          INSERT OR IGNORE INTO ${tempTable} (chat_id, agent_id, provider, session_id, updated_at)
+            SELECT chat_id, agent_id,
+              CASE
+                WHEN provider = 'legacy' THEN 'claude'
+                WHEN provider = 'codex'
+                  AND session_id NOT LIKE '019_____-____-____-____-____________'
+                  THEN 'claude'
+                ELSE COALESCE(provider, 'claude')
+              END,
+              session_id, updated_at
+            FROM sessions
+            ORDER BY CASE provider WHEN 'claude' THEN 0 ELSE 1 END;
+          DROP TABLE sessions;
+          ALTER TABLE ${tempTable} RENAME TO sessions;
+        `);
+      }
+
+      database
+        .prepare(`INSERT OR REPLACE INTO schema_state (key, value) VALUES (?, ?)`)
+        .run('sessions_provider_scope_v2', 'complete');
+      database.exec('COMMIT');
+    } catch (err) {
+      try { database.exec('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    }
+  };
+  migrateSessions();
 
   const taskCols = database.prepare(`PRAGMA table_info(scheduled_tasks)`).all() as Array<{ name: string }>;
   if (!taskCols.some((c) => c.name === 'agent_id')) {
@@ -424,6 +678,40 @@ function runMigrations(database: Database.Database): void {
   if (!convoCols.some((c) => c.name === 'agent_id')) {
     database.exec(`ALTER TABLE conversation_log ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'`);
   }
+  if (!convoCols.some((c) => c.name === 'source')) {
+    database.exec(`ALTER TABLE conversation_log ADD COLUMN source TEXT NOT NULL DEFAULT 'telegram'`);
+  }
+  if (!convoCols.some((c) => c.name === 'source_meeting_id')) {
+    database.exec(`ALTER TABLE conversation_log ADD COLUMN source_meeting_id TEXT`);
+  }
+  if (!convoCols.some((c) => c.name === 'source_turn_id')) {
+    database.exec(`ALTER TABLE conversation_log ADD COLUMN source_turn_id TEXT`);
+  }
+  database.exec(`
+    DROP INDEX IF EXISTS idx_convo_warroom_user_turn;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_convo_warroom_user_turn
+      ON conversation_log(source, source_meeting_id, source_turn_id, agent_id)
+      WHERE source = 'warroom-text' AND role = 'user';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_convo_warroom_agent_turn
+      ON conversation_log(source, source_meeting_id, source_turn_id, agent_id)
+      WHERE source = 'warroom-text' AND role = 'assistant';
+  `);
+
+  const warRoomCols = database.prepare(`PRAGMA table_info(warroom_meetings)`).all() as Array<{ name: string }>;
+  const warRoomColNames = warRoomCols.map((c) => c.name);
+  if (warRoomColNames.length > 0 && !warRoomColNames.includes('meeting_type')) {
+    database.exec(`ALTER TABLE warroom_meetings ADD COLUMN meeting_type TEXT NOT NULL DEFAULT 'voice'`);
+  }
+  if (warRoomColNames.length > 0 && !warRoomColNames.includes('chat_id')) {
+    database.exec(`ALTER TABLE warroom_meetings ADD COLUMN chat_id TEXT NOT NULL DEFAULT ''`);
+  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS dashboard_settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+  `);
 
   // Task state machine: add started_at and last_status columns
   const taskColNames = taskCols.map((c) => c.name);
@@ -445,6 +733,72 @@ function runMigrations(database: Database.Database): void {
   if (missionColNames.length > 0 && !missionColNames.includes('model')) {
     database.exec(`ALTER TABLE mission_tasks ADD COLUMN model TEXT`);
   }
+  if (missionColNames.length > 0 && !missionColNames.includes('manifest_json')) {
+    database.exec(`ALTER TABLE mission_tasks ADD COLUMN manifest_json TEXT`);
+  }
+  // Mission tasks: --notify-on-done flag + notified_at timestamp (idempotency guard)
+  if (missionColNames.length > 0 && !missionColNames.includes('notify_on_done')) {
+    database.exec(`ALTER TABLE mission_tasks ADD COLUMN notify_on_done INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (missionColNames.length > 0 && !missionColNames.includes('notified_at')) {
+    database.exec(`ALTER TABLE mission_tasks ADD COLUMN notified_at INTEGER`);
+  }
+  // Mission tasks: durability split (locked 2026-05-04).
+  //   - notified_at = claim timestamp (set BEFORE spawn so concurrent fires bail)
+  //   - delivered_at = confirmed delivery (set ONLY after notify.sh exits 0
+  //     AND Telegram returns ok:true). The recovery sweep filters on
+  //     delivered_at IS NULL so a crash between claim and delivery is
+  //     recoverable. notify_attempt_count caps retries so a permanently
+  //     broken row doesn't loop forever.
+  if (missionColNames.length > 0 && !missionColNames.includes('delivered_at')) {
+    database.exec(`ALTER TABLE mission_tasks ADD COLUMN delivered_at INTEGER`);
+  }
+  if (missionColNames.length > 0 && !missionColNames.includes('notify_attempt_count')) {
+    database.exec(`ALTER TABLE mission_tasks ADD COLUMN notify_attempt_count INTEGER NOT NULL DEFAULT 0`);
+  }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS mission_reviews (
+      task_id          TEXT PRIMARY KEY,
+      review_status    TEXT NOT NULL,
+      resolution       TEXT,
+      followup_task_id TEXT,
+      instruction      TEXT,
+      snoozed_until    INTEGER,
+      reviewed_at      INTEGER,
+      created_at       INTEGER NOT NULL,
+      updated_at       INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mission_reviews_status
+      ON mission_reviews(review_status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mission_reviews_followup
+      ON mission_reviews(followup_task_id);
+  `);
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS attention_items (
+      id                TEXT PRIMARY KEY,
+      source_kind       TEXT NOT NULL,
+      source_id         TEXT NOT NULL,
+      source_key        TEXT NOT NULL UNIQUE,
+      title             TEXT NOT NULL,
+      detail            TEXT NOT NULL,
+      severity          TEXT NOT NULL,
+      status            TEXT NOT NULL DEFAULT 'open',
+      linked_mission_id TEXT,
+      assigned_agent    TEXT,
+      href              TEXT,
+      created_at        INTEGER NOT NULL,
+      updated_at        INTEGER NOT NULL,
+      resolved_at       INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_attention_status
+      ON attention_items(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_attention_source
+      ON attention_items(source_kind, source_id);
+    CREATE INDEX IF NOT EXISTS idx_attention_mission
+      ON attention_items(linked_mission_id);
+  `);
 
   // ── Memory V2 migration ──────────────────────────────────────────────
   // Detect old schema (has 'sector' column but no 'importance') and migrate.
@@ -603,7 +957,14 @@ function runMigrations(database: Database.Database): void {
     logger.info('Migration: added pinned column to memories table');
   }
 
-  // Mission Control: migrate assigned_agent from NOT NULL to nullable (allow unassigned tasks)
+  // Mission Control: migrate assigned_agent from NOT NULL to nullable (allow unassigned tasks).
+  //
+  // Ordering note: this rebuild runs AFTER additive migrations above (model,
+  // notify_on_done, notified_at). The old version did `INSERT INTO ... SELECT *`
+  // which broke once `mission_tasks` carried the additive columns but the
+  // _new table didn't. Fix: include the additive columns in the rebuild
+  // schema and use an explicit column list so the copy is order-independent
+  // and survives any future additive migration that runs above this block.
   const missionCols = database.prepare(`PRAGMA table_info(mission_tasks)`).all() as Array<{ name: string; notnull: number }>;
   const assignedCol = missionCols.find((c) => c.name === 'assigned_agent');
   if (assignedCol && assignedCol.notnull === 1) {
@@ -613,15 +974,42 @@ function runMigrations(database: Database.Database): void {
         assigned_agent TEXT, status TEXT NOT NULL DEFAULT 'queued',
         result TEXT, error TEXT, created_by TEXT NOT NULL DEFAULT 'dashboard',
         priority INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
-        started_at INTEGER, completed_at INTEGER
+        started_at INTEGER, completed_at INTEGER,
+        manifest_json TEXT,
+        model TEXT,
+        notify_on_done INTEGER NOT NULL DEFAULT 0,
+        notified_at INTEGER,
+        delivered_at INTEGER,
+        notify_attempt_count INTEGER NOT NULL DEFAULT 0
       );
-      INSERT INTO mission_tasks_new SELECT * FROM mission_tasks;
+      INSERT INTO mission_tasks_new
+        (id, title, prompt, assigned_agent, status, result, error, created_by,
+         priority, created_at, started_at, completed_at,
+         manifest_json, model, notify_on_done, notified_at, delivered_at, notify_attempt_count)
+      SELECT
+        id, title, prompt, assigned_agent, status, result, error, created_by,
+        priority, created_at, started_at, completed_at,
+        manifest_json, model, notify_on_done, notified_at, delivered_at, notify_attempt_count
+      FROM mission_tasks;
       DROP TABLE mission_tasks;
       ALTER TABLE mission_tasks_new RENAME TO mission_tasks;
       CREATE INDEX IF NOT EXISTS idx_mission_status
         ON mission_tasks(assigned_agent, status, priority DESC, created_at ASC);
     `);
     logger.info('Migration: made mission_tasks.assigned_agent nullable');
+  }
+
+  // Telegram outbox: add lease_expires_at for in-flight claim leases.
+  // Workers atomically CAS pending → in_flight with a lease; a sweep
+  // resets in_flight rows whose lease has expired (worker died mid-send).
+  const outboxCols = database.prepare(`PRAGMA table_info(telegram_outbox)`).all() as Array<{ name: string }>;
+  if (outboxCols.length > 0 && !outboxCols.some((c) => c.name === 'lease_expires_at')) {
+    database.exec(`ALTER TABLE telegram_outbox ADD COLUMN lease_expires_at INTEGER`);
+    logger.info('Migration: added lease_expires_at to telegram_outbox');
+  }
+  // Idempotent: covers fresh DBs (column created in schema) and migrated DBs (column just added above).
+  if (outboxCols.length > 0) {
+    database.exec(`CREATE INDEX IF NOT EXISTS idx_telegram_outbox_inflight ON telegram_outbox(status, lease_expires_at)`);
   }
 
   // Live Meetings: add provider column so we can track which platform
@@ -634,6 +1022,16 @@ function runMigrations(database: Database.Database): void {
   }
 }
 
+/** @internal - exported for migration upgrade tests. */
+export function _createSchema(database: Database.Database): void {
+  return createSchema(database);
+}
+
+/** @internal - exported for migration upgrade tests. */
+export function _runMigrationsForTest(database: Database.Database): void {
+  return runMigrations(database);
+}
+
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   // Use a test encryption key for field-level encryption
@@ -644,20 +1042,49 @@ export function _initTestDatabase(): void {
   runMigrations(db);
 }
 
-export function getSession(chatId: string, agentId = 'main'): string | undefined {
+/**
+ * @internal — test-only handle to the active DB so atomicity tests can
+ * inject controlled failure modes (e.g. drop a table mid-transaction to
+ * verify rollback). Production code MUST NOT import this; it bypasses
+ * every safety the regular API provides.
+ *
+ * Hard-guarded against accidental production import: throws unless we're
+ * running under Vitest. Caught in Codex review of ee63a3b — left
+ * unprotected, anyone could `import { _testDbHandle }` and bypass the
+ * DDL-stable API surface.
+ */
+export function _testDbHandle(): Database.Database {
+  // Vitest sets VITEST=true and process.env.VITEST_WORKER_ID in worker
+  // processes. Either signal is sufficient.
+  const inVitest = process.env.VITEST === 'true' || !!process.env.VITEST_WORKER_ID;
+  if (!inVitest) {
+    throw new Error(
+      '_testDbHandle is test-only and refuses to run outside Vitest. ' +
+      'Production code MUST NOT import this — it bypasses every safety ' +
+      'the regular DB API provides.',
+    );
+  }
+  return db;
+}
+
+export function getSession(chatId: string, agentId = 'main', provider = 'claude'): string | undefined {
   const row = db
-    .prepare('SELECT session_id FROM sessions WHERE chat_id = ? AND agent_id = ?')
-    .get(chatId, agentId) as { session_id: string } | undefined;
+    .prepare('SELECT session_id FROM sessions WHERE chat_id = ? AND agent_id = ? AND provider = ?')
+    .get(chatId, agentId, provider) as { session_id: string } | undefined;
   return row?.session_id;
 }
 
-export function setSession(chatId: string, sessionId: string, agentId = 'main'): void {
+export function setSession(chatId: string, sessionId: string, agentId = 'main', provider = 'claude'): void {
   db.prepare(
-    'INSERT OR REPLACE INTO sessions (chat_id, agent_id, session_id, updated_at) VALUES (?, ?, ?, ?)',
-  ).run(chatId, agentId, sessionId, new Date().toISOString());
+    'INSERT OR REPLACE INTO sessions (chat_id, agent_id, provider, session_id, updated_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(chatId, agentId, provider, sessionId, new Date().toISOString());
 }
 
-export function clearSession(chatId: string, agentId = 'main'): void {
+export function clearSession(chatId: string, agentId = 'main', provider = 'claude'): void {
+  db.prepare('DELETE FROM sessions WHERE chat_id = ? AND agent_id = ? AND provider = ?').run(chatId, agentId, provider);
+}
+
+export function clearAllSessions(chatId: string, agentId = 'main'): void {
   db.prepare('DELETE FROM sessions WHERE chat_id = ? AND agent_id = ?').run(chatId, agentId);
 }
 
@@ -677,7 +1104,6 @@ export interface Memory {
   salience: number;
   consolidated: number;
   pinned: number;      // 1 = permanent, never decays
-  suppressed?: number; // 1 = hidden from retrieval (soft-delete); optional for fixtures, DB default is 0
   embedding: string | null; // JSON array of floats
   created_at: number;
   accessed_at: number;
@@ -723,6 +1149,13 @@ export function saveStructuredMemory(
   return result.lastInsertRowid as number;
 }
 
+export function memoryExistsBySourceAndSummary(chatId: string, source: string, summary: string): boolean {
+  const row = db.prepare(
+    `SELECT 1 FROM memories WHERE chat_id = ? AND source = ? AND summary = ? LIMIT 1`,
+  ).get(chatId, source, summary) as { 1: number } | undefined;
+  return !!row;
+}
+
 const STOP_WORDS = new Set([
   'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
   'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
@@ -766,10 +1199,11 @@ export function searchMemories(
   query: string,
   limit = 5,
   queryEmbedding?: number[],
+  agentId?: string,
 ): Memory[] {
   // Strategy 1: Vector similarity search (if embedding provided)
   if (queryEmbedding && queryEmbedding.length > 0) {
-    const candidates = getMemoriesWithEmbeddings(chatId);
+    const candidates = getMemoriesWithEmbeddings(chatId, agentId);
     if (candidates.length > 0) {
       const scored = candidates
         .map((c) => ({ id: c.id, score: cosineSimilarity(queryEmbedding, c.embedding) }))
@@ -780,9 +1214,10 @@ export function searchMemories(
       if (scored.length > 0) {
         const ids = scored.map((s) => s.id);
         const placeholders = ids.map(() => '?').join(',');
+        const agentClause = agentId ? ' AND agent_id = ?' : '';
         const rows = db
-          .prepare(`SELECT * FROM memories WHERE id IN (${placeholders}) AND superseded_by IS NULL AND suppressed = 0`)
-          .all(...ids) as Memory[];
+          .prepare(`SELECT * FROM memories WHERE id IN (${placeholders}) AND superseded_by IS NULL${agentClause}`)
+          .all(...ids, ...(agentId ? [agentId] : [])) as Memory[];
         // Preserve similarity-score ordering (SQL IN doesn't guarantee order)
         const rowMap = new Map(rows.map((r) => [r.id, r]));
         return ids.map((id) => rowMap.get(id)).filter(Boolean) as Memory[];
@@ -804,11 +1239,11 @@ export function searchMemories(
     .prepare(
       `SELECT memories.* FROM memories
        JOIN memories_fts ON memories.id = memories_fts.rowid
-       WHERE memories_fts MATCH ? AND memories.chat_id = ? AND memories.superseded_by IS NULL AND memories.suppressed = 0
+       WHERE memories_fts MATCH ? AND memories.chat_id = ? AND memories.superseded_by IS NULL${agentId ? ' AND memories.agent_id = ?' : ''}
        ORDER BY rank
        LIMIT ?`,
     )
-    .all(ftsQuery, chatId, limit) as Memory[];
+    .all(ftsQuery, chatId, ...(agentId ? [agentId] : []), limit) as Memory[];
 
   if (results.length > 0) return results;
 
@@ -825,17 +1260,18 @@ export function searchMemories(
   results = db
     .prepare(
       `SELECT * FROM memories
-       WHERE chat_id = ? AND superseded_by IS NULL AND suppressed = 0 AND (${likeConditions})
+       WHERE chat_id = ? AND superseded_by IS NULL${agentId ? ' AND agent_id = ?' : ''} AND (${likeConditions})
        ORDER BY importance DESC, accessed_at DESC
        LIMIT ?`,
     )
-    .all(chatId, ...likeParams, limit) as Memory[];
+    .all(chatId, ...(agentId ? [agentId] : []), ...likeParams, limit) as Memory[];
 
   return results;
 }
 
 export function saveMemoryEmbedding(memoryId: number, embedding: number[]): void {
-  db.prepare('UPDATE memories SET embedding = ? WHERE id = ?').run(JSON.stringify(embedding), memoryId);
+  db.prepare('UPDATE memories SET embedding = ?, embedding_model = ? WHERE id = ?')
+    .run(JSON.stringify(embedding), getEmbeddingModelName(), memoryId);
 }
 
 /**
@@ -863,10 +1299,12 @@ export function saveStructuredMemoryAtomic(
   return txn();
 }
 
-export function getMemoriesWithEmbeddings(chatId: string): Array<{ id: number; embedding: number[]; summary: string; importance: number }> {
+export function getMemoriesWithEmbeddings(chatId: string, agentId?: string): Array<{ id: number; embedding: number[]; summary: string; importance: number }> {
+  const models = getCompatibleEmbeddingModelNames();
+  const placeholders = models.map(() => '?').join(',');
   const rows = db
-    .prepare('SELECT id, embedding, summary, importance FROM memories WHERE chat_id = ? AND embedding IS NOT NULL AND superseded_by IS NULL AND suppressed = 0')
-    .all(chatId) as Array<{ id: number; embedding: string; summary: string; importance: number }>;
+    .prepare(`SELECT id, embedding, summary, importance FROM memories WHERE chat_id = ?${agentId ? ' AND agent_id = ?' : ''} AND embedding IS NOT NULL AND superseded_by IS NULL AND embedding_model IN (${placeholders})`)
+    .all(chatId, ...(agentId ? [agentId] : []), ...models) as Array<{ id: number; embedding: string; summary: string; importance: number }>;
   return rows.map((r) => ({
     id: r.id,
     embedding: JSON.parse(r.embedding) as number[],
@@ -875,19 +1313,19 @@ export function getMemoriesWithEmbeddings(chatId: string): Array<{ id: number; e
   }));
 }
 
-export function getRecentHighImportanceMemories(chatId: string, limit = 5): Memory[] {
+export function getRecentHighImportanceMemories(chatId: string, limit = 5, agentId?: string): Memory[] {
   return db
     .prepare(
-      `SELECT * FROM memories WHERE chat_id = ? AND importance >= 0.5 AND suppressed = 0
+      `SELECT * FROM memories WHERE chat_id = ?${agentId ? ' AND agent_id = ?' : ''} AND importance >= 0.5
        ORDER BY accessed_at DESC LIMIT ?`,
     )
-    .all(chatId, limit) as Memory[];
+    .all(chatId, ...(agentId ? [agentId] : []), limit) as Memory[];
 }
 
 export function getRecentMemories(chatId: string, limit = 5): Memory[] {
   return db
     .prepare(
-      'SELECT * FROM memories WHERE chat_id = ? AND suppressed = 0 ORDER BY accessed_at DESC LIMIT ?',
+      'SELECT * FROM memories WHERE chat_id = ? ORDER BY accessed_at DESC LIMIT ?',
     )
     .all(chatId, limit) as Memory[];
 }
@@ -960,31 +1398,12 @@ export function unpinMemory(memoryId: number): void {
   db.prepare('UPDATE memories SET pinned = 0 WHERE id = ?').run(memoryId);
 }
 
-export function suppressMemory(memoryId: number): void {
-  db.prepare('UPDATE memories SET suppressed = 1 WHERE id = ?').run(memoryId);
-}
-
-export function unsuppressMemory(memoryId: number): void {
-  db.prepare('UPDATE memories SET suppressed = 0 WHERE id = ?').run(memoryId);
-}
-
-export function suppressMemoriesByQuery(chatId: string, query: string): number {
-  // Fuzzy match against summary, raw_text, entities, topics. Used by 'forget that' commands.
-  const like = `%${query}%`;
-  const result = db.prepare(
-    `UPDATE memories SET suppressed = 1
-     WHERE chat_id = ? AND suppressed = 0
-       AND (summary LIKE ? OR raw_text LIKE ? OR entities LIKE ? OR topics LIKE ?)`
-  ).run(chatId, like, like, like, like);
-  return result.changes;
-}
-
 // ── Consolidation CRUD ──────────────────────────────────────────────
 
 export function getUnconsolidatedMemories(chatId: string, limit = 20): Memory[] {
   return db
     .prepare(
-      `SELECT * FROM memories WHERE chat_id = ? AND consolidated = 0 AND suppressed = 0
+      `SELECT * FROM memories WHERE chat_id = ? AND consolidated = 0
        ORDER BY created_at DESC LIMIT ?`,
     )
     .all(chatId, limit) as Memory[];
@@ -1006,13 +1425,15 @@ export function saveConsolidation(
 
 export function saveConsolidationEmbedding(consolidationId: number, embedding: number[]): void {
   db.prepare('UPDATE consolidations SET embedding = ?, embedding_model = ? WHERE id = ?')
-    .run(JSON.stringify(embedding), 'embedding-001', consolidationId);
+    .run(JSON.stringify(embedding), getEmbeddingModelName(), consolidationId);
 }
 
 export function getConsolidationsWithEmbeddings(chatId: string): Array<{ id: number; embedding: number[]; summary: string; insight: string }> {
+  const models = getCompatibleEmbeddingModelNames();
+  const placeholders = models.map(() => '?').join(',');
   const rows = db
-    .prepare('SELECT id, embedding, summary, insight FROM consolidations WHERE chat_id = ? AND embedding IS NOT NULL AND embedding_model = ?')
-    .all(chatId, 'embedding-001') as Array<{ id: number; embedding: string; summary: string; insight: string }>;
+    .prepare(`SELECT id, embedding, summary, insight FROM consolidations WHERE chat_id = ? AND embedding IS NOT NULL AND embedding_model IN (${placeholders})`)
+    .all(chatId, ...models) as Array<{ id: number; embedding: string; summary: string; insight: string }>;
   return rows.map((r) => ({ ...r, embedding: JSON.parse(r.embedding) as number[] }));
 }
 
@@ -1140,6 +1561,34 @@ export function updateScheduledTaskModel(id: string, model: string | null): void
   db.prepare(`UPDATE scheduled_tasks SET model = ? WHERE id = ?`).run(model, id);
 }
 
+export function updateScheduledTask(
+  id: string,
+  patch: { prompt?: string; schedule?: string; nextRun?: number; agentId?: string },
+): ScheduledTask | null {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if (patch.prompt !== undefined) {
+    sets.push('prompt = ?');
+    values.push(patch.prompt);
+  }
+  if (patch.schedule !== undefined) {
+    sets.push('schedule = ?');
+    values.push(patch.schedule);
+  }
+  if (patch.nextRun !== undefined) {
+    sets.push('next_run = ?');
+    values.push(patch.nextRun);
+  }
+  if (patch.agentId !== undefined) {
+    sets.push('agent_id = ?');
+    values.push(patch.agentId);
+  }
+  if (sets.length > 0) {
+    db.prepare(`UPDATE scheduled_tasks SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+  }
+  return db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as ScheduledTask | undefined || null;
+}
+
 export function getDueTasks(agentId = 'main'): ScheduledTask[] {
   const now = Math.floor(Date.now() / 1000);
   return db
@@ -1191,6 +1640,27 @@ export function updateTaskAfterRun(
   ).run(now, nextRun, result.slice(0, 4000), lastStatus, id);
 }
 
+export function clearScheduledTaskAttention(id: string, result = 'Cleared from Home Needs Attention.', includeRunning = false): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const update = db.prepare(
+    `UPDATE scheduled_tasks
+     SET status = 'active',
+         last_run = COALESCE(last_run, ?),
+         last_result = ?,
+         last_status = 'success',
+         started_at = NULL
+	     WHERE id = ? AND (? = 1 OR status != 'running')`,
+  ).run(now, result.slice(0, 4000), id, includeRunning ? 1 : 0);
+  return update.changes > 0;
+}
+
+export function resetScheduledTaskRun(id: string): boolean {
+  const update = db.prepare(
+    `UPDATE scheduled_tasks SET status = 'active', started_at = NULL WHERE id = ? AND status = 'running'`,
+  ).run(id);
+  return update.changes > 0;
+}
+
 export function resetStuckTasks(agentId: string): number {
   const result = db.prepare(
     `UPDATE scheduled_tasks SET status = 'active', started_at = NULL WHERE status = 'running' AND agent_id = ?`,
@@ -1208,6 +1678,156 @@ export function pauseScheduledTask(id: string): void {
 
 export function resumeScheduledTask(id: string): void {
   db.prepare(`UPDATE scheduled_tasks SET status = 'active' WHERE id = ?`).run(id);
+}
+
+// ── Durable Attention Items ──────────────────────────────────────────
+
+export type AttentionItemStatus = 'open' | 'assigned' | 'resolved' | 'archived';
+
+export interface AttentionItem {
+  id: string;
+  source_kind: 'brief' | 'mission' | 'schedule';
+  source_id: string;
+  source_key: string;
+  title: string;
+  detail: string;
+  severity: 'high' | 'medium' | 'low';
+  status: AttentionItemStatus;
+  linked_mission_id: string | null;
+  assigned_agent: string | null;
+  href: string | null;
+  created_at: number;
+  updated_at: number;
+  resolved_at: number | null;
+}
+
+function attentionIdForSource(sourceKey: string): string {
+  return 'att_' + crypto.createHash('sha1').update(sourceKey).digest('hex').slice(0, 16);
+}
+
+export function getAttentionItem(id: string): AttentionItem | null {
+  return (db.prepare('SELECT * FROM attention_items WHERE id = ?').get(id) as AttentionItem | undefined) ?? null;
+}
+
+export function getAttentionItemBySourceKey(sourceKey: string): AttentionItem | null {
+  return (db.prepare('SELECT * FROM attention_items WHERE source_key = ?').get(sourceKey) as AttentionItem | undefined) ?? null;
+}
+
+export function listOpenAttentionItems(limit = 50): AttentionItem[] {
+  return db.prepare(
+    `SELECT * FROM attention_items
+     WHERE status = 'open'
+     ORDER BY
+       CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+       updated_at DESC
+     LIMIT ?`,
+  ).all(limit) as AttentionItem[];
+}
+
+export function listActiveAttentionItems(limit = 50): AttentionItem[] {
+  return db.prepare(
+    `SELECT * FROM attention_items
+     WHERE status IN ('open', 'assigned')
+     ORDER BY
+       CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+       updated_at DESC
+     LIMIT ?`,
+  ).all(limit) as AttentionItem[];
+}
+
+export function upsertAttentionItem(input: {
+  sourceKind: AttentionItem['source_kind'];
+  sourceId: string;
+  sourceKey: string;
+  title: string;
+  detail: string;
+  severity: AttentionItem['severity'];
+  href?: string | null;
+}): AttentionItem {
+  const now = Math.floor(Date.now() / 1000);
+  const existing = db.prepare('SELECT * FROM attention_items WHERE source_key = ?').get(input.sourceKey) as AttentionItem | undefined;
+  if (existing) {
+    if (existing.status === 'resolved' || existing.status === 'archived' || existing.status === 'assigned') {
+      return existing;
+    }
+    db.prepare(
+      `UPDATE attention_items
+       SET title = ?, detail = ?, severity = ?, href = ?, updated_at = ?
+       WHERE id = ? AND status = 'open'`,
+    ).run(input.title.slice(0, 220), input.detail.slice(0, 1000), input.severity, input.href ?? null, now, existing.id);
+    return getAttentionItem(existing.id)!;
+  }
+
+  const id = attentionIdForSource(input.sourceKey);
+  db.prepare(
+    `INSERT INTO attention_items (
+      id, source_kind, source_id, source_key, title, detail, severity,
+      status, linked_mission_id, assigned_agent, href, created_at, updated_at, resolved_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', NULL, NULL, ?, ?, ?, NULL)`,
+  ).run(
+    id,
+    input.sourceKind,
+    input.sourceId,
+    input.sourceKey,
+    input.title.slice(0, 220),
+    input.detail.slice(0, 1000),
+    input.severity,
+    input.href ?? null,
+    now,
+    now,
+  );
+  return getAttentionItem(id)!;
+}
+
+export function markAttentionAssigned(id: string, missionId: string, agentId: string | null): AttentionItem | null {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE attention_items
+     SET status = 'assigned', linked_mission_id = ?, assigned_agent = ?, updated_at = ?, resolved_at = NULL
+     WHERE id = ?`,
+  ).run(missionId, agentId, now, id);
+  return getAttentionItem(id);
+}
+
+export function claimOpenAttentionItem(id: string): AttentionItem | null {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare(
+    `UPDATE attention_items
+     SET status = 'assigned', assigned_agent = 'autofix', updated_at = ?, resolved_at = NULL
+     WHERE id = ? AND status = 'open'`,
+  ).run(now, id);
+  if (result.changes === 0) return null;
+  return getAttentionItem(id);
+}
+
+export function releaseAutofixAttentionClaim(id: string): AttentionItem | null {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE attention_items
+     SET status = 'open', assigned_agent = NULL, updated_at = ?
+     WHERE id = ? AND status = 'assigned' AND assigned_agent = 'autofix' AND linked_mission_id IS NULL`,
+  ).run(now, id);
+  return getAttentionItem(id);
+}
+
+export function archiveOpenAttentionItem(id: string): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare(
+    `UPDATE attention_items
+     SET status = 'archived', updated_at = ?, resolved_at = ?
+     WHERE id = ? AND status = 'open'`,
+  ).run(now, now, id);
+  return result.changes > 0;
+}
+
+export function updateAttentionStatus(id: string, status: AttentionItemStatus): AttentionItem | null {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE attention_items
+     SET status = ?, updated_at = ?, resolved_at = CASE WHEN ? IN ('resolved', 'archived') THEN ? ELSE resolved_at END
+     WHERE id = ?`,
+  ).run(status, now, status, now, id);
+  return getAttentionItem(id);
 }
 
 /**
@@ -1978,12 +2598,31 @@ export function getInterAgentTasks(
 
 // ── Mission Tasks (one-shot async tasks for Mission Control) ─────────
 
+/**
+ * Valid values for `mission_tasks.status` (TEXT column, no CHECK constraint
+ * — values documented here):
+ *   - queued       Created, not yet claimed by an agent
+ *   - running      Claimed and executing
+ *   - completed    Terminal: agent finished cleanly with a result
+ *   - failed       Terminal: agent errored / aborted with NO commits since
+ *                  dispatch. True zero-progress failure
+ *   - partial      Terminal (added 2026-05-04): agent hit max-turns/timeout
+ *                  BUT made >=1 commit since dispatch. Distinguishes
+ *                  "ran out of runway with real work landed" from "dead
+ *                  on arrival." Read-side queries that filter for
+ *                  `status = 'completed'` correctly EXCLUDE partial — a
+ *                  partial requires human review and re-dispatch
+ *   - cancelled    Terminal: user cancelled before completion
+ *
+ * Forward-compat: notify-state 'timed_out' is NOT persisted as a status
+ * (timeouts collapse into 'failed' or 'partial' depending on commits)
+ */
 export interface MissionTask {
   id: string;
   title: string;
   prompt: string;
   assigned_agent: string | null;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'partial' | 'cancelled';
   result: string | null;
   error: string | null;
   created_by: string;
@@ -1991,7 +2630,27 @@ export interface MissionTask {
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
+  manifest_json: string | null;
   model: string | null;
+  notify_on_done: number;
+  notified_at: number | null;
+  delivered_at: number | null;
+  notify_attempt_count: number;
+}
+
+export type MissionReviewStatus = 'needs_review' | 'needs_triage' | 'waiting_followup' | 'resolved' | 'archived' | 'snoozed';
+export type MissionReviewResolution = 'approved' | 'retried' | 'delegated' | 'followup_completed' | 'superseded' | 'ignored' | null;
+
+export interface MissionReview {
+  task_id: string;
+  review_status: MissionReviewStatus;
+  resolution: MissionReviewResolution;
+  followup_task_id: string | null;
+  instruction: string | null;
+  snoozed_until: number | null;
+  reviewed_at: number | null;
+  created_at: number;
+  updated_at: number;
 }
 
 export function createMissionTask(
@@ -2002,12 +2661,161 @@ export function createMissionTask(
   createdBy = 'dashboard',
   priority = 0,
   model: string | null = null,
+  notifyOnDone = false,
 ): void {
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
-    `INSERT INTO mission_tasks (id, title, prompt, assigned_agent, status, created_by, priority, created_at, model)
-     VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
-  ).run(id, title, prompt, assignedAgent, createdBy, priority, now, model);
+    `INSERT INTO mission_tasks (id, title, prompt, assigned_agent, status, created_by, priority, created_at, model, notify_on_done)
+     VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+  ).run(id, title, prompt, assignedAgent, createdBy, priority, now, model, notifyOnDone ? 1 : 0);
+}
+
+/**
+ * Claim a mission task for notification delivery. Returns true if the
+ * row was updated (i.e. delivered_at IS NULL and notify_on_done = 1).
+ *
+ * Semantics changed 2026-05-04: the claim filter is `delivered_at IS NULL`,
+ * not `notified_at IS NULL`. This is what makes crash-mid-spawn recoverable:
+ * if a process dies between marking notified_at and spawning notify.sh,
+ * delivered_at remains NULL and the recovery sweep can re-claim the row
+ * by stamping a fresh notified_at. The same-process double-fire guard
+ * is the in-memory `runningTaskIds` set + `task.delivered_at` early-return
+ * inside notifyMissionDone. We also bump notify_attempt_count on each
+ * claim so the sweep can stop retrying a permanently broken row.
+ */
+export function markMissionNotified(id: string): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare(
+    `UPDATE mission_tasks
+       SET notified_at = ?,
+           notify_attempt_count = notify_attempt_count + 1
+     WHERE id = ? AND notify_on_done = 1 AND delivered_at IS NULL`,
+  ).run(now, id);
+  return result.changes > 0;
+}
+
+/**
+ * Clear notified_at on a mission task. Used to release a claim when
+ * delivery fails so the next recovery sweep can retry without waiting
+ * for an in-flight TTL. Safe no-op once delivered_at is set (we never
+ * clear notified_at on a delivered row).
+ */
+export function resetMissionNotified(id: string): void {
+  db.prepare(
+    `UPDATE mission_tasks SET notified_at = NULL
+     WHERE id = ? AND delivered_at IS NULL`,
+  ).run(id);
+}
+
+/**
+ * Stamp delivered_at to mark the mission notification as durably handed
+ * off. Since the outbox migration this means "row inserted into
+ * telegram_outbox with status='pending'"; the outbox owns retries +
+ * dead-letter from there. The recovery sweep filters on
+ * `delivered_at IS NULL` so a crash before this stamp re-enqueues.
+ *
+ * Prefer enqueueTelegramAndMarkMissionDelivered() when paired with an
+ * outbox enqueue — non-atomic enqueue + mark sequences leave a
+ * duplicate-delivery window if the process crashes between them.
+ */
+export function markMissionDelivered(id: string): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE mission_tasks SET delivered_at = ? WHERE id = ?`,
+  ).run(now, id);
+}
+
+/**
+ * Atomic mission-notify handoff: insert the outbox row AND stamp
+ * delivered_at on the mission task, in a single transaction. Closes
+ * the duplicate-delivery window where a crash between two non-atomic
+ * writes leaves delivered_at NULL but the outbox row already exists,
+ * so the next recovery sweep re-enqueues a duplicate.
+ *
+ * Codex review of ee63a3b flagged this gap. Use this in
+ * notifyMissionDone instead of enqueueTelegramSend + markMissionDelivered.
+ *
+ * Returns the outbox row id on success. Throws on any DB failure (the
+ * caller is expected to fall back to a non-durable path or retry).
+ */
+export function enqueueTelegramAndMarkMissionDelivered(
+  missionId: string,
+  agentId: string,
+  chatId: string,
+  payload: string,
+): number {
+  const now = Math.floor(Date.now() / 1000);
+  let outboxId = 0;
+  const txn = db.transaction(() => {
+    const insertInfo = db.prepare(
+      `INSERT INTO telegram_outbox (agent_id, chat_id, payload, status, created_at)
+       VALUES (?, ?, ?, 'pending', ?)`,
+    ).run(agentId, chatId, payload, now);
+    outboxId = Number(insertInfo.lastInsertRowid);
+    db.prepare(
+      `UPDATE mission_tasks SET delivered_at = ? WHERE id = ?`,
+    ).run(now, missionId);
+  });
+  txn();
+  return outboxId;
+}
+
+/** @internal — test seam to age a row's completed_at for recovery sweep tests. */
+export function _setMissionCompletedAtForTest(
+  id: string,
+  completedAt: number,
+  status: 'completed' | 'failed' | 'partial' | 'timed_out' = 'completed',
+): void {
+  db.prepare(
+    `UPDATE mission_tasks SET completed_at = ?, status = ? WHERE id = ?`,
+  ).run(completedAt, status, id);
+}
+
+/** @internal — test seam to set notify_attempt_count for backoff tests. */
+export function _setMissionNotifyAttemptCountForTest(id: string, count: number): void {
+  db.prepare(
+    `UPDATE mission_tasks SET notify_attempt_count = ? WHERE id = ?`,
+  ).run(count, id);
+}
+
+/**
+ * Find terminal mission tasks whose notify-on-done ping was never delivered.
+ * Used by the scheduler startup sweep to recover from a crash that hit
+ * between completeMissionTask() and notifyMissionDone().
+ *
+ * The graceSeconds window prevents racing with an in-flight notification
+ * dispatched by the normal hot path of the scheduler.
+ */
+export function getMissionTasksNeedingNotificationRecovery(
+  graceSeconds = 60,
+  maxAttempts = 5,
+): MissionTask[] {
+  const cutoff = Math.floor(Date.now() / 1000) - graceSeconds;
+  return db
+    .prepare(
+      `SELECT * FROM mission_tasks
+       WHERE notify_on_done = 1
+         AND delivered_at IS NULL
+         AND notify_attempt_count < ?
+         AND status IN ('completed', 'failed', 'partial', 'timed_out')
+         AND completed_at IS NOT NULL
+         AND completed_at < ?
+       ORDER BY completed_at ASC`,
+    )
+    .all(maxAttempts, cutoff) as MissionTask[];
+}
+
+/**
+ * Look up the most recent chat_id this agent has had a session for.
+ * Used by the mission-task notify path to route pings to the right chat.
+ * Returns null if the agent has no session row.
+ */
+export function getLatestChatIdForAgent(agentId: string): string | null {
+  const row = db.prepare(
+    `SELECT chat_id FROM sessions WHERE agent_id = ?
+     ORDER BY updated_at DESC LIMIT 1`,
+  ).get(agentId) as { chat_id: string } | undefined;
+  return row?.chat_id ?? null;
 }
 
 export function getUnassignedMissionTasks(): MissionTask[] {
@@ -2047,6 +2855,59 @@ export function getMissionTask(id: string): MissionTask | null {
   return (db.prepare('SELECT * FROM mission_tasks WHERE id = ?').get(id) as MissionTask) ?? null;
 }
 
+export function getMissionReview(taskId: string): MissionReview | null {
+  return (db.prepare('SELECT * FROM mission_reviews WHERE task_id = ?').get(taskId) as MissionReview) ?? null;
+}
+
+export function upsertMissionReview(input: {
+  taskId: string;
+  reviewStatus: MissionReviewStatus;
+  resolution?: MissionReviewResolution;
+  followupTaskId?: string | null;
+  instruction?: string | null;
+  snoozedUntil?: number | null;
+  reviewedAt?: number | null;
+}): MissionReview {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(`
+    INSERT INTO mission_reviews (
+      task_id, review_status, resolution, followup_task_id, instruction,
+      snoozed_until, reviewed_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(task_id) DO UPDATE SET
+      review_status = excluded.review_status,
+      resolution = excluded.resolution,
+      followup_task_id = excluded.followup_task_id,
+      instruction = excluded.instruction,
+      snoozed_until = excluded.snoozed_until,
+      reviewed_at = excluded.reviewed_at,
+      updated_at = excluded.updated_at
+  `).run(
+    input.taskId,
+    input.reviewStatus,
+    input.resolution ?? null,
+    input.followupTaskId ?? null,
+    input.instruction ?? null,
+    input.snoozedUntil ?? null,
+    input.reviewedAt ?? (input.reviewStatus === 'resolved' || input.reviewStatus === 'archived' ? now : null),
+    now,
+    now,
+  );
+  return getMissionReview(input.taskId)!;
+}
+
+export function updateMissionReviewState(taskId: string, reviewStatus: MissionReviewStatus, resolution?: MissionReviewResolution): MissionReview {
+  const existing = getMissionReview(taskId);
+  return upsertMissionReview({
+    taskId,
+    reviewStatus,
+    resolution: resolution ?? existing?.resolution ?? null,
+    followupTaskId: existing?.followup_task_id ?? null,
+    instruction: existing?.instruction ?? null,
+    snoozedUntil: reviewStatus === 'snoozed' ? existing?.snoozed_until ?? null : null,
+  });
+}
+
 export function claimNextMissionTask(agentId: string): MissionTask | null {
   const txn = db.transaction(() => {
     const task = db
@@ -2069,13 +2930,78 @@ export function claimNextMissionTask(agentId: string): MissionTask | null {
 export function completeMissionTask(
   id: string,
   result: string | null,
-  status: 'completed' | 'failed',
+  status: 'completed' | 'failed' | 'partial',
   error?: string,
 ): void {
   const now = Math.floor(Date.now() / 1000);
-  db.prepare(
-    `UPDATE mission_tasks SET status = ?, result = ?, error = ?, completed_at = ? WHERE id = ?`,
-  ).run(status, result, error ?? null, now, id);
+  const task = getMissionTask(id);
+  const manifest = task
+    ? buildMissionManifest({ status, title: task.title, prompt: task.prompt, result, error })
+    : null;
+  const txn = db.transaction(() => {
+    db.prepare(
+      `UPDATE mission_tasks SET status = ?, result = ?, error = ?, completed_at = ?, manifest_json = ? WHERE id = ?`,
+    ).run(status, result, error ?? null, now, manifest ? JSON.stringify(manifest) : null, id);
+
+    if (!task || !manifest) return;
+    const reviewStatus = missionReviewStatusForTerminal(status, manifest);
+    if (reviewStatus) {
+      upsertMissionReview({
+        taskId: id,
+        reviewStatus,
+      });
+    }
+    if (status === 'failed' || status === 'partial') {
+      upsertAttentionItem({
+        sourceKind: 'mission',
+        sourceId: id,
+        sourceKey: terminalMissionAttentionSourceKey(id),
+        title: task.title,
+        detail: terminalMissionAttentionDetailFromManifest(status, manifest, error),
+        severity: status === 'failed' ? 'high' : 'medium',
+        href: `/review?task=${encodeURIComponent(id)}`,
+      });
+    }
+  });
+  txn();
+}
+
+function missionReviewStatusForTerminal(
+  status: 'completed' | 'failed' | 'partial',
+  manifest: MissionManifest,
+): MissionReviewStatus | null {
+  if (status === 'failed' || status === 'partial') return 'needs_triage';
+  if (manifest.route === 'needs_triage') return 'needs_triage';
+  if (manifest.route === 'needs_review') return 'needs_review';
+  return null;
+}
+
+function terminalMissionAttentionSourceKey(id: string): string {
+  return `mission:${id}:terminal`;
+}
+
+function terminalMissionAttentionDetailFromManifest(
+  status: 'completed' | 'failed' | 'partial',
+  manifest: MissionManifest,
+  error?: string,
+): string {
+  const blocker = manifest.blockers.find(Boolean);
+  const detail = blocker
+    || (status === 'partial' ? manifest.nextAction : null)
+    || error
+    || manifest.summary
+    || (status === 'partial' ? 'Mission landed partial work and needs review.' : 'Mission failed and needs triage.');
+  return detail.length > 1000 ? `${detail.slice(0, 997)}...` : detail;
+}
+
+export function getMissionManifest(task: MissionTask): MissionManifest {
+  return parseMissionManifest(task.manifest_json) ?? buildMissionManifest({
+    status: task.status,
+    title: task.title,
+    prompt: task.prompt,
+    result: task.result,
+    error: task.error,
+  });
 }
 
 export function cancelMissionTask(id: string): boolean {
@@ -2086,25 +3012,81 @@ export function cancelMissionTask(id: string): boolean {
 }
 
 export function deleteMissionTask(id: string): boolean {
-  const result = db.prepare(
-    `DELETE FROM mission_tasks WHERE id = ? AND status IN ('completed', 'cancelled', 'failed')`,
-  ).run(id);
-  return result.changes > 0;
+  let changes = 0;
+  const txn = db.transaction(() => {
+    const now = Math.floor(Date.now() / 1000);
+    const result = db.prepare(
+      `DELETE FROM mission_tasks WHERE id = ? AND status IN ('completed', 'cancelled', 'failed', 'partial')`,
+    ).run(id);
+    changes = result.changes;
+    if (changes === 0) return;
+
+    db.prepare(
+      `UPDATE mission_reviews
+       SET review_status = 'archived', resolution = COALESCE(resolution, 'ignored'), reviewed_at = COALESCE(reviewed_at, ?), updated_at = ?
+       WHERE task_id = ? AND review_status NOT IN ('resolved', 'archived')`,
+    ).run(now, now, id);
+    db.prepare(
+      `UPDATE attention_items
+       SET status = 'archived', updated_at = ?, resolved_at = COALESCE(resolved_at, ?)
+       WHERE status IN ('open', 'assigned')
+         AND ((source_kind = 'mission' AND source_id = ?) OR linked_mission_id = ?)`,
+    ).run(now, now, id, id);
+  });
+  txn();
+  return changes > 0;
 }
 
 export function cleanupOldMissionTasks(olderThanDays = 7): number {
   const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 86400;
   const result = db.prepare(
-    `DELETE FROM mission_tasks WHERE status IN ('completed', 'cancelled', 'failed') AND completed_at < ?`,
+    `DELETE FROM mission_tasks
+     WHERE status IN ('completed', 'cancelled', 'failed', 'partial')
+       AND completed_at < ?
+       AND NOT EXISTS (
+         SELECT 1 FROM mission_reviews
+         WHERE mission_reviews.task_id = mission_tasks.id
+           AND mission_reviews.review_status IN ('needs_review', 'needs_triage', 'waiting_followup', 'snoozed')
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM attention_items
+         WHERE attention_items.status IN ('open', 'assigned')
+           AND (
+             (attention_items.source_kind = 'mission' AND attention_items.source_id = mission_tasks.id)
+             OR attention_items.linked_mission_id = mission_tasks.id
+           )
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM mission_reviews
+         WHERE mission_reviews.followup_task_id = mission_tasks.id
+           AND mission_reviews.review_status IN ('needs_review', 'needs_triage', 'waiting_followup', 'snoozed')
+       )`,
   ).run(cutoff);
   return result.changes;
 }
 
 export function reassignMissionTask(id: string, newAgent: string): boolean {
   const result = db.prepare(
-    `UPDATE mission_tasks SET assigned_agent = ? WHERE id = ? AND status = 'queued'`,
+    `UPDATE mission_tasks SET assigned_agent = ? WHERE id = ? AND status != 'running'`,
   ).run(newAgent, id);
   return result.changes > 0;
+}
+
+export function appendMissionTaskInstruction(id: string, instruction: string): MissionTask | null {
+  const clean = instruction.trim().slice(0, 2000);
+  if (!clean) return getMissionTask(id);
+  const task = getMissionTask(id);
+  if (!task || task.status === 'running') return task;
+  const nextPrompt = [
+    task.prompt,
+    '',
+    'Additional instructions from user:',
+    clean,
+  ].join('\n').slice(0, 12000);
+  db.prepare(
+    `UPDATE mission_tasks SET prompt = ? WHERE id = ? AND status != 'running'`,
+  ).run(nextPrompt, id);
+  return getMissionTask(id);
 }
 
 export function assignMissionTask(id: string, agent: string): boolean {
@@ -2116,13 +3098,28 @@ export function assignMissionTask(id: string, agent: string): boolean {
 
 export function getMissionTaskHistory(limit = 30, offset = 0): { tasks: MissionTask[]; total: number } {
   const total = (db.prepare(
-    `SELECT COUNT(*) as c FROM mission_tasks WHERE status IN ('completed', 'failed', 'cancelled')`,
+    `SELECT COUNT(*) as c FROM mission_tasks WHERE status IN ('completed', 'failed', 'cancelled', 'partial')`,
   ).get() as { c: number }).c;
   const tasks = db.prepare(
-    `SELECT * FROM mission_tasks WHERE status IN ('completed', 'failed', 'cancelled')
+    `SELECT * FROM mission_tasks WHERE status IN ('completed', 'failed', 'cancelled', 'partial')
      ORDER BY completed_at DESC LIMIT ? OFFSET ?`,
   ).all(limit, offset) as MissionTask[];
   return { tasks, total };
+}
+
+export function listStaleMissionTasks(now = Math.floor(Date.now() / 1000)): MissionTask[] {
+  return db.prepare(
+    `SELECT * FROM mission_tasks
+     WHERE (
+       status = 'running' AND started_at IS NOT NULL AND started_at < ?
+     ) OR (
+       status = 'queued' AND assigned_agent IS NOT NULL AND created_at < ?
+     ) OR (
+       status IN ('completed', 'failed', 'partial') AND notify_on_done = 1 AND delivered_at IS NULL AND notify_attempt_count >= 5
+     )
+     ORDER BY COALESCE(started_at, completed_at, created_at) ASC
+     LIMIT 50`,
+  ).all(now - 45 * 60, now - 2 * 3600) as MissionTask[];
 }
 
 export function resetStuckMissionTasks(agentId: string): number {
@@ -2130,6 +3127,13 @@ export function resetStuckMissionTasks(agentId: string): number {
     `UPDATE mission_tasks SET status = 'queued', started_at = NULL WHERE status = 'running' AND assigned_agent = ?`,
   ).run(agentId);
   return result.changes;
+}
+
+export function resetMissionTaskRun(id: string): boolean {
+  const result = db.prepare(
+    `UPDATE mission_tasks SET status = 'queued', started_at = NULL WHERE id = ? AND status = 'running'`,
+  ).run(id);
+  return result.changes > 0;
 }
 
 // ── Meet Sessions (Pika video meeting skill) ────────────────────────
@@ -2432,18 +3436,16 @@ export function createWarRoomMeeting(id: string, mode: string, pinnedAgent: stri
 export function endWarRoomMeeting(id: string, entryCount: number): void {
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
-    'UPDATE warroom_meetings SET ended_at = ?, duration_s = ended_at - started_at, entry_count = ? WHERE id = ?',
-  ).run(now, entryCount, id);
-  // Actually compute duration correctly
-  db.prepare(
-    'UPDATE warroom_meetings SET duration_s = ? - started_at WHERE id = ?',
-  ).run(now, id);
+    'UPDATE warroom_meetings SET ended_at = ?, duration_s = ? - started_at, entry_count = ? WHERE id = ?',
+  ).run(now, now, entryCount, id);
 }
 
-export function addWarRoomTranscript(meetingId: string, speaker: string, text: string): void {
-  db.prepare(
+export function addWarRoomTranscript(meetingId: string, speaker: string, text: string): { id: number; created_at: number } {
+  const created_at = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
     'INSERT INTO warroom_transcript (meeting_id, speaker, text, created_at) VALUES (?, ?, ?, ?)',
-  ).run(meetingId, speaker, text, Math.floor(Date.now() / 1000));
+  ).run(meetingId, speaker, text, created_at);
+  return { id: Number(info.lastInsertRowid), created_at };
 }
 
 export function getWarRoomMeetings(limit = 20): Array<{
@@ -2451,14 +3453,661 @@ export function getWarRoomMeetings(limit = 20): Array<{
   mode: string; pinned_agent: string; entry_count: number;
 }> {
   return db.prepare(
-    'SELECT * FROM warroom_meetings ORDER BY started_at DESC LIMIT ?',
+    `SELECT * FROM warroom_meetings
+      WHERE meeting_type IS NULL OR meeting_type = 'voice'
+      ORDER BY started_at DESC LIMIT ?`,
   ).all(limit) as any[];
 }
 
-export function getWarRoomTranscript(meetingId: string): Array<{
-  speaker: string; text: string; created_at: number;
+export function getWarRoomTranscript(
+  meetingId: string,
+  opts: { limit?: number; beforeTs?: number; beforeId?: number } = {},
+): Array<{
+  id: number; speaker: string; text: string; created_at: number;
 }> {
+  const { limit, beforeTs, beforeId } = opts;
+  if (limit === undefined && beforeTs === undefined && beforeId === undefined) {
+    return db.prepare(
+      'SELECT id, speaker, text, created_at FROM warroom_transcript WHERE meeting_id = ? ORDER BY created_at, id',
+    ).all(meetingId) as any[];
+  }
+  const cap = Math.max(1, Math.min(1000, limit ?? 200));
+  if (beforeTs !== undefined) {
+    const bId = beforeId ?? Number.MAX_SAFE_INTEGER;
+    return db.prepare(
+      `SELECT id, speaker, text, created_at
+         FROM warroom_transcript
+        WHERE meeting_id = ?
+          AND (created_at < ? OR (created_at = ? AND id < ?))
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?`,
+    ).all(meetingId, beforeTs, beforeTs, bId, cap) as any[];
+  }
   return db.prepare(
-    'SELECT speaker, text, created_at FROM warroom_transcript WHERE meeting_id = ? ORDER BY created_at',
-  ).all(meetingId) as any[];
+    'SELECT id, speaker, text, created_at FROM warroom_transcript WHERE meeting_id = ? ORDER BY created_at DESC, id DESC LIMIT ?',
+  ).all(meetingId, cap) as any[];
+}
+
+export function saveWarRoomConversationTurn(args: {
+  chatId: string;
+  agentId: string;
+  originalUserText: string;
+  agentReply: string;
+  meetingId: string;
+  turnId: string;
+}): { userInserted: boolean; assistantInserted: boolean } {
+  const { chatId, agentId, originalUserText, agentReply, meetingId, turnId } = args;
+  if (!meetingId || !turnId) {
+    throw new Error('saveWarRoomConversationTurn: meetingId and turnId required');
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const userStmt = db.prepare(
+    `INSERT OR IGNORE INTO conversation_log
+       (chat_id, session_id, role, content, created_at, agent_id, source, source_meeting_id, source_turn_id)
+     VALUES (?, NULL, 'user', ?, ?, ?, 'warroom-text', ?, ?)`,
+  );
+  const assistantStmt = db.prepare(
+    `INSERT OR IGNORE INTO conversation_log
+       (chat_id, session_id, role, content, created_at, agent_id, source, source_meeting_id, source_turn_id)
+     VALUES (?, NULL, 'assistant', ?, ?, ?, 'warroom-text', ?, ?)`,
+  );
+  const txn = db.transaction(() => {
+    const user = userStmt.run(chatId, originalUserText, now, agentId, meetingId, turnId);
+    const assistant = assistantStmt.run(chatId, agentReply, now, agentId, meetingId, turnId);
+    return {
+      userInserted: user.changes > 0,
+      assistantInserted: assistant.changes > 0,
+    };
+  });
+  return txn();
+}
+
+export function getRecentMissionTasks(
+  agentId: string,
+  status: string | undefined,
+  sinceTs: number,
+  limit = 10,
+): MissionTask[] {
+  const conds: string[] = ['assigned_agent = ?', 'created_at >= ?'];
+  const params: unknown[] = [agentId, sinceTs];
+  if (status) { conds.push('status = ?'); params.push(status); }
+  params.push(limit);
+  return db.prepare(
+    `SELECT * FROM mission_tasks WHERE ${conds.join(' AND ')}
+     ORDER BY created_at DESC LIMIT ?`,
+  ).all(...params) as MissionTask[];
+}
+
+export function getRecentWarRoomTranscriptForChat(
+  chatId: string,
+  opts: { limit?: number; sinceTs?: number; excludeMeetingId?: string } = {},
+): Array<{ id: number; meeting_id: string; speaker: string; text: string; created_at: number }> {
+  const { limit = 10, sinceTs, excludeMeetingId } = opts;
+  const conds: string[] = ['m.meeting_type = ?', 'm.chat_id = ?'];
+  const params: unknown[] = ['text', chatId];
+  if (sinceTs !== undefined) { conds.push('t.created_at >= ?'); params.push(sinceTs); }
+  if (excludeMeetingId) { conds.push('t.meeting_id != ?'); params.push(excludeMeetingId); }
+  params.push(limit);
+  return db.prepare(
+    `SELECT t.id, t.meeting_id, t.speaker, t.text, t.created_at
+       FROM warroom_transcript t
+       JOIN warroom_meetings m ON m.id = t.meeting_id
+      WHERE ${conds.join(' AND ')}
+      ORDER BY t.created_at DESC, t.id DESC
+      LIMIT ?`,
+  ).all(...params) as Array<{ id: number; meeting_id: string; speaker: string; text: string; created_at: number }>;
+}
+
+export function createTextMeeting(id: string, chatId = ''): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO warroom_meetings
+       (id, started_at, mode, pinned_agent, meeting_type, chat_id)
+     VALUES (?, ?, 'direct', NULL, 'text', ?)`,
+  ).run(id, Math.floor(Date.now() / 1000), chatId);
+}
+
+export function getTextMeeting(id: string): {
+  id: string; started_at: number; ended_at: number | null; duration_s: number | null;
+  mode: string; pinned_agent: string | null; entry_count: number; meeting_type: string;
+  chat_id: string;
+} | null {
+  const row = db.prepare(
+    `SELECT id, started_at, ended_at, duration_s, mode, pinned_agent, entry_count, meeting_type, chat_id
+       FROM warroom_meetings WHERE id = ? AND meeting_type = 'text'`,
+  ).get(id) as any;
+  return row ?? null;
+}
+
+export function setMeetingPin(meetingId: string, agentId: string | null): void {
+  db.prepare(
+    `UPDATE warroom_meetings SET pinned_agent = ? WHERE id = ? AND meeting_type = 'text'`,
+  ).run(agentId, meetingId);
+}
+
+export function getOpenTextMeetingIds(exceptId?: string, chatId?: string): string[] {
+  const conds: string[] = [`meeting_type = 'text'`, `ended_at IS NULL`];
+  const params: unknown[] = [];
+  if (exceptId) { conds.push('id != ?'); params.push(exceptId); }
+  if (chatId !== undefined) { conds.push('chat_id = ?'); params.push(chatId); }
+  const rows = db.prepare(
+    `SELECT id FROM warroom_meetings WHERE ${conds.join(' AND ')}`,
+  ).all(...params) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
+export function getTextMeetings(limit = 20, chatId?: string): Array<{
+  id: string;
+  started_at: number;
+  ended_at: number | null;
+  entry_count: number;
+  preview: string;
+}> {
+  const params: unknown[] = [];
+  let where = `meeting_type = 'text'`;
+  if (chatId !== undefined) { where += ` AND chat_id = ?`; params.push(chatId); }
+  params.push(limit);
+  const rows = db.prepare(
+    `SELECT id, started_at, ended_at, entry_count
+       FROM warroom_meetings
+      WHERE ${where}
+      ORDER BY started_at DESC
+      LIMIT ?`,
+  ).all(...params) as Array<{ id: string; started_at: number; ended_at: number | null; entry_count: number }>;
+  if (rows.length === 0) return [];
+  const previewStmt = db.prepare(
+    `SELECT text FROM warroom_transcript
+      WHERE meeting_id = ? AND speaker = 'user'
+      ORDER BY created_at, id LIMIT 1`,
+  );
+  return rows.map((r) => {
+    const p = previewStmt.get(r.id) as { text: string } | undefined;
+    return { ...r, preview: (p?.text ?? '').slice(0, 140) };
+  });
+}
+
+export function clearMeetingSessions(meetingId: string, agentIds: string[]): number {
+  if (agentIds.length === 0) return 0;
+  const chatId = `warroom-text:${meetingId}`;
+  const placeholders = agentIds.map(() => '?').join(',');
+  const info = db.prepare(
+    `DELETE FROM sessions WHERE chat_id = ? AND agent_id IN (${placeholders})`,
+  ).run(chatId, ...agentIds);
+  return info.changes;
+}
+
+const CLIENT_MSG_TTL_MS = 24 * 60 * 60 * 1000;
+const CLIENT_MSG_MAX_ENTRIES = 10_000;
+const clientMsgSeen = new Map<string, number>();
+
+export function rememberClientMsgId(id: string, ttlMs = CLIENT_MSG_TTL_MS): boolean {
+  const now = Date.now();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    return false;
+  }
+  const existing = clientMsgSeen.get(id);
+  if (existing !== undefined && existing > now) return false;
+  clientMsgSeen.set(id, now + ttlMs);
+  if (clientMsgSeen.size > CLIENT_MSG_MAX_ENTRIES) {
+    for (const [key, expiresAt] of clientMsgSeen) {
+      if (expiresAt <= now) clientMsgSeen.delete(key);
+      if (clientMsgSeen.size <= CLIENT_MSG_MAX_ENTRIES) break;
+    }
+    while (clientMsgSeen.size > CLIENT_MSG_MAX_ENTRIES) {
+      const oldest = clientMsgSeen.keys().next().value;
+      if (oldest === undefined) break;
+      clientMsgSeen.delete(oldest);
+    }
+  }
+  return true;
+}
+
+export function _resetClientMsgCache(): void {
+  clientMsgSeen.clear();
+}
+
+export function getDashboardSetting(key: string): string | null {
+  const row = db.prepare(`SELECT value FROM dashboard_settings WHERE key = ?`).get(key) as { value: string } | undefined;
+  return row ? row.value : null;
+}
+
+export function setDashboardSetting(key: string, value: string): void {
+  db.prepare(
+    `INSERT INTO dashboard_settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(key, value);
+}
+
+export function getAllDashboardSettings(): Record<string, string> {
+  const rows = db.prepare(`SELECT key, value FROM dashboard_settings`).all() as { key: string; value: string }[];
+  const out: Record<string, string> = {};
+  for (const row of rows) out[row.key] = row.value;
+  return out;
+}
+
+// ── Telegram durable outbox ───────────────────────────────────────────
+//
+// Every Telegram send is INSERTed here with status='pending'. A worker
+// (src/telegram-outbox.ts, ticked from the scheduler) drains pending rows,
+// makes the actual API call, and on failure schedules a retry via
+// exponential backoff or a 429-honouring delay. After MAX_ATTEMPTS the row
+// is moved to 'dead-lettered' and a meta-alert is enqueued so the failure
+// is visible.
+
+export type TelegramOutboxStatus = 'pending' | 'in_flight' | 'sent' | 'failed' | 'dead-lettered';
+
+export interface TelegramOutboxRow {
+  id: number;
+  agent_id: string;
+  chat_id: string;
+  payload: string;
+  status: TelegramOutboxStatus;
+  attempt_count: number;
+  last_error: string | null;
+  last_attempt_at: number | null;
+  next_retry_at: number | null;
+  lease_expires_at: number | null;
+  telegram_message_id: number | null;
+  created_at: number;
+  sent_at: number | null;
+}
+
+/** Lease duration for an in_flight claim. The worker must complete the
+ * send (and call markTelegramOutboxSent / scheduleTelegramOutboxRetry /
+ * markTelegramOutboxDeadLettered, all of which clear the lease) before
+ * lease_expires_at. If a worker crashes mid-send, the recovery sweep
+ * resets the row to pending after this many seconds. */
+/**
+ * Lease length is bumped well above any plausible Telegram API call so the
+ * recovery sweep only fires for true crashes (process death). The
+ * within-process double-send window is closed by an in-memory single-flight
+ * Set in telegram-outbox.ts; the lease guards crashes only.
+ */
+export const TELEGRAM_OUTBOX_LEASE_SECONDS = 5 * 60;
+
+/** Insert a pending outbox row. Returns the new row id. */
+export function insertTelegramOutbox(
+  agentId: string,
+  chatId: string,
+  payload: string,
+): number {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `INSERT INTO telegram_outbox (agent_id, chat_id, payload, status, created_at)
+     VALUES (?, ?, ?, 'pending', ?)`,
+  ).run(agentId, chatId, payload, now);
+  return Number(info.lastInsertRowid);
+}
+
+/**
+ * Atomically claim up to `limit` due rows: pending → in_flight via
+ * UPDATE-RETURNING. Two concurrent workers cannot claim the same row;
+ * whichever runs the UPDATE first wins, the loser sees zero affected
+ * rows. The lease (`lease_expires_at`) covers worker crashes — see
+ * sweepStalledTelegramOutboxLeases.
+ *
+ * Implementation note: sqlite RETURNING (>=3.35) gives us the row in
+ * one shot. Since better-sqlite3 doesn't iterate per-row UPDATE...
+ * RETURNING with LIMIT in a single statement portably across versions,
+ * we select candidate ids first then CAS each. The SELECT is advisory;
+ * the UPDATE is the real lock.
+ */
+export function claimDueTelegramOutbox(limit = 20, agentId?: string): TelegramOutboxRow[] {
+  const now = Math.floor(Date.now() / 1000);
+  const leaseUntil = now + TELEGRAM_OUTBOX_LEASE_SECONDS;
+  // Scope the claim to the calling agent. Each agent runs its own outbox
+  // tick on its own process and delivers via its own bot token. Without
+  // an agent_id filter, agents race each other for any pending row and
+  // send via the WRONG bot — caught 2026-05-05 when Mason's tick beat
+  // main's tick to the morning brief and delivered it via @specialist-agent bot
+  // instead of main's bot. agentId is optional only so the legacy unit
+  // tests that don't run a real bot keep working; production callers
+  // (tickTelegramOutbox) always pass it.
+  const agentFilter = agentId ? 'AND agent_id = ?' : '';
+  const candidateParams: (number | string)[] = agentId ? [now, agentId, limit] : [now, limit];
+  const candidates = db.prepare(
+    `SELECT id FROM telegram_outbox
+     WHERE status = 'pending'
+       AND (next_retry_at IS NULL OR next_retry_at <= ?)
+       ${agentFilter}
+     ORDER BY id ASC
+     LIMIT ?`,
+  ).all(...candidateParams) as Array<{ id: number }>;
+
+  const claimStmt = db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'in_flight',
+         lease_expires_at = ?,
+         last_attempt_at = ?
+     WHERE id = ?
+       AND status = 'pending'
+       AND (next_retry_at IS NULL OR next_retry_at <= ?)
+       ${agentId ? 'AND agent_id = ?' : ''}
+     RETURNING *`,
+  );
+
+  const claimed: TelegramOutboxRow[] = [];
+  for (const c of candidates) {
+    const row = (agentId
+      ? claimStmt.get(leaseUntil, now, c.id, now, agentId)
+      : claimStmt.get(leaseUntil, now, c.id, now)) as TelegramOutboxRow | undefined;
+    if (row) claimed.push(row);
+    // If undefined, another worker beat us to this row — skip silently.
+  }
+  return claimed;
+}
+
+/**
+ * Reset rows whose in_flight lease has expired (worker crashed mid-send).
+ * Returns the number of rows recovered. Counts as an attempt so a
+ * row that consistently kills its worker eventually dead-letters.
+ */
+export function sweepStalledTelegramOutboxLeases(): number {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'pending',
+         lease_expires_at = NULL,
+         attempt_count = attempt_count + 1,
+         last_error = COALESCE(last_error, '') || ' [lease expired]'
+     WHERE status = 'in_flight'
+       AND lease_expires_at IS NOT NULL
+       AND lease_expires_at <= ?`,
+  ).run(now);
+  return info.changes;
+}
+
+export function markTelegramOutboxSent(id: number, telegramMessageId: number | null): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'sent',
+         telegram_message_id = ?,
+         sent_at = ?,
+         last_attempt_at = ?,
+         attempt_count = attempt_count + 1,
+         lease_expires_at = NULL,
+         last_error = NULL
+     WHERE id = ? AND status = 'in_flight'`,
+  ).run(telegramMessageId, now, now, id);
+}
+
+export function scheduleTelegramOutboxRetry(
+  id: number,
+  nextRetryAt: number,
+  lastError: string,
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  // Allow this to recover both the legacy 'pending' path (used by tests
+  // that fast-forward next_retry_at on a row that never got claimed)
+  // AND the new 'in_flight' path post-CAS.
+  db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'pending',
+         attempt_count = attempt_count + 1,
+         last_attempt_at = ?,
+         next_retry_at = ?,
+         lease_expires_at = NULL,
+         last_error = ?
+     WHERE id = ? AND status IN ('pending', 'in_flight')`,
+  ).run(now, nextRetryAt, lastError.slice(0, 500), id);
+}
+
+export function markTelegramOutboxDeadLettered(id: number, lastError: string): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'dead-lettered',
+         attempt_count = attempt_count + 1,
+         last_attempt_at = ?,
+         lease_expires_at = NULL,
+         last_error = ?
+     WHERE id = ? AND status IN ('pending', 'in_flight')`,
+  ).run(now, lastError.slice(0, 500), id);
+}
+
+export function getTelegramOutboxRow(id: number): TelegramOutboxRow | null {
+  const row = db.prepare(`SELECT * FROM telegram_outbox WHERE id = ?`).get(id) as TelegramOutboxRow | undefined;
+  return row ?? null;
+}
+
+export function listProblemTelegramOutbox(limit = 25): TelegramOutboxRow[] {
+  return db.prepare(
+    `SELECT * FROM telegram_outbox
+     WHERE status IN ('pending', 'in_flight', 'failed', 'dead-lettered')
+     ORDER BY
+       CASE status WHEN 'dead-lettered' THEN 0 WHEN 'failed' THEN 1 WHEN 'in_flight' THEN 2 ELSE 3 END,
+       COALESCE(last_attempt_at, created_at) DESC
+     LIMIT ?`,
+  ).all(limit) as TelegramOutboxRow[];
+}
+
+export function retryTelegramOutboxRow(id: number): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'pending',
+         next_retry_at = ?,
+         lease_expires_at = NULL,
+         last_error = NULL
+     WHERE id = ? AND status IN ('failed', 'dead-lettered', 'pending')`,
+  ).run(now, id);
+  return result.changes > 0;
+}
+
+export function deadLetterTelegramOutboxRow(id: number, reason = 'Manually dead-lettered from Reliability dashboard.'): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare(
+    `UPDATE telegram_outbox
+     SET status = 'dead-lettered',
+         next_retry_at = NULL,
+         lease_expires_at = NULL,
+         last_attempt_at = ?,
+         last_error = ?
+     WHERE id = ? AND status IN ('pending', 'failed')`,
+  ).run(now, reason.slice(0, 500), id);
+  return result.changes > 0;
+}
+
+export function countTelegramOutboxByStatus(): Record<TelegramOutboxStatus, number> {
+  const rows = db.prepare(
+    `SELECT status, COUNT(*) AS n FROM telegram_outbox GROUP BY status`,
+  ).all() as Array<{ status: TelegramOutboxStatus; n: number }>;
+  const out: Record<TelegramOutboxStatus, number> = { 'pending': 0, 'in_flight': 0, 'sent': 0, 'failed': 0, 'dead-lettered': 0 };
+  for (const r of rows) out[r.status] = r.n;
+  return out;
+}
+
+export interface TelegramOutboxStats {
+  pending: number;
+  in_flight: number;
+  sent: number;
+  failed: number;
+  deadLettered: number;
+  oldestUnsentAgeSeconds: number | null;
+}
+
+/** Aggregate stats for /status: counts + oldest unsent age. */
+export function getOutboxStats(): TelegramOutboxStats {
+  const counts = countTelegramOutboxByStatus();
+  const oldest = db.prepare(
+    `SELECT MIN(created_at) AS m FROM telegram_outbox
+     WHERE status IN ('pending', 'in_flight')`,
+  ).get() as { m: number | null };
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    pending: counts.pending,
+    in_flight: counts.in_flight,
+    sent: counts.sent,
+    failed: counts.failed,
+    deadLettered: counts['dead-lettered'],
+    oldestUnsentAgeSeconds: oldest.m == null ? null : Math.max(0, now - oldest.m),
+  };
+}
+
+/**
+ * Prune sent and dead-lettered outbox rows older than `olderThanDays`.
+ * Without this the outbox grows unbounded — every Telegram message ever
+ * sent stays in the table forever, eventually choking sqlite. Called from
+ * the same daily cleanup path as `cleanupOldMissionTasks`.
+ *
+ * Pending and in_flight rows are NEVER pruned regardless of age — those
+ * still represent undelivered work or an in-progress send.
+ */
+export function pruneSentTelegramOutbox(olderThanDays = 7): number {
+  const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 86400;
+  // sent rows use sent_at; dead-lettered rows have last_attempt_at as the
+  // most-recent terminal timestamp. Fall back to created_at so a row
+  // missing both columns (shouldn't happen, but defensively) still ages out.
+  const result = db.prepare(
+    `DELETE FROM telegram_outbox
+     WHERE status IN ('sent', 'dead-lettered')
+       AND COALESCE(sent_at, last_attempt_at, created_at) < ?`,
+  ).run(cutoff);
+  return result.changes;
+}
+
+// ── Operation Notifications ─────────────────────────────────────────
+//
+// Durable, scheduler-driven notifications. Replaces ScheduleWakeup, which
+// is cancelled the moment the user replies and therefore can't survive the
+// agent's session ending. Rows fire from the main process tick.
+//
+// Status lifecycle: pending → fired | cancelled | expired.
+
+export interface OperationNotificationRow {
+  id: number;
+  agent_id: string;
+  chat_id: string;
+  operation_id: string;
+  fire_at: number;
+  status: 'pending' | 'fired' | 'cancelled' | 'expired';
+  payload: string;
+  fired_at: number | null;
+  cancelled_at: number | null;
+  created_at: number;
+}
+
+export function insertOperationNotification(opts: {
+  agentId: string;
+  chatId: string;
+  operationId: string;
+  fireAt: number;
+  payload: string;
+}): number {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `INSERT INTO operation_notifications
+       (agent_id, chat_id, operation_id, fire_at, status, payload, created_at)
+     VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+  ).run(opts.agentId, opts.chatId, opts.operationId, opts.fireAt, opts.payload, now);
+  return Number(info.lastInsertRowid);
+}
+
+export function getDueOperationNotifications(now?: number): OperationNotificationRow[] {
+  const cutoff = now ?? Math.floor(Date.now() / 1000);
+  return db.prepare(
+    `SELECT * FROM operation_notifications
+       WHERE status = 'pending' AND fire_at <= ?
+       ORDER BY fire_at ASC`,
+  ).all(cutoff) as OperationNotificationRow[];
+}
+
+export function listOverdueOperationNotifications(now = Math.floor(Date.now() / 1000), limit = 25): OperationNotificationRow[] {
+  return db.prepare(
+    `SELECT * FROM operation_notifications
+       WHERE status = 'pending' AND fire_at <= ?
+       ORDER BY fire_at ASC
+       LIMIT ?`,
+  ).all(now, limit) as OperationNotificationRow[];
+}
+
+export function getOperationNotification(id: number): OperationNotificationRow | undefined {
+  return db.prepare('SELECT * FROM operation_notifications WHERE id = ?')
+    .get(id) as OperationNotificationRow | undefined;
+}
+
+export function getOperationNotificationsByOpId(operationId: string): OperationNotificationRow[] {
+  return db.prepare(
+    'SELECT * FROM operation_notifications WHERE operation_id = ? ORDER BY id ASC',
+  ).all(operationId) as OperationNotificationRow[];
+}
+
+/**
+ * Atomically claim a pending row by id. Returns true iff this caller won
+ * the claim race. Stamps status='fired' + fired_at; safe against double-fire
+ * across overlapping ticks.
+ */
+export function claimOperationNotification(id: number): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `UPDATE operation_notifications
+       SET status = 'fired', fired_at = ?
+       WHERE id = ? AND status = 'pending'`,
+  ).run(now, id);
+  return info.changes > 0;
+}
+
+/**
+ * Atomic claim + outbox enqueue for operation_notifications.
+ *
+ * Solves the crash-mid-handoff bug: if the claim and the enqueue are
+ * in separate transactions, a process crash between them marks the
+ * row 'fired' but never enqueues the message — silent loss.
+ *
+ * This wraps both writes in a single sqlite transaction. Either both
+ * commit or neither does. Returns the outbox row id on success, or
+ * null if the row was already claimed (lost the race).
+ */
+export function claimAndEnqueueOperationNotification(
+  rowId: number,
+  enqueue: { agentId: string; chatId: string; payload: string },
+): number | null {
+  const now = Math.floor(Date.now() / 1000);
+  let outboxId: number | null = null;
+  const txn = db.transaction(() => {
+    const claimInfo = db.prepare(
+      `UPDATE operation_notifications
+         SET status = 'fired', fired_at = ?
+         WHERE id = ? AND status = 'pending'`,
+    ).run(now, rowId);
+    if (claimInfo.changes === 0) return;
+    const insertInfo = db.prepare(
+      `INSERT INTO telegram_outbox (agent_id, chat_id, payload, status, created_at)
+       VALUES (?, ?, ?, 'pending', ?)`,
+    ).run(enqueue.agentId, enqueue.chatId, enqueue.payload, now);
+    outboxId = Number(insertInfo.lastInsertRowid);
+  });
+  txn();
+  return outboxId;
+}
+
+/**
+ * Cancel all pending rows for an operation_id. Already-fired rows are
+ * untouched. Returns the number of rows actually cancelled.
+ */
+export function cancelOperationNotificationsByOpId(operationId: string): number {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `UPDATE operation_notifications
+       SET status = 'cancelled', cancelled_at = ?
+       WHERE operation_id = ? AND status = 'pending'`,
+  ).run(now, operationId);
+  return info.changes;
+}
+
+export function cancelOperationNotificationById(id: number): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db.prepare(
+    `UPDATE operation_notifications
+       SET status = 'cancelled', cancelled_at = ?
+       WHERE id = ? AND status = 'pending'`,
+  ).run(now, id);
+  return info.changes > 0;
+}
+
+/** @internal — test seam, lets a test claim back a row to retry. */
+export function _resetOperationNotificationForTest(id: number): void {
+  db.prepare(
+    `UPDATE operation_notifications SET status = 'pending', fired_at = NULL WHERE id = ?`,
+  ).run(id);
 }

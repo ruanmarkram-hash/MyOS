@@ -14,7 +14,7 @@ Two properties matter for portability:
 
 Three ways thoughts enter the brain:
 
-1. **Telegram → <AGENT_NAME> → capture_thought (MCP)**. When you talk to <AGENT_NAME>, her memory extraction runs Gemini Flash on each turn. Passing turns land in OB1 with `metadata.source = 'mcp'`. This is the fastest path (seconds).
+1. **Telegram → Sage → capture_thought (MCP)**. When you talk to Sage, her memory extraction runs Gemini Flash on each turn. Passing turns land in OB1 with `metadata.source = 'mcp'`. This is the fastest path (seconds).
 
 2. **Claude Code CLI sessions → watcher**. Every Claude Code session anywhere writes a JSONL transcript under `~/.claude/projects/<folder>/*.jsonl`. A launchd job scans these files every 10 minutes, distils turn pairs through Gemini Flash, and inserts thoughts with `metadata.source = 'claude_code'`. Delay: up to 10 min.
 
@@ -30,17 +30,17 @@ After a thought is captured, three background pipelines enrich it:
 
 - **Brain drift check** runs weekly (Sunday 04:00). It looks for duplicate entities (variants of the same canonical name), over-polished canonicals (qualifier noise like "SharePoint access logs" when the real entity is "SharePoint"), and base64 garbage thoughts. It runs the consolidation + unpolish + cleanup scripts automatically, Telegram-pings only if action was taken.
 
-- **Brain backup** runs weekly (Sunday 03:00). It exports all OB1 tables to dated JSON files in `~/claudeclaw/store/brain-backups/`. Retains 8 weeks. Alerts on failure only.
+- **Brain backup** runs weekly (Sunday 03:00). It exports all OB1 tables to dated JSON files in `~/HQ/store/brain-backups/`. Retains 8 weeks. Alerts on failure only.
 
-## <AGENT_NAME>'s read path
+## Sage's read path
 
-When a message arrives for <AGENT_NAME>, `buildMemoryContext()` runs. If `BRAIN=ob1` (the default since 2026-04-23), it queries the brain-mcp `search_thoughts` tool with the user's message as query, gets the top 5 matches over threshold 0.5, and prepends a `[Memory context]` block to <AGENT_NAME>'s prompt. Claude Code sessions don't get this automatic pre-injection — they get the `brain-mcp` MCP tools registered in `~/.claude.json` and rely on the `live-retrieval` skill (in engine-room/skills/) to decide when to search.
+When a message arrives for Sage, `buildMemoryContext()` runs. If `BRAIN=ob1` (the default since 2026-04-23), it queries the brain-mcp `search_thoughts` tool with the user's message as query, gets the top 5 matches over threshold 0.5, and prepends a `[Memory context]` block to Sage's prompt. Claude Code sessions don't get this automatic pre-injection — they get the `brain-mcp` MCP tools registered in `~/.claude.json` and rely on the `live-retrieval` skill (in engine-room/skills/) to decide when to search.
 
 ## Health monitoring
 
 A fifth launchd job runs every 6 hours: `brain-monitor`. It pings the edge function, counts thoughts per source, confirms 100% embedding coverage, tails logs for OB1 errors, and exits silently if healthy. If it finds a WARN or CRITICAL condition, it Telegram-pings.
 
-If you run a workspace-health-monitor agent (see `docs/AGENT-ARCHETYPES.md`), its audit should also verify that all five brain services are present in launchd with exit code 0, and that the watcher log shows a tick within the last 15 minutes.
+Warden's 4-hour workspace audit also checks all five brain services are present in launchd with exit code 0, and that the watcher log shows a tick within the last 15 minutes.
 
 ## Rebuilding on a new platform
 
@@ -57,8 +57,8 @@ If you migrate to OpenClaw, Hermes, or another agentic system:
 
 4. **Wire the new agentic system to the brain.**
    - Point its MCP client at `https://<project-ref>.supabase.co/functions/v1/brain-mcp` with header `x-brain-key: <the MCP access key>`.
-   - For memory pre-injection equivalent to <AGENT_NAME>'s, port the pattern in the old `src/brain/adapter.ts`: build a `search_thoughts` HTTP call, format results as a `[Memory context]` block, prepend to the user message before the model call.
-   - Ingest paths can be rebuilt from the watcher scripts in the old `~/claudeclaw/scripts/brain-watcher.mjs` (expects Node 18+, `pg`, `better-sqlite3`, `@google/generative-ai` REST), `scripts/entity-extraction-worker.mjs`, `scripts/run-brain-drift-check.sh`, etc. These are thin enough to adapt.
+   - For memory pre-injection equivalent to Sage's, port the pattern in the old `src/brain/adapter.ts`: build a `search_thoughts` HTTP call, format results as a `[Memory context]` block, prepend to the user message before the model call.
+   - Ingest paths can be rebuilt from the watcher scripts in the old `~/HQ/scripts/brain-watcher.mjs` (expects Node 18+, `pg`, `better-sqlite3`, `@google/generative-ai` REST), `scripts/entity-extraction-worker.mjs`, `scripts/run-brain-drift-check.sh`, etc. These are thin enough to adapt.
 
 5. **Replay your OB1 data** if you provisioned a fresh Supabase. Either: dump `thoughts`, `entities`, `edges`, `thought_entities` from the old project and COPY into the new one (cheapest), or re-run the ETL against the new project (expensive: embedding cost for all 5000+ thoughts).
 
@@ -73,7 +73,7 @@ If you migrate to OpenClaw, Hermes, or another agentic system:
 
 ## Rollback
 
-The `BRAIN` env var in `.env` switches the read path. Set `BRAIN=sqlite` to ignore OB1 and fall back to the SQLite memories table. Useful if the brain is unavailable or if you want to compare answer quality. Setting requires a <AGENT_NAME> restart (`/restart` in Telegram) to pick up.
+The `BRAIN` env var in `.env` switches the read path. Set `BRAIN=sqlite` to ignore OB1 and fall back to the SQLite memories table. Useful if the brain is unavailable or if you want to compare answer quality. Setting requires a Sage restart (`/restart` in Telegram) to pick up.
 
 The four brain services in launchd can be stopped with `launchctl bootout gui/$(id -u)/com.claudeclaw.<service>`. They can be resumed with `launchctl bootstrap`. Data integrity is preserved — stopping the services just pauses new capture; existing data stays searchable.
 

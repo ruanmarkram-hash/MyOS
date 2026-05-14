@@ -6,6 +6,8 @@ Claude Code does the actual work. You answer a handful of questions.
 
 > 👉 **Want the visual tour first?** Open [`docs/how-it-works.html`](docs/how-it-works.html) in your browser. It's a one-page picture-first explainer of what the whole thing does.
 
+> **Current snapshot:** this starter now includes the newer provider-adapter runtime, Mission Control v2 toggle, worktree-isolated AFK missions, durable operation notifications, OpenBrain/OB1 wiring, and the engine-room workspace pattern. See [`docs/CURRENT-SYSTEM.md`](docs/CURRENT-SYSTEM.md) before setup if you want the map of what changed.
+
 ---
 
 ## What you're building

@@ -50,15 +50,15 @@ describe('buildMemoryContextOb1', () => {
         'Captured: 4/23/2026',
         'Type: observation',
         'Topics: ClaudeClaw, Phase 2, AI',
-        'People: TestUser',
+        'People: user',
         '',
-        'Agent is testing the brain pipeline end to end.',
+        'Sage is testing the brain pipeline end to end.',
       ].join('\n'),
     );
     const out = await buildMemoryContextOb1('brain test');
     expect(out).toContain('[Memory context]');
     expect(out).toContain('Relevant memories:');
-    expect(out).toContain('- [0.8] Agent is testing the brain pipeline end to end.');
+    expect(out).toContain('- [0.8] Sage is testing the brain pipeline end to end.');
     expect(out).toContain('(ClaudeClaw, Phase 2, AI)');
     expect(out).toContain('[End memory context]');
   });
@@ -132,5 +132,43 @@ describe('buildMemoryContextOb1', () => {
     const out = await buildMemoryContextOb1('no topic');
     expect(out).toContain('- [0.5] No topics here.');
     expect(out).not.toContain('()');
+  });
+
+  it('does not inject unreadable vector garbage into memory context', async () => {
+    const { buildMemoryContextOb1 } = await import('./adapter.js');
+    mockSearchText.mockResolvedValueOnce(
+      [
+        'Found 1 thought(s):',
+        '',
+        '--- Result 1 (61.0% match) ---',
+        'Captured: 5/6/2026',
+        'Type: project',
+        'Topics: project',
+        '',
+        '| | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | |',
+        '| | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | |',
+      ].join('\n'),
+    );
+    const out = await buildMemoryContextOb1('Darryn');
+    expect(out).toContain('OpenBrain returned this hit without readable thought content.');
+    expect(out).not.toContain('| | | |');
+  });
+
+  it('filters short pipe-only OpenBrain search fragments', async () => {
+    const { buildMemoryContextOb1 } = await import('./adapter.js');
+    mockSearchText.mockResolvedValueOnce(
+      [
+        'Found 1 thought(s):',
+        '',
+        '--- Result 1 (60.3% match) ---',
+        'Captured: 5/6/2026',
+        'Type: project',
+        '',
+        '| | |',
+      ].join('\n'),
+    );
+    const out = await buildMemoryContextOb1('Darryn');
+    expect(out).toContain('OpenBrain returned this hit without readable thought content.');
+    expect(out).not.toContain('| | |');
   });
 });

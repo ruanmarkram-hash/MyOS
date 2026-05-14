@@ -5,13 +5,17 @@ import yaml from 'js-yaml';
 import { CLAUDECLAW_CONFIG, PROJECT_ROOT } from './config.js';
 import { readEnvFile } from './env.js';
 
+export const AGENT_ID_RE = /^[a-z0-9_-]+$/i;
+
 export interface AgentConfig {
   name: string;
   description: string;
   botTokenEnv: string;
   botToken: string;
   model?: string;
+  provider?: string;
   mcpServers?: string[];
+  warroomTools?: string[];
   obsidian?: {
     vault: string;
     folders: string[];
@@ -35,6 +39,12 @@ export function resolveAgentDir(agentId: string): string {
     return externalDir;
   }
   return path.join(PROJECT_ROOT, 'agents', agentId);
+}
+
+export function agentExists(agentId: string): boolean {
+  if (!AGENT_ID_RE.test(agentId)) return false;
+  if (agentId === 'main') return true;
+  return fs.existsSync(path.join(resolveAgentDir(agentId), 'agent.yaml'));
 }
 
 /**
@@ -67,6 +77,7 @@ export function loadAgentConfig(agentId: string): AgentConfig {
   const description = (raw['description'] as string) ?? '';
   const botTokenEnv = raw['telegram_bot_token_env'] as string;
   const model = raw['model'] as string | undefined;
+  const provider = raw['provider'] as string | undefined;
 
   if (!name || !botTokenEnv) {
     throw new Error(`Agent config ${configPath} must have 'name' and 'telegram_bot_token_env'`);
@@ -95,6 +106,7 @@ export function loadAgentConfig(agentId: string): AgentConfig {
   }
 
   const mcpServers = raw['mcp_servers'] as string[] | undefined;
+  const warroomTools = raw['warroom_tools'] as string[] | undefined;
   const meetVoiceId = typeof raw['meet_voice_id'] === 'string' ? (raw['meet_voice_id'] as string) : undefined;
   const meetBotName = typeof raw['meet_bot_name'] === 'string' ? (raw['meet_bot_name'] as string) : undefined;
 
@@ -104,7 +116,9 @@ export function loadAgentConfig(agentId: string): AgentConfig {
     botTokenEnv,
     botToken,
     model,
+    provider,
     mcpServers,
+    warroomTools,
     obsidian,
     meetVoiceId,
     meetBotName,
@@ -119,6 +133,17 @@ export function setAgentModel(agentId: string, model: string): void {
 
   const raw = yaml.load(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
   raw['model'] = model;
+  fs.writeFileSync(configPath, yaml.dump(raw, { lineWidth: -1 }), 'utf-8');
+}
+
+/** Update the provider field in an agent's agent.yaml file. */
+export function setAgentProvider(agentId: string, provider: string): void {
+  const agentDir = resolveAgentDir(agentId);
+  const configPath = path.join(agentDir, 'agent.yaml');
+  if (!fs.existsSync(configPath)) throw new Error(`Agent config not found: ${configPath}`);
+
+  const raw = yaml.load(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+  raw['provider'] = provider;
   fs.writeFileSync(configPath, yaml.dump(raw, { lineWidth: -1 }), 'utf-8');
 }
 
@@ -165,6 +190,7 @@ export function listAllAgents(): Array<{
   name: string;
   description: string;
   model?: string;
+  provider?: string;
 }> {
   const ids = listAgentIds();
   const result: Array<{
@@ -172,6 +198,7 @@ export function listAllAgents(): Array<{
     name: string;
     description: string;
     model?: string;
+    provider?: string;
   }> = [];
 
   for (const id of ids) {
@@ -182,6 +209,7 @@ export function listAllAgents(): Array<{
         name: config.name,
         description: config.description,
         model: config.model,
+        provider: config.provider,
       });
     } catch {
       // Skip agents with broken config

@@ -6,7 +6,7 @@
 #   safe-kill.sh --signal <signal> <pid>
 #   safe-kill.sh -name <process-name>    (kills by name via pkill, same guard)
 #
-# Drop-in replacement for kill/pkill for agent process management tasks.
+# Drop-in replacement for kill/pkill for Sage's process management tasks.
 
 set -euo pipefail
 
@@ -46,7 +46,7 @@ is_claudeclaw_pid() {
 
 refuse() {
   echo "safe-kill: REFUSED — cannot kill ClaudeClaw process (PID $1)." >&2
-  echo "Use /restart in Telegram to restart the main agent, or use launchctl for other agents." >&2
+  echo "Use /restart in Telegram to restart Sage, or use launchctl for other agents." >&2
   exit 1
 }
 
