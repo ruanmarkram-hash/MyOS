@@ -40,7 +40,7 @@ export function WorkspaceSwitcher() {
             border: '1px solid var(--color-border)',
           }}
         />
-        <span class="text-[13px] font-semibold text-[var(--color-text)] truncate">ClaudeClaw</span>
+        <span class="text-[13px] font-semibold text-[var(--color-text)] truncate">MyOS</span>
         <ChevronDown size={14} class="ml-auto text-[var(--color-text-faint)]" />
       </button>
 

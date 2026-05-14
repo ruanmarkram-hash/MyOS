@@ -215,7 +215,7 @@ Store the hook source files in `scripts/hooks/` (tracked by git) so they are ver
 
 ### Why hooks, not rules
 
-Rules in documentation get ignored. Agents do not read CLAUDE.md before every commit. Git hooks are enforced by git itself. No bypass without `--no-verify`, which project rules must forbid.
+Rules in documentation get ignored. Agents do not read AGENTS.md before every commit. Git hooks are enforced by git itself. No bypass without `--no-verify`, which project rules must forbid.
 
 ---
 

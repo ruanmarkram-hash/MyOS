@@ -1,8 +1,8 @@
-# ClaudeClaw Starter Kit
+# MyOS Starter Kit
 
 A guided setup for your own personal AI assistant with memory, agents, and a clean workspace. Designed so anyone who can copy and paste can stand up a full instance.
 
-Claude Code does the actual work. You answer a handful of questions.
+Codex does the actual work. You answer a handful of questions.
 
 > 👉 **Want the visual tour first?** Open [`docs/how-it-works.html`](docs/how-it-works.html) in your browser. It's a one-page picture-first explainer of what the whole thing does.
 
@@ -23,7 +23,7 @@ Claude Code does the actual work. You answer a handful of questions.
                     └────────────│────────────────┘
                                  │
                     ┌────────────▼────────────────┐
-                    │   CLAUDE CODE / YOUR AGENT  │
+                    │      CODEX / YOUR AGENT     │
                     │   ┌─────────────────────┐   │
                     │   │   Your assistant    │   │
                     │   │   Skills load auto  │   │
@@ -108,7 +108,7 @@ Claude Code does the actual work. You answer a handful of questions.
                                  │ extracts memory │             │          │
                                  └─────────────────┘             │   BRAIN  │
    YOU USE                       ┌─────────────────┐             │ (Supabase│
-   CLAUDE CODE   ──────────────▶ │ Watcher service │ ──────────▶ │          │
+   CODEX      ───────────▶ │ Watcher service │ ──────────▶ │          │
    anywhere                      │ scans every 10m │             │    +     │
                                  └─────────────────┘             │  OB1 MCP │
    YOU SAVE A                    ┌─────────────────┐             │ endpoint)│
@@ -150,7 +150,7 @@ You don't manage this. The services run automatically. You just talk and write, 
 
 ## Getting started
 
-**Don't worry about following this by hand.** The whole setup is automated via Claude Code. Here's literally all you do:
+**Don't worry about following this by hand.** The whole setup is automated via Codex. Here's literally all you do:
 
 ```
 ┌──── STEP 1 ────────────────────────────────────────────┐
@@ -166,25 +166,25 @@ You don't manage this. The services run automatically. You just talk and write, 
 │  Type this and press Enter:                             │
 │                                                         │
 │     cd ~/path/to/this/folder                            │
-│     claude                                              │
+│     codex                                               │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌──── STEP 3 ────────────────────────────────────────────┐
 │                                                         │
-│  When Claude Code starts, copy the contents of         │
+│  When Codex starts, copy the contents of               │
 │                                                         │
 │     SETUP-PROMPT.md                                     │
 │                                                         │
-│  and paste it into the Claude Code prompt.             │
+│  and paste it into the Codex prompt.                   │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌──── STEP 4 ────────────────────────────────────────────┐
 │                                                         │
-│  Answer the questions Claude Code asks you.            │
+│  Answer the questions Codex asks you.                  │
 │  It will walk through everything step by step.         │
 │                                                         │
 │  Estimated time: 30-60 minutes                         │
@@ -226,16 +226,16 @@ Before you start, have these tabs open in your browser (you can sign up for ever
 
 You'll also need:
 - A Mac (this is designed for macOS)
-- Claude Code installed (https://claude.com/claude-code if not yet)
+- Codex CLI installed and logged in
 - About an hour of focused time
 
 ---
 
 ## If something breaks
 
-Open the file `docs/TROUBLESHOOTING.md` or ask Claude Code: *"something went wrong during setup, help me figure out what"*.
+Open the file `docs/TROUBLESHOOTING.md` or ask Codex: *"something went wrong during setup, help me figure out what"*.
 
-The intake skill is designed to be re-runnable. If you get stuck mid-setup, close Claude Code, reopen it in the same folder, paste `SETUP-PROMPT.md` again, and it'll pick up from where you left off by checking what's already done.
+The intake skill is designed to be re-runnable. If you get stuck mid-setup, close Codex, reopen it in the same folder, paste `SETUP-PROMPT.md` again, and it'll pick up from where you left off by checking what's already done.
 
 ---
 

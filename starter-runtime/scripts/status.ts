@@ -61,7 +61,7 @@ function parseEnvFile(filePath: string): Record<string, string> {
 
 async function main() {
   console.log();
-  console.log(`  ${c.bold}${c.cyan}ClaudeClaw Status${c.reset}`);
+  console.log(`  ${c.bold}${c.cyan}MyOS Status${c.reset}`);
   console.log(`  ${c.gray}${'─'.repeat(17)}${c.reset}`);
 
   // Node version
@@ -73,21 +73,21 @@ async function main() {
     fail(`Node ${nodeVersion} (20+ required)`);
   }
 
-  // Claude CLI
-  const claudeCmd = process.platform === 'win32' ? 'where claude' : 'which claude';
+  // Codex CLI
+  const codexCmd = process.platform === 'win32' ? 'where codex' : 'which codex';
   try {
-    execSync(claudeCmd, { stdio: 'pipe' });
-    let claudeVersion = '';
+    execSync(codexCmd, { stdio: 'pipe' });
+    let codexVersion = '';
     try {
-      claudeVersion = execSync('claude --version', { stdio: 'pipe' })
+      codexVersion = execSync('codex --version', { stdio: 'pipe' })
         .toString()
         .trim();
     } catch {
       // version check failed
     }
-    ok(`Claude CLI ${claudeVersion}`);
+    ok(`Codex CLI ${codexVersion}`);
   } catch {
-    fail('Claude CLI not found');
+    fail('Codex CLI not found');
   }
 
   // .env
@@ -140,7 +140,7 @@ async function main() {
   // Service status
   if (process.platform === 'darwin') {
     try {
-      const output = execSync('launchctl list com.claudeclaw.app', {
+      const output = execSync('launchctl list com.myos.app', {
         stdio: 'pipe',
       })
         .toString()
@@ -153,7 +153,7 @@ async function main() {
         let pid = '';
         for (const line of lines) {
           const parts = line.split('\t');
-          if (parts.length >= 3 && parts[2] === 'com.claudeclaw.app') {
+          if (parts.length >= 3 && parts[2] === 'com.myos.app') {
             pid = parts[0].trim();
             break;
           }
@@ -169,7 +169,7 @@ async function main() {
     }
   } else if (process.platform === 'linux') {
     try {
-      const output = execSync('systemctl --user is-active claudeclaw', {
+      const output = execSync('systemctl --user is-active myos', {
         stdio: 'pipe',
       }).toString().trim();
       if (output === 'active') {
@@ -182,7 +182,7 @@ async function main() {
     }
   } else {
     try {
-      execSync('pm2 describe claudeclaw', { stdio: 'pipe' });
+      execSync('pm2 describe myos', { stdio: 'pipe' });
       ok('Service: running (PM2)');
     } catch {
       warn('Service: not detected (check PM2 or start manually)');
@@ -190,7 +190,7 @@ async function main() {
   }
 
   // Memory DB
-  const dbPath = path.join(PROJECT_ROOT, 'store', 'claudeclaw.db');
+  const dbPath = path.join(PROJECT_ROOT, 'store', 'myos.db');
   if (fs.existsSync(dbPath)) {
     try {
       const db = new Database(dbPath, { readonly: true });
@@ -211,16 +211,16 @@ async function main() {
 
   // Determine overall status
   const hasToken = !!env.TELEGRAM_BOT_TOKEN;
-  const hasClaude = (() => {
+  const hasCodex = (() => {
     try {
-      execSync('which claude', { stdio: 'pipe' });
+      execSync('which codex', { stdio: 'pipe' });
       return true;
     } catch {
       return false;
     }
   })();
 
-  if (hasToken && hasClaude && nodeMajor >= 20) {
+  if (hasToken && hasCodex && nodeMajor >= 20) {
     console.log(`  ${c.green}${c.bold}All systems go.${c.reset}`);
   } else {
     console.log(

@@ -10,7 +10,7 @@
 // All Node writers MUST import from this module so a future encoder swap
 // happens in exactly one place. Do not embed inline.
 //
-// Env (read from ~/HQ/.env or process.env):
+// Env (read from ~/myos/.env or process.env):
 //   LLAMACPP_EMBEDDING_URL    default http://127.0.0.1:8081/v1/embeddings
 //   LLAMACPP_EMBEDDING_MODEL  default bge-m3
 //   LLAMACPP_EMBEDDING_DIM    default 1024
@@ -18,7 +18,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 
 function readEnvFile() {
-  const path = '~/HQ/.env';
+  const path = '~/myos/.env';
   if (!existsSync(path)) return {};
   return Object.fromEntries(
     readFileSync(path, 'utf-8')

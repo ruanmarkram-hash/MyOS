@@ -1,6 +1,6 @@
-# War Room - ClaudeClaw Voice Meeting Server
+# War Room - MyOS Voice Meeting Server
 
-Real-time voice conversations with ClaudeClaw's AI agents. Each agent has a distinct voice. You speak, the right agent responds.
+Real-time voice conversations with MyOS's AI agents. Each agent has a distinct voice. You speak, the right agent responds.
 
 ## Prerequisites
 
@@ -8,7 +8,7 @@ Real-time voice conversations with ClaudeClaw's AI agents. Each agent has a dist
 - A Daily.co account (for WebRTC rooms)
 - A Deepgram account (for speech-to-text)
 - A Cartesia account (for text-to-speech)
-- The ClaudeClaw Node.js project built (`npm run build`)
+- The MyOS Node.js project built (`npm run build`)
 
 ## Setup
 
@@ -51,7 +51,7 @@ Microphone -> Daily WebRTC -> Deepgram STT -> Agent Router -> Claude Agent Bridg
 ```
 
 - **Agent Router** detects which agent you're addressing by name prefix ("Research, look into X") or broadcasts to all agents ("everyone, status update").
-- **Claude Agent Bridge** calls the ClaudeClaw agent via `agent-voice-bridge.js` and switches the TTS voice to match the responding agent.
+- **Claude Agent Bridge** calls the MyOS agent via `agent-voice-bridge.js` and switches the TTS voice to match the responding agent.
 
 ## Voice Routing
 

@@ -49,7 +49,7 @@ describe('buildMemoryContextOb1', () => {
         '--- Result 1 (82.7% match) ---',
         'Captured: 4/23/2026',
         'Type: observation',
-        'Topics: ClaudeClaw, Phase 2, AI',
+        'Topics: MyOS, Phase 2, AI',
         'People: user',
         '',
         'Sage is testing the brain pipeline end to end.',
@@ -59,7 +59,7 @@ describe('buildMemoryContextOb1', () => {
     expect(out).toContain('[Memory context]');
     expect(out).toContain('Relevant memories:');
     expect(out).toContain('- [0.8] Sage is testing the brain pipeline end to end.');
-    expect(out).toContain('(ClaudeClaw, Phase 2, AI)');
+    expect(out).toContain('(MyOS, Phase 2, AI)');
     expect(out).toContain('[End memory context]');
   });
 

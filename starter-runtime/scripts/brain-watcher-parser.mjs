@@ -12,8 +12,8 @@ import { readFileSync } from 'node:fs';
 // jsonl files" so the false-alarm classifier in monitor-brain-classify.mjs
 // only fires when the watcher actually skipped data it should have ingested.)
 //
-// Folder names come from `~/.claude/projects/<dir>` where Claude Code encodes
-// the project cwd by replacing slashes with hyphens (e.g. `~/HQ` →
+// Folder names come from `~/.claude/projects/<dir>` where Codex encodes
+// the project cwd by replacing slashes with hyphens (e.g. `~/myos` →
 // `-Users-sc-HQ`).
 export function isJsonlIncluded(folderName) {
   if (folderName.includes('claude-worktrees')) return false;
@@ -49,9 +49,9 @@ export function stripInjectedContext(text) {
     .trim();
 }
 
-// Parse a Claude Code JSONL session file into user/assistant turn pairs.
+// Parse a Codex JSONL session file into user/assistant turn pairs.
 //
-// Modern Claude Code splits one logical assistant turn into many JSONL
+// Modern Codex splits one logical assistant turn into many JSONL
 // events (thinking-only, tool_use-only, text). We must NOT mark
 // `lastState='assistant'` on empty-text events, otherwise the next user
 // event triggers a flush and clobbers buffered user text.
@@ -103,7 +103,7 @@ export function parseTurnPairsFromText(raw) {
       lastState = 'user';
     } else if (t === 'assistant') {
       // Only mark a real assistant turn boundary when this event
-      // contributed text. Modern Claude Code splits one logical
+      // contributed text. Modern Codex splits one logical
       // assistant turn into many events (thinking-only, tool_use-only,
       // text); empty-text events would otherwise spuriously trigger a
       // flush on the next user event and clobber buffered user text.

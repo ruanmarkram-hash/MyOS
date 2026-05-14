@@ -2,10 +2,10 @@
 .env
 .env.local
 .env.*.local
-.claude/settings.json
-CLAUDE.md
+.codex/settings.json
+AGENTS.md
 agents/*/agent.yaml
-agents/*/CLAUDE.md
+agents/*/AGENTS.md
 store/
 *.db
 *.db-wal

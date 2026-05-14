@@ -49,7 +49,7 @@ export interface AgentResult {
 export interface RunAgentOptions {
   /**
    * Fully assembled provider prompt. The `runAgent` wrapper owns injecting
-   * ClaudeClaw's provider-neutral agent definition before this reaches a
+   * MyOS's provider-neutral agent definition before this reaches a
    * concrete provider.
    */
   message: string;
@@ -127,16 +127,16 @@ const providers: Record<LlmProviderName, LlmProvider> = {
 };
 
 export function normalizeLlmProvider(value: string | null | undefined): LlmProviderName {
-  const normalized = (value ?? 'claude').trim().toLowerCase();
-  if (normalized === '' || normalized === 'claude') return 'claude';
-  if (normalized === 'codex') return 'codex';
+  const normalized = (value ?? 'codex').trim().toLowerCase();
+  if (normalized === '' || normalized === 'codex') return 'codex';
+  if (normalized === 'claude') return 'claude';
 
   throw new AgentError('unknown', {
     shouldRetry: false,
     shouldNewChat: false,
     shouldSwitchModel: false,
     retryAfterMs: 0,
-    userMessage: `Unsupported LLM_PROVIDER "${value}". Supported providers: claude, codex.`,
+    userMessage: `Unsupported LLM_PROVIDER "${value}". Supported providers: codex, claude.`,
   });
 }
 

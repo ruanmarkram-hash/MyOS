@@ -10,11 +10,11 @@
 The `~/HQ` repo's remotes are configured so that:
 
 - `origin` → `git@github.com:your-user/your-private-os.git` ([YOUR NAME]'s private fork; this is the push target)
-- `upstream` → `https://github.com/earlyaidopters/claudeclaw-os.git` (public fork; fetch only)
+- `upstream` → `https://github.com/earlyaidopters/myos-os.git` (public fork; fetch only)
 - `upstream` push URL is set to `DISABLED-public-fork-do-not-push` so any accidental `git push upstream` fails immediately with "not a git repository"
 - Branch `main` tracks `origin/main`, so plain `git push` goes to the private fork by default
 
-ClaudeClaw HQ contains operational state — bot tokens, agent configs, OAuth tokens, conversation logs, and integration credentials — that must never be published. The `earlyaidopters/claudeclaw-os` repo is the public-safe fork; HQ is its private downstream and stays that way.
+MyOS HQ contains operational state — bot tokens, agent configs, OAuth tokens, conversation logs, and integration credentials — that must never be published. The `earlyaidopters/myos-os` repo is the public-safe fork; HQ is its private downstream and stays that way.
 
 ## Reasoning
 
@@ -22,7 +22,7 @@ Earlier in the day, `git push origin main` failed because the SSH key on this ma
 
 Alternatives considered:
 - **`git remote remove upstream`**: tempting but loses the ability to fetch updates from the public fork if/when it diverges (e.g. someone else contributes upstream improvements that should be cherry-picked). Keeping fetch-only preserves that path.
-- **Add `your-github-user` as a collaborator on `earlyaidopters/claudeclaw-os`**: explicitly rejected. The private fork has data the public one must never see.
+- **Add `your-github-user` as a collaborator on `earlyaidopters/myos-os`**: explicitly rejected. The private fork has data the public one must never see.
 - **Rely on a pre-push hook**: too easy to bypass with `--no-verify`. Hard remote URL replacement is the only mechanism that can't be bypassed without conscious effort.
 
 Setting the push URL to a non-URL string causes git to fail-closed: any push attempt errors immediately with a clear message. This is the same pattern as `git remote set-url --push <name> no_push` (a documented git idiom).
@@ -35,7 +35,7 @@ Setting the push URL to a non-URL string causes git to fail-closed: any push att
 
 ## What this unlocks
 
-- Operational tokens in `.env`, conversation logs in `store/claudeclaw.db`, and any other private state can stay tracked locally without paranoia about accidental publication.
+- Operational tokens in `.env`, conversation logs in `store/myos.db`, and any other private state can stay tracked locally without paranoia about accidental publication.
 - Future code sharing with the public fork goes through deliberate cherry-pick + sanitisation, not through git's default behaviour.
 
 ## Superseded by / supersedes

@@ -1,8 +1,8 @@
-# Contributing to ClaudeClaw
+# Contributing to MyOS
 
 ## Adding a migration
 
-Use the `add-migration` skill from within Claude Code:
+Use the `add-migration` skill from within Codex:
 
 ```
 /add-migration

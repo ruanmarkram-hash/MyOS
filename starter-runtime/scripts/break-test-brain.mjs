@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'node:fs';
 
-const envText = readFileSync('~/HQ/.env', 'utf-8');
+const envText = readFileSync('~/myos/.env', 'utf-8');
 const env = Object.fromEntries(
   envText.split(/\r?\n/).filter((l) => l && !l.startsWith('#') && l.includes('='))
     .map((l) => { const i = l.indexOf('='); return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^["']|["']$/g, '')]; })
@@ -23,7 +23,7 @@ process.env.OB1_SUPABASE_URL = 'https://zzz-does-not-exist-9876543210.supabase.c
 process.env.MCP_ACCESS_KEY = env.MCP_ACCESS_KEY;
 process.env.GOOGLE_API_KEY = env.GOOGLE_API_KEY;
 // Load fresh modules — config reads env at import time
-const { ob1Available, buildMemoryContextOb1 } = await import(`~/HQ/dist/brain/adapter.js?t=${Date.now()}`);
+const { ob1Available, buildMemoryContextOb1 } = await import(`~/myos/dist/brain/adapter.js?t=${Date.now()}`);
 
 console.log('Step 1: ob1Available() with bad URL still returns true (URL is present even if dead):', ob1Available());
 

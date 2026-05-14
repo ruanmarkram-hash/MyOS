@@ -16,7 +16,7 @@ Setup is done. Here's what to actually do now.
 3. **Open Terminal and start a session**:
    ```
    cd ~/workspace
-   claude
+   codex
    ```
 
 4. **Say hi to your assistant.** Try a few of these to see how it feels:
@@ -105,7 +105,7 @@ Yes. Ask the assistant: "Delete the thought about X." It'll find and remove it.
 
 ### "What happens if Supabase goes down?"
 
-<AGENT_NAME> (on Telegram) falls back to local SQLite memory. Claude Code sessions will get errors from brain-mcp. You wait it out. Rare.
+<AGENT_NAME> (on Telegram) falls back to local SQLite memory. Codex sessions will get errors from brain-mcp. You wait it out. Rare.
 
 ### "How do I add a new agent for a specific domain?"
 
@@ -113,7 +113,7 @@ Copy the template:
 ```bash
 cp -r ~/workspace/operations/engine-room/agents/_template ~/workspace/operations/engine-room/agents/<new-agent-name>
 ```
-Edit that agent's `CLAUDE.md` and `agent.yaml`. Symlink it into `~/claudeclaw/agents/`. Create a launchd plist for it if you want it always-on.
+Edit that agent's `AGENTS.md` and `agent.yaml`. Symlink it into `~/myos/agents/`. Create a launchd plist for it if you want it always-on.
 
 ### "What do I do if something breaks?"
 
@@ -121,13 +121,13 @@ Open `docs/TROUBLESHOOTING.md` or ask the assistant directly: "something isn't w
 
 ### "Can I change my agent's name or personality later?"
 
-Yes. Edit `~/workspace/operations/engine-room/agents/main/CLAUDE.md`. Restart the bot (if on Telegram: `/restart`). Changes take effect immediately.
+Yes. Edit `~/workspace/operations/engine-room/agents/main/AGENTS.md`. Restart the bot (if on Telegram: `/restart`). Changes take effect immediately.
 
 ## What NOT to do
 
 - Don't try to read every file in the system. You don't need to.
 - Don't bypass `/handoff` — it's the glue.
-- Don't edit `~/claudeclaw/` source code unless you know what you're doing. If you need to change behaviour, do it through skills or agent CLAUDE.md.
+- Don't edit `~/myos/` source code unless you know what you're doing. If you need to change behaviour, do it through skills or agent AGENTS.md.
 - Don't commit `.env` to any git repo. Ever.
 
 ## When you're stuck

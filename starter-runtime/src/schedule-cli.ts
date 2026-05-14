@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * ClaudeClaw Schedule CLI
+ * MyOS Schedule CLI
  *
  * Used by your Claude assistant via the Bash tool to manage scheduled tasks.
  *
@@ -29,11 +29,11 @@ import { classifyTaskModel, modelTierLabel } from './task-model-classifier.js';
 
 initDatabase();
 
-// Parse --agent flag from anywhere in argv, fall back to CLAUDECLAW_AGENT_ID env var
+// Parse --agent flag from anywhere in argv, fall back to MYOS_AGENT_ID env var
 const agentFlagIdx = process.argv.indexOf('--agent');
 const cliAgentId = agentFlagIdx !== -1
   ? process.argv[agentFlagIdx + 1] ?? 'main'
-  : process.env.CLAUDECLAW_AGENT_ID ?? 'main';
+  : process.env.MYOS_AGENT_ID ?? 'main';
 
 // Parse --silent flag
 const silentFlagIdx = process.argv.indexOf('--silent');

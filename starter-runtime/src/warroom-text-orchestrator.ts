@@ -14,7 +14,7 @@
  * Every agent turn uses `query()` from @anthropic-ai/claude-agent-sdk on
  * the subscription OAuth path (same as Telegram and voice bridge). No API
  * key, no Gemini. Per-agent cwd via resolveAgentDir so externally configured
- * agents (under CLAUDECLAW_CONFIG/agents) work identically to repo-local ones.
+ * agents (under MYOS_CONFIG/agents) work identically to repo-local ones.
  *
  * Callers should wrap handleTextTurn in messageQueue.enqueue("warroom-text:" +
  * meetingId, …) so concurrent sends for the same meeting serialize instead
@@ -26,7 +26,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { PROJECT_ROOT, CLAUDECLAW_CONFIG, LLM_PROVIDER, resolveMainClaudeMdPath } from './config.js';
+import { PROJECT_ROOT, MYOS_CONFIG, LLM_PROVIDER, resolveMainClaudeMdPath } from './config.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { buildAgentRuntimePrompt } from './agent-runtime.js';
@@ -92,7 +92,7 @@ const MAIN_AGENT: RosterAgent = {
 
 /**
  * Full roster for a text War Room. Main is always first. Other agents
- * come from listAllAgents() which reads both CLAUDECLAW_CONFIG/agents and
+ * come from listAllAgents() which reads both MYOS_CONFIG/agents and
  * PROJECT_ROOT/agents. Agents whose config fails to load are silently
  * excluded.
  */
@@ -1352,16 +1352,16 @@ async function runAgentTurn(args: RunAgentTurnArgs): Promise<string> {
   }
 
   // For main, cwd = PROJECT_ROOT (loads the repo's CLAUDE.md). For others,
-  // resolveAgentDir picks CLAUDECLAW_CONFIG/agents/<id> first, then falls
+  // resolveAgentDir picks MYOS_CONFIG/agents/<id> first, then falls
   // back to PROJECT_ROOT/agents/<id>. This is the fix for external agents.
   const agentDir = agentId === 'main' ? PROJECT_ROOT : resolveAgentDir(agentId);
 
   // Safety net: ensure the resolved dir lives within one of our roots.
-  // CLAUDECLAW_CONFIG comes from config.ts (which applies defaults +
+  // MYOS_CONFIG comes from config.ts (which applies defaults +
   // expandHome) — NOT from process.env directly, which is frequently
   // unset when the config value lives in .env only.
   const resolved = path.resolve(agentDir);
-  const allowedRoots = [path.resolve(PROJECT_ROOT), path.resolve(CLAUDECLAW_CONFIG)];
+  const allowedRoots = [path.resolve(PROJECT_ROOT), path.resolve(MYOS_CONFIG)];
   const underAllowedRoot = allowedRoots.some((root) =>
     resolved === root || resolved.startsWith(root + path.sep),
   );
@@ -1384,7 +1384,7 @@ async function runAgentTurn(args: RunAgentTurnArgs): Promise<string> {
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : err, agentId }, 'loadAgentConfig failed; using defaults');
   }
-  const providerName = normalizeLlmProvider(agentId === 'main' ? LLM_PROVIDER : configuredProvider ?? 'claude');
+  const providerName = normalizeLlmProvider(agentId === 'main' ? LLM_PROVIDER : configuredProvider ?? 'codex');
   const provider = getLlmProvider(providerName);
   const providerModel = resolveModelForProvider(provider.name, agentModel);
 

@@ -5,7 +5,7 @@ import path from 'path';
 import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 
-import { CLAUDECLAW_CONFIG, PROJECT_ROOT, STORE_DIR } from './config.js';
+import { MYOS_CONFIG, PROJECT_ROOT, STORE_DIR } from './config.js';
 import { listAgentIds, loadAgentConfig, resolveAgentDir } from './agent-config.js';
 import { logger } from './logger.js';
 
@@ -168,10 +168,10 @@ export async function createAgent(opts: CreateAgentOpts): Promise<CreateAgentRes
     }
   }
 
-  // Determine agent directory (prefer CLAUDECLAW_CONFIG if it exists)
+  // Determine agent directory (prefer MYOS_CONFIG if it exists)
   let agentDir: string;
-  const externalAgentsDir = path.join(CLAUDECLAW_CONFIG, 'agents');
-  if (fs.existsSync(CLAUDECLAW_CONFIG)) {
+  const externalAgentsDir = path.join(MYOS_CONFIG, 'agents');
+  if (fs.existsSync(MYOS_CONFIG)) {
     agentDir = path.join(externalAgentsDir, id);
   } else {
     agentDir = path.join(PROJECT_ROOT, 'agents', id);
@@ -298,7 +298,7 @@ function generateLaunchdPlist(agentId: string): string {
   const plistDir = path.join(PROJECT_ROOT, 'launchd');
   fs.mkdirSync(plistDir, { recursive: true });
 
-  const label = `com.claudeclaw.${agentId}`;
+  const label = `com.myos.${agentId}`;
   const plistPath = path.join(plistDir, `${label}.plist`);
 
   // Use the same Node binary that's running this process (works with nvm, homebrew, or system node)
@@ -356,13 +356,13 @@ function generateSystemdUnit(agentId: string): string {
   const unitDir = path.join(os.homedir(), '.config', 'systemd', 'user');
   fs.mkdirSync(unitDir, { recursive: true });
 
-  const serviceName = `com.claudeclaw.agent-${agentId}`;
+  const serviceName = `com.myos.agent-${agentId}`;
   const unitPath = path.join(unitDir, `${serviceName}.service`);
 
   const nodePath = process.execPath;
 
   const unit = `[Unit]
-Description=ClaudeClaw Agent: ${agentId}
+Description=MyOS Agent: ${agentId}
 After=network.target
 
 [Service]
@@ -406,7 +406,7 @@ export function activateAgent(agentId: string): ActivationResult {
 }
 
 function activateLaunchd(agentId: string): ActivationResult {
-  const label = `com.claudeclaw.${agentId}`;
+  const label = `com.myos.${agentId}`;
   const templatePlist = path.join(PROJECT_ROOT, 'launchd', `${label}.plist`);
   const destPlist = path.join(os.homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
 
@@ -456,7 +456,7 @@ function activateLaunchd(agentId: string): ActivationResult {
 }
 
 function activateSystemd(agentId: string): ActivationResult {
-  const serviceName = `com.claudeclaw.agent-${agentId}`;
+  const serviceName = `com.myos.agent-${agentId}`;
   try {
     execSync(`systemctl --user daemon-reload`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI systemctl
     execSync(`systemctl --user enable "${serviceName}"`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI systemctl
@@ -474,14 +474,14 @@ export function deactivateAgent(agentId: string): { ok: boolean; error?: string 
   }
   try {
     if (os.platform() === 'darwin') {
-      const label = `com.claudeclaw.${agentId}`;
+      const label = `com.myos.${agentId}`;
       const destPlist = path.join(os.homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
       if (fs.existsSync(destPlist)) {
         try { execSync(`launchctl unload "${destPlist}"`, { stdio: 'ignore' }); } catch { /* ok */ } // SAFE-SPAWN-EXEMPT: operator CLI launchctl
         fs.unlinkSync(destPlist);
       }
     } else if (os.platform() === 'linux') {
-      const serviceName = `com.claudeclaw.agent-${agentId}`;
+      const serviceName = `com.myos.agent-${agentId}`;
       try {
         execSync(`systemctl --user stop "${serviceName}"`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI systemctl
         execSync(`systemctl --user disable "${serviceName}"`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI systemctl
@@ -522,7 +522,7 @@ export function deleteAgent(agentId: string): { ok: boolean; error?: string } {
   try {
     // Remove agent directory (both possible locations)
     for (const baseDir of [
-      path.join(CLAUDECLAW_CONFIG, 'agents'),
+      path.join(MYOS_CONFIG, 'agents'),
       path.join(PROJECT_ROOT, 'agents'),
     ]) {
       const agentDir = path.join(baseDir, agentId);
@@ -532,7 +532,7 @@ export function deleteAgent(agentId: string): { ok: boolean; error?: string } {
     }
 
     // Remove launchd plist template
-    const plistTemplate = path.join(PROJECT_ROOT, 'launchd', `com.claudeclaw.${agentId}.plist`);
+    const plistTemplate = path.join(PROJECT_ROOT, 'launchd', `com.myos.${agentId}.plist`);
     if (fs.existsSync(plistTemplate)) fs.unlinkSync(plistTemplate);
 
     // Remove token from .env
@@ -555,8 +555,8 @@ export function deleteAgent(agentId: string): { ok: boolean; error?: string } {
 export function suggestBotNames(agentId: string): { displayName: string; username: string } {
   const label = agentId.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   return {
-    displayName: `ClaudeClaw ${label}`,
-    username: `claudeclaw_${agentId.replace(/-/g, '_')}_bot`,
+    displayName: `MyOS ${label}`,
+    username: `myos_${agentId.replace(/-/g, '_')}_bot`,
   };
 }
 
@@ -577,7 +577,7 @@ export function restartAgent(agentId: string): { ok: boolean; error?: string } {
   }
   try {
     if (os.platform() === 'darwin') {
-      const label = `com.claudeclaw.${agentId}`;
+      const label = `com.myos.${agentId}`;
       const destPlist = path.join(os.homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
       if (!fs.existsSync(destPlist)) {
         return { ok: false, error: `Agent ${agentId} is not installed (no plist found)` };
@@ -592,7 +592,7 @@ export function restartAgent(agentId: string): { ok: boolean; error?: string } {
       logger.info({ agentId }, 'Agent restarted (launchd)');
       return { ok: true };
     } else if (os.platform() === 'linux') {
-      const serviceName = `com.claudeclaw.agent-${agentId}`;
+      const serviceName = `com.myos.agent-${agentId}`;
       execSync(`systemctl --user restart "${serviceName}"`, { stdio: 'ignore' }); // SAFE-SPAWN-EXEMPT: operator CLI systemctl
       logger.info({ agentId }, 'Agent restarted (systemd)');
       return { ok: true };

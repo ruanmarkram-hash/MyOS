@@ -1,6 +1,6 @@
 # `<USER_FIRST_NAME>`'s workspace
 
-The neutral landing zone for your files. Agents read and write here. Claude Code sessions read and write here. This folder is portable: if you ever move to a different AI system, everything here comes with you.
+The neutral landing zone for your files. Agents read and write here. Codex sessions read and write here. This folder is portable: if you ever move to a different AI system, everything here comes with you.
 
 ## Mental model
 

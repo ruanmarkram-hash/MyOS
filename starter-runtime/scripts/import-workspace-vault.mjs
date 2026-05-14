@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import pg from 'pg';
 import { embed, vecLit, EMBED_DIM, EMBED_MODEL_NAME } from './lib/embed.mjs';
 
-const ROOT = '~/HQ';
+const ROOT = '~/myos';
 const VAULT = join(homedir(), 'workspace');
 const CHUNK_CHARS = 4000;           // aim for ~1000 tokens per chunk
 const CHUNK_OVERLAP = 400;

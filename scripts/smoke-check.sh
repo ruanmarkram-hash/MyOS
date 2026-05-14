@@ -9,7 +9,7 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo "ClaudeClaw smoke check"
+echo "MyOS smoke check"
 echo "======================"
 
 check() {
@@ -25,10 +25,10 @@ check() {
   fi
 }
 
-# 1. ~/claudeclaw/ exists and has the expected structure
-check "~/claudeclaw/ present"                     "[ -d $HOME/claudeclaw ]"
-check "~/claudeclaw/dist/ present (build ran)"    "[ -d $HOME/claudeclaw/dist ]"
-check "~/claudeclaw/.env present"                 "[ -f $HOME/claudeclaw/.env ]"
+# 1. ~/myos/ exists and has the expected structure
+check "~/myos/ present"                     "[ -d $HOME/myos ]"
+check "~/myos/dist/ present (build ran)"    "[ -d $HOME/myos/dist ]"
+check "~/myos/.env present"                 "[ -f $HOME/myos/.env ]"
 
 # 2. ~/workspace/ structure
 check "~/workspace/ present"              "[ -d $HOME/workspace ]"
@@ -36,28 +36,28 @@ check "engine-room/ present"              "[ -d $HOME/workspace/operations/engin
 check "HANDOFF.md present"                "[ -f $HOME/workspace/memory/HANDOFF.md ]"
 
 # 3. Agent symlinks
-check "~/claudeclaw/agents/ has symlinks"         "[ -L $HOME/claudeclaw/agents/main ]"
+check "~/myos/agents/ has symlinks"         "[ -L $HOME/myos/agents/main ]"
 
 # 4. Skill symlinks
-check "~/.claude/skills/handoff-update"   "[ -e $HOME/.claude/skills/handoff-update/SKILL.md ]"
-check "~/.claude/skills/live-retrieval"   "[ -e $HOME/.claude/skills/live-retrieval/SKILL.md ]"
+check "~/.codex/skills/handoff-update"   "[ -e $HOME/.codex/skills/handoff-update/SKILL.md ]"
+check "~/.codex/skills/live-retrieval"   "[ -e $HOME/.codex/skills/live-retrieval/SKILL.md ]"
 
 # 5. launchd services loaded
 for svc in brain-watcher entity-worker brain-monitor brain-backup brain-drift; do
-  check "$svc loaded"                     "launchctl list | grep -q com.claudeclaw.$svc"
+  check "$svc loaded"                     "launchctl list | grep -q com.myos.$svc"
 done
 
 # 6. Environment variables set (check by parsing .env without sourcing secrets into shell)
-if [ -f $HOME/claudeclaw/.env ]; then
+if [ -f $HOME/myos/.env ]; then
   for var in OB1_SUPABASE_URL OB1_SUPABASE_SERVICE_KEY GOOGLE_API_KEY MCP_ACCESS_KEY BRAIN; do
-    check ".env has $var"                 "grep -q \"^$var=.\\+\" $HOME/claudeclaw/.env"
+    check ".env has $var"                 "grep -q \"^$var=.\\+\" $HOME/myos/.env"
   done
 fi
 
 # 7. Brain reachable (ping the edge function)
-if [ -f $HOME/claudeclaw/.env ]; then
+if [ -f $HOME/myos/.env ]; then
   set -a
-  source $HOME/claudeclaw/.env
+  source $HOME/myos/.env
   set +a
   echo ""
   printf "Pinging brain at %s... " "$OB1_SUPABASE_URL/functions/v1/${OB1_BRAIN_FUNCTION:-brain-mcp}"

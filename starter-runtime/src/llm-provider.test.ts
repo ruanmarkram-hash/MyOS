@@ -12,10 +12,10 @@ import { loadMcpServers } from './llm-providers/claude.js';
 import { filterMcpServers } from './llm-providers/codex-mcp-filter.js';
 
 describe('LLM provider selection', () => {
-  it('defaults to claude when no provider is configured', () => {
-    expect(normalizeLlmProvider(undefined)).toBe('claude');
-    expect(normalizeLlmProvider('')).toBe('claude');
-    expect(getLlmProvider(undefined).name).toBe('claude');
+  it('defaults to codex when no provider is configured', () => {
+    expect(normalizeLlmProvider(undefined)).toBe('codex');
+    expect(normalizeLlmProvider('')).toBe('codex');
+    expect(getLlmProvider(undefined).name).toBe('codex');
   });
 
   it('accepts LLM_PROVIDER=claude case-insensitively', () => {
@@ -42,7 +42,7 @@ describe('LLM provider selection', () => {
     expect(getLlmProvider(' CODEX ').name).toBe('codex');
   });
 
-  it('reports supported Phase 2 providers', () => {
+  it('reports supported providers', () => {
     expect(getSupportedLlmProviders()).toEqual(['claude', 'codex']);
   });
 });

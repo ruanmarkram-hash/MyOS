@@ -17,7 +17,7 @@ import datetime
 import difflib
 import sys
 
-DB_PATH = os.path.expanduser('~/HQ/store/claudeclaw.db')
+DB_PATH = os.path.expanduser('~/HQ/store/myos.db')
 OUT_DIR = os.path.expanduser('~/workspace/scratchpad')
 DOMAIN_CAP = 15
 DOMAIN_NEAR = 12  # warn at 80%

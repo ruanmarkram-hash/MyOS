@@ -60,7 +60,7 @@ def make_vtodo(summary, due=None, priority=None, uid=None):
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
-        "PRODID:-//ClaudeClaw//Sage reminders//EN",
+        "PRODID:-//MyOS//Sage reminders//EN",
         "BEGIN:VTODO",
         f"UID:{uid}",
         f"DTSTAMP:{now}",

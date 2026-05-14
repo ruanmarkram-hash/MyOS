@@ -26,7 +26,7 @@ Cross-provider contract test was added because experience with the migration sho
 
 ## What this locks in
 
-- Every new LLM provider added to ClaudeClaw must implement `mcpAllowlist` filtering at its provider boundary before merge.
+- Every new LLM provider added to MyOS must implement `mcpAllowlist` filtering at its provider boundary before merge.
 - Codex provider's MCP filtering is via temp `CODEX_HOME`, not `-c` overrides. Future maintainers should not "simplify" by switching to overrides without re-evaluating the global-state reconstruction problem.
 - `RunAgentOptions.mcpAllowlist` interface contract is documented in `src/llm-provider.ts` as a security boundary, not a hint.
 - Empty allowlist `[]` = zero servers. Distinct from `undefined` which means "no constraint."
@@ -40,4 +40,4 @@ Cross-provider contract test was added because experience with the migration sho
 
 ## Superseded by / supersedes
 
-Standalone. Resolves Open Decision #1 from `~/workspace/projects/claudeclaw-codex-migration/PLAN.md`.
+Standalone. Resolves Open Decision #1 from `~/workspace/projects/myos-codex-migration/PLAN.md`.

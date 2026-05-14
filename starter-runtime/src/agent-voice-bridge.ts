@@ -2,7 +2,7 @@
  * Agent Voice Bridge
  *
  * Lightweight CLI script that the War Room Pipecat server calls to invoke
- * a ClaudeClaw agent via the active LLM provider and return the text response.
+ * a MyOS agent via the active LLM provider and return the text response.
  *
  * Usage: node dist/agent-voice-bridge.js --agent research --message "What did you find?"
  *

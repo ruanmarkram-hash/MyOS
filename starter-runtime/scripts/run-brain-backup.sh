@@ -1,17 +1,17 @@
 #!/bin/bash
 # Weekly OB1 brain backup to store/brain-backups/
-# Called by com.claudeclaw.brain-backup launchd plist every Sunday 03:00.
+# Called by com.myos.brain-backup launchd plist every Sunday 03:00.
 
 set -uo pipefail
-cd ~/HQ
+cd ~/myos
 
-BACKUP_DIR=~/HQ/store/brain-backups
-LOG=~/HQ/logs/brain-backup.log
+BACKUP_DIR=~/myos/store/brain-backups
+LOG=~/myos/logs/brain-backup.log
 mkdir -p "$BACKUP_DIR"
 
 # Export the env vars the vendored script expects
 set -a
-source ~/HQ/.env
+source ~/myos/.env
 set +a
 export SUPABASE_URL="$OB1_SUPABASE_URL"
 export SUPABASE_SERVICE_ROLE_KEY="$OB1_SUPABASE_SERVICE_KEY"
@@ -21,7 +21,7 @@ RUN_DIR="$BACKUP_DIR/$TS"
 mkdir -p "$RUN_DIR"
 cd "$RUN_DIR"
 
-OUT=$(/opt/homebrew/bin/node ~/HQ/vendor/ob1/recipes/brain-backup/backup-brain.mjs 2>&1)
+OUT=$(/opt/homebrew/bin/node ~/myos/vendor/ob1/recipes/brain-backup/backup-brain.mjs 2>&1)
 CODE=$?
 
 {
@@ -38,7 +38,7 @@ done
 
 # Only alert on failure; silent on success
 if [ "$CODE" -ne 0 ]; then
-  bash ~/HQ/scripts/notify.sh "brain-backup FAILED exit=$CODE — see $LOG"
+  bash ~/myos/scripts/notify.sh "brain-backup FAILED exit=$CODE — see $LOG"
 fi
 
 exit "$CODE"

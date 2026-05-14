@@ -67,7 +67,7 @@ the user cancels mid-flow, leave the proposed diff in
 
 Decide whether the session being handed off is primarily:
 - `projects/<project-name>/` — code/product work on a named project
-- `operations/engine-room/` — ClaudeClaw / brain / agents / launchd work
+- `operations/engine-room/` — MyOS / brain / agents / launchd work
 - `operations/<other-domain>/` — marketing, recruitment, compliance, etc.
 
 **Rules:**
@@ -142,7 +142,7 @@ Next up: <if anything, else drop this line>
 ### sonke-support [ACTIVE] [owner: sage]
 ...
 
-### claudeclaw / engine-room [ACTIVE] [owner: sage]
+### myos / engine-room [ACTIVE] [owner: sage]
 ...
 
 ## 🚧 Blocked / awaiting decision

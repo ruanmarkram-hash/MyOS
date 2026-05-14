@@ -8,9 +8,9 @@ Your main agent is <AGENT_NAME> (or whatever you named it during setup). Over ti
 # Copy the template to a new folder named after your new agent
 cp -r ~/workspace/operations/engine-room/agents/_template ~/workspace/operations/engine-room/agents/<new-agent-name>
 
-# Edit the CLAUDE.md and agent.yaml for that agent
-# Symlink it back so ClaudeClaw discovers it
-ln -s ~/workspace/operations/engine-room/agents/<new-agent-name> ~/claudeclaw/agents/<new-agent-name>
+# Edit the AGENTS.md and agent.yaml for that agent
+# Symlink it back so MyOS discovers it
+ln -s ~/workspace/operations/engine-room/agents/<new-agent-name> ~/myos/agents/<new-agent-name>
 ```
 
 Then if you want it running as a separate Telegram bot:
@@ -27,7 +27,7 @@ Then if you want it running as a separate Telegram bot:
 
 **Name ideas:** Charter, Auditor, Warden (for monitoring), Compass.
 
-**Personality snippet (copy into CLAUDE.md):**
+**Personality snippet (copy into AGENTS.md):**
 
 ```
 You are [NAME], the compliance and governance agent. You own regulatory
@@ -209,6 +209,6 @@ A typical healthy setup after a year: 2-4 active agents. One generalist, one spe
 
 ## Resources
 
-- `_template/CLAUDE.md` — the blank template you copy
+- `_template/AGENTS.md` — the blank template you copy
 - `_template/agent.yaml` — the config template
 - Runbook: `~/workspace/operations/engine-room/memory/runbook.md`

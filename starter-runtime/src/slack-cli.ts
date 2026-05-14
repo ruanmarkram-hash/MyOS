@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * ClaudeClaw Slack CLI
+ * MyOS Slack CLI
  *
  * Thin wrapper around src/slack.ts for use by Claude via the Bash tool.
  *

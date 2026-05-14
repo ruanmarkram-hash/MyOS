@@ -1,5 +1,5 @@
 /**
- * Standalone WhatsApp daemon — runs independently of ClaudeClaw.
+ * Standalone WhatsApp daemon — runs independently of MyOS.
  * - Keeps a WhatsApp Web session alive via whatsapp-web.js + Puppeteer
  * - Exposes CDP on port 9222 (fixed) for live chat/message reads
  * - HTTP API on port 4242 for status + queued sends
@@ -19,7 +19,7 @@ const { Client, LocalAuth } = wwebjs;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STORE_DIR = path.resolve(__dirname, '../store');
-const DB_PATH   = path.join(STORE_DIR, 'claudeclaw.db');
+const DB_PATH   = path.join(STORE_DIR, 'myos.db');
 const SESSION   = path.join(STORE_DIR, 'waweb');
 const PID_FILE  = path.join(STORE_DIR, 'wa-daemon.pid');
 const CDP_PORT  = 9222;

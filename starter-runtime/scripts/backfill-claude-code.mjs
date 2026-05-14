@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Phase 6.5: Historical backfill of ~/.claude/projects/*.jsonl transcripts
+// Phase 6.5: Historical backfill of ~/.codex/projects/*.jsonl transcripts
 // into OB1 thoughts table.
 //
 // Usage:
@@ -7,7 +7,7 @@
 //   node scripts/backfill-claude-code.mjs --limit N  # stop after N files (smoke)
 //   node scripts/backfill-claude-code.mjs --only FOLDER  # one folder only
 //
-// Idempotent via claude_code_backfill_state in claudeclaw.db. Safe to resume.
+// Idempotent via claude_code_backfill_state in myos.db. Safe to resume.
 
 import { readFileSync, readdirSync, statSync, appendFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -19,9 +19,9 @@ import pg from 'pg';
 import { embed, vecLit, EMBED_DIM, EMBED_MODEL_NAME } from './lib/embed.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
-const ROOT = '~/HQ';
+const ROOT = '~/myos';
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
-const STATE_DB = join(ROOT, 'store', 'claudeclaw.db');
+const STATE_DB = join(ROOT, 'store', 'myos.db');
 const LOG_PATH = `/tmp/backfill-${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
 const SUMMARY_PATH = '/tmp/backfill-summary.txt';
 const NOTIFY = join(ROOT, 'scripts', 'notify.sh');
@@ -122,7 +122,7 @@ function eventText(evt) {
 }
 
 // Strip [Memory context]/[Team activity]/[Conversation history recall] and Obsidian
-// blocks that ClaudeClaw prepends to user messages. Returns the real user intent.
+// blocks that MyOS prepends to user messages. Returns the real user intent.
 function stripInjectedContext(text) {
   if (!text) return text;
   let s = text;
@@ -182,7 +182,7 @@ function parseTurnPairs(filepath) {
 }
 
 // ── Gemini Flash extraction ─────────────────────────────────────────
-const EXTRACTION_PROMPT = `You are distilling one conversation turn between a user and a Claude Code AI coding assistant into a single long-term memory.
+const EXTRACTION_PROMPT = `You are distilling one conversation turn between a user and a Codex AI coding assistant into a single long-term memory.
 
 Return JSON with this exact shape:
 {"skip": boolean, "importance": number 0-1, "summary": "1-2 sentence fact or rule (no 'the user said...')", "topics": ["topic1", "topic2"]}
@@ -390,7 +390,7 @@ async function main() {
   const elapsed = ((Date.now() - started) / 1000 / 60).toFixed(1);
 
   const summary = [
-    `Claude Code backfill summary`,
+    `Codex backfill summary`,
     `Started: ${new Date(started).toISOString()}`,
     `Finished: ${new Date().toISOString()}`,
     `Elapsed: ${elapsed} min`,

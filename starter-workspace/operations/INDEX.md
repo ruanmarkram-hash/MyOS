@@ -20,7 +20,7 @@ Lazy-loaded skills and workflows. Read these on demand only when relevant -- do 
   - Path: `~/workspace/operations/engine-room/skills/process-discipline/SKILL.md`
 - **improve-codebase-architecture** -- Evidence-led architecture improvement workflow for refactors, boundary cleanup, technical debt reduction, root-cause fixes, and structural code reviews.
   - Path: `~/workspace/operations/engine-room/skills/improve-codebase-architecture/SKILL.md`
-  - Exposed to: ClaudeClaw runtime (`~/HQ/skills/`), Claude CLI (`~/.claude/skills/`), Codex (`~/.codex/skills/`)
+  - Exposed to: MyOS runtime (`~/HQ/skills/`), Claude CLI (`~/.claude/skills/`), Codex (`~/.codex/skills/`)
 - **supabase** -- Supabase setup, schema management, auth, RLS policies, and data migration.
   - Path: `~/workspace/operations/engine-room/skills/supabase/SKILL.md`
 - **workflow-designer** -- Generates standardized workflow briefs for agent execution via a 6-question interview.

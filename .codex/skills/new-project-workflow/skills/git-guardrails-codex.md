@@ -1,7 +1,7 @@
-# Skill: git-guardrails-claude-code
+# Skill: git-guardrails-codex
 
 ## Purpose
-Block dangerous git commands before Claude executes them.
+Block dangerous git commands before Codex executes them.
 
 ## Source behavior to preserve
 - Intercept git push variants

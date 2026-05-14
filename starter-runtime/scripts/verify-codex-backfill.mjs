@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 
-const ROOT = '~/HQ';
+const ROOT = '~/myos';
 const env = Object.fromEntries(
   readFileSync(`${ROOT}/.env`, 'utf-8').split(/\r?\n/)
     .filter((l) => l && !l.startsWith('#') && l.includes('='))

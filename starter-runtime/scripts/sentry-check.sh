@@ -5,7 +5,7 @@
 #   1. Logged to ~/workspace/compliance/sentry-error-log.md
 #   2. Dispatched to Mason as a mission task (mission-cli)
 #
-# State tracked in ~/HQ/store/.sentry-state — stores last-seen issue IDs.
+# State tracked in ~/myos/store/.sentry-state — stores last-seen issue IDs.
 # Runs silent when no new errors. Prints to stdout only when something happens
 # (so a scheduled task wrapping this only messages Telegram on real activity).
 

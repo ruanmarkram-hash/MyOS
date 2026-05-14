@@ -11,7 +11,7 @@ process.env.WARROOM_ENABLED = process.env.WARROOM_ENABLED || 'false';
 process.env.ALLOWED_CHAT_ID = process.env.ALLOWED_CHAT_ID || 'test-chat';
 process.env.DB_ENCRYPTION_KEY = process.env.DB_ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
-const testConfigDir = path.join(os.tmpdir(), 'claudeclaw-test-config');
+const testConfigDir = path.join(os.tmpdir(), 'myos-test-config');
 const testAgentsDir = path.join(testConfigDir, 'agents');
 fs.mkdirSync(testAgentsDir, { recursive: true });
 
@@ -25,7 +25,7 @@ for (const id of ['charter', 'ember', 'marlow', 'mason', 'warden', 'comms', 'con
       `name: ${displayName}`,
       `description: Test ${displayName} agent`,
       `telegram_bot_token_env: ${id.toUpperCase()}_BOT_TOKEN`,
-      'model: claude-sonnet-4-6',
+      'model: gpt-5.4',
       '',
     ].join('\n'),
     'utf-8',
@@ -33,4 +33,4 @@ for (const id of ['charter', 'ember', 'marlow', 'mason', 'warden', 'comms', 'con
   fs.writeFileSync(path.join(dir, 'CLAUDE.md'), `# ${displayName}\n\nTest agent.\n`, 'utf-8');
 }
 
-process.env.CLAUDECLAW_CONFIG = process.env.CLAUDECLAW_CONFIG || testConfigDir;
+process.env.MYOS_CONFIG = process.env.MYOS_CONFIG || testConfigDir;

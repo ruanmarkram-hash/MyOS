@@ -23,7 +23,7 @@ const env = Object.fromEntries(
     })
 );
 
-const DB_PATH = `${ROOT}store/claudeclaw.db`;
+const DB_PATH = `${ROOT}store/myos.db`;
 const PG_URL = env.OB1_SUPABASE_DB_URL;
 const BATCH = 10;
 

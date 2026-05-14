@@ -1,7 +1,7 @@
 {
-  "name": "claudeclaw",
+  "name": "myos",
   "version": "1.1.0",
-  "description": "Your personal Claude Code assistant, delivered to your phone via Telegram",
+  "description": "Your personal Codex-powered operating system, delivered to your phone via Telegram",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

@@ -1,4 +1,4 @@
-# RFC: SDK Engine — Direct API Backend for ClaudeClaw
+# RFC: SDK Engine — Direct API Backend for MyOS
 
 ## Status
 
@@ -12,7 +12,7 @@ Add an alternative engine backend that calls the **Anthropic Messages API** dire
 
 The current architecture spawns a `claude` CLI process per query through
 `@anthropic-ai/claude-agent-sdk`. The SDK Engine would call the Anthropic API in-process,
-giving ClaudeClaw direct control over the agentic loop, tool execution, token accounting,
+giving MyOS direct control over the agentic loop, tool execution, token accounting,
 and streaming — at the cost of re-implementing some of the CLI's built-in capabilities.
 
 Estimated scope: ~600 lines of new code across 6-8 files, delivered in 5 phases.
@@ -35,10 +35,10 @@ cumulative across multi-step tool-use turns. The `lastCallInputTokens` /
 `lastCallCacheRead` tracking in `agent.ts` is a workaround. With direct API access,
 each `messages.create()` call returns exact usage — no heuristics needed.
 
-### 3. Tighter integration with ClaudeClaw internals
+### 3. Tighter integration with MyOS internals
 
 The CLI subprocess runs in its own process with its own environment. Passing secrets
-requires `env` injection (`sdkEnv` in `agent.ts:117-123`). Reading ClaudeClaw's SQLite
+requires `env` injection (`sdkEnv` in `agent.ts:117-123`). Reading MyOS's SQLite
 database from within a tool requires the subprocess to know the DB path. With an
 in-process engine, tools can directly call `db.ts` functions.
 
@@ -52,7 +52,7 @@ enabling unit tests for the tool execution loop, context management, and error h
 
 Direct API access enables features that are hard or impossible with the CLI wrapper:
 - **Streaming to Telegram**: send partial responses as Claude generates them
-- **Custom tool schemas**: define ClaudeClaw-specific tools (e.g., `MemorySearch`,
+- **Custom tool schemas**: define MyOS-specific tools (e.g., `MemorySearch`,
   `SendTelegram`) without MCP overhead
 - **Multi-model routing**: use Haiku for simple queries, Opus for complex ones,
   decided at runtime per-turn rather than per-session
@@ -106,10 +106,10 @@ Events stream back to agent.ts:
 ### Key observations
 
 1. **Session management is opaque**: The CLI manages session files internally.
-   ClaudeClaw only stores the `session_id` string in SQLite (`sessions` table)
+   MyOS only stores the `session_id` string in SQLite (`sessions` table)
    and passes it back via `resume`.
 
-2. **Tool execution is invisible**: ClaudeClaw sees `tool_progress` events with
+2. **Tool execution is invisible**: MyOS sees `tool_progress` events with
    tool names but never the tool inputs/outputs. The CLI handles the full
    tool-use loop (tool_use block → execute → tool_result → next API call).
 
@@ -117,7 +117,7 @@ Events stream back to agent.ts:
    `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` from the environment.
 
 4. **System prompt is implicit**: CLAUDE.md is loaded by the CLI from `cwd`.
-   ClaudeClaw's `agentSystemPrompt` is prepended to the user message, not
+   MyOS's `agentSystemPrompt` is prepended to the user message, not
    passed as a system prompt parameter.
 
 ---
@@ -464,7 +464,7 @@ export const TOOL_SCHEMAS: Anthropic.Tool[] = [
 
 ### Session Management
 
-The CLI engine manages sessions opaquely — ClaudeClaw only stores the session ID.
+The CLI engine manages sessions opaquely — MyOS only stores the session ID.
 The SdkEngine must manage conversation history explicitly.
 
 ```typescript
@@ -484,7 +484,7 @@ export class SessionStore {
   private db: Database.Database;
 
   constructor(dbPath?: string) {
-    // Uses a separate DB file to avoid schema conflicts with the main claudeclaw.db.
+    // Uses a separate DB file to avoid schema conflicts with the main myos.db.
     // Alternatively, could add a table to the main DB.
     this.db = new Database(dbPath ?? 'store/sdk-sessions.db');
     this.db.pragma('journal_mode = WAL');
@@ -634,7 +634,7 @@ export const SDK_MAX_TOOL_LOOPS = parseInt(
 | 3 | **Per-call cost visibility** | Exact token counts from each `messages.create()` |
 | 4 | **Testable** | Mock `@anthropic-ai/sdk` in unit tests; test tool loop in isolation |
 | 5 | **No CLI binary dependency** | Deploy without `claude` installed; lighter Docker images |
-| 6 | **In-process tool access** | Tools can call `db.ts` functions directly, read ClaudeClaw state |
+| 6 | **In-process tool access** | Tools can call `db.ts` functions directly, read MyOS state |
 
 ### Disadvantages
 
@@ -657,7 +657,7 @@ opt-in via `ENGINE=sdk`. Users who don't set this config see zero behavior chang
 **Medium risk**: Tool execution security. The CLI has built-in sandboxing that we bypass
 with `permissionMode: 'bypassPermissions'`. The SdkEngine runs tools with the same
 privilege level (same user, same filesystem), but without the CLI's safety checks.
-Since ClaudeClaw is a personal bot on a trusted machine with `ALLOWED_CHAT_ID` filtering,
+Since MyOS is a personal bot on a trusted machine with `ALLOWED_CHAT_ID` filtering,
 this is acceptable. Document the security model clearly.
 
 ---
@@ -775,16 +775,16 @@ and dynamic tool registration. The CLI handles all of this. Adding MCP to SdkEng
 would add ~300-500 lines and significant complexity. Users who need MCP (e.g., Google
 Workspace, filesystem tools) should use `ENGINE=cli`.
 
-Future option: support a subset — e.g., MCP servers defined in a ClaudeClaw config file
+Future option: support a subset — e.g., MCP servers defined in a MyOS config file
 (not the CLI's settings), started on-demand with a simple lifecycle.
 
 ### 2. How to handle tool sandboxing?
 
 **Current lean: Same trust model as CLI with `bypassPermissions`.**
 
-ClaudeClaw already disables the CLI's permission system (`permissionMode: 'bypassPermissions'`).
+MyOS already disables the CLI's permission system (`permissionMode: 'bypassPermissions'`).
 The SdkEngine would run tools with the same user privileges. Bash commands run as the
-ClaudeClaw process user. File operations have full filesystem access.
+MyOS process user. File operations have full filesystem access.
 
 For safety, the SdkEngine should:
 - Enforce `cwd` for relative path resolution
@@ -799,7 +799,7 @@ For safety, the SdkEngine should:
 
 CLI sessions are opaque filesystem-based sessions managed by the `claude` binary.
 SDK sessions are JSON-serialized message arrays in SQLite. They are fundamentally
-different formats. The `sessions` table in `claudeclaw.db` stores the session ID
+different formats. The `sessions` table in `myos.db` stores the session ID
 for either engine — the ID format distinguishes them (`sdk-` prefix for SdkEngine).
 
 This means `/newchat` works the same way: clear the session ID from the `sessions`
@@ -855,7 +855,7 @@ existing workflows. The dual-engine approach lets users choose based on their ne
 
 ### 2. HTTP proxy — run CLI as a persistent HTTP server
 
-Run the `claude` CLI in server mode, call it via HTTP from ClaudeClaw.
+Run the `claude` CLI in server mode, call it via HTTP from MyOS.
 
 **Rejected.** The `claude` CLI doesn't have a server mode. We'd need to build a
 wrapper that keeps a `claude` process alive and proxies requests — adding complexity
@@ -908,7 +908,7 @@ For reference, approximate costs at Anthropic API rates (as of early 2026):
 | claude-sonnet-4-5 | $3.00 | $15.00 | $0.30 |
 | claude-haiku-4-5 | $0.80 | $4.00 | $0.08 |
 
-A typical ClaudeClaw turn with Opus (200k context, 2k output) costs ~$3.15.
+A typical MyOS turn with Opus (200k context, 2k output) costs ~$3.15.
 With prompt caching (180k cached + 20k new), it drops to ~$0.57.
 
 The SdkEngine's explicit prompt construction enables aggressive caching: the system

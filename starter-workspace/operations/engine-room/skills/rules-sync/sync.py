@@ -13,7 +13,7 @@ import os
 import sys
 import time
 
-DB_PATH = os.path.expanduser('~/HQ/store/claudeclaw.db')
+DB_PATH = os.path.expanduser('~/HQ/store/myos.db')
 OUT_PATH = os.path.expanduser('~/workspace/memory/sage-rules.md')
 
 DOMAIN_ORDER = [

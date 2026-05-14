@@ -7,7 +7,7 @@
 
 ## Decision
 
-The ClaudeClaw fleet runs on a standardised 1M-context configuration:
+The MyOS fleet runs on a standardised 1M-context configuration:
 
 - `@anthropic-ai/claude-agent-sdk` floor: **0.2.111** (current: 0.2.119). Below 0.2.111, Opus 4.7 is unrecognised by the SDK's context-window resolver and falls back to a 200k-window assumption regardless of the model's native capability.
 - **Opus-tier agents (Sage, Marlow, Mason) run `claude-opus-4-7`.** Native 1M, no beta header, standard pricing.
@@ -29,7 +29,7 @@ The chosen path is the simplest: pin to a recent SDK and use models that ship 1M
 
 ## What this locks in
 
-- SDK upgrades require an immediate fleet restart. `npm install` overwrites SDK files on disk while running agent processes still hold old SDK code in memory; subprocess spawns fail until restart. Operational sequence: bump → build → `/restart` Sage in Telegram → `for a in ember marlow charter mason warden; do launchctl kickstart -k gui/$(id -u)/com.claudeclaw.$a; done`.
+- SDK upgrades require an immediate fleet restart. `npm install` overwrites SDK files on disk while running agent processes still hold old SDK code in memory; subprocess spawns fail until restart. Operational sequence: bump → build → `/restart` Sage in Telegram → `for a in ember marlow charter mason warden; do launchctl kickstart -k gui/$(id -u)/com.myos.$a; done`.
 - Future SDK floor moves up, never down. If a model demands a newer SDK, the floor moves. Reverting the SDK below 0.2.111 demotes Opus 4.7 back to a 200k window and re-creates the auto-compact-at-167k pain.
 - Model assignment is set at `agents/<name>/agent.yaml`. Per-agent overrides in code (e.g. `bot.ts:505` for Sage's default, `task-model-classifier.ts` for routing) follow the same tier rule. Don't introduce new tiers without revisiting this decision.
 - The auto-compact threshold formula is `effective_window − 20k − 13k`. On a 1M window that's ~967k. Don't expect a percentage-based override to work; the SDK uses an absolute offset, not a ratio.

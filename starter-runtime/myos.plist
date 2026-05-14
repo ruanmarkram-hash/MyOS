@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  ClaudeClaw launchd service (macOS)
+  MyOS launchd service (macOS)
 
   NOTE: Don't install this file directly. The setup wizard generates a version
   with the correct paths for your machine:
@@ -10,34 +10,34 @@
 
   If you want to install manually, replace the placeholders below:
     YOUR_NODE_PATH      → output of: which node
-    PATH_TO_CLAUDECLAW  → absolute path to this directory
+    PATH_TO_MYOS  → absolute path to this directory
 
   Manual install:
-    cp claudeclaw.plist ~/Library/LaunchAgents/com.claudeclaw.app.plist
-    launchctl load ~/Library/LaunchAgents/com.claudeclaw.app.plist
+    cp myos.plist ~/Library/LaunchAgents/com.myos.app.plist
+    launchctl load ~/Library/LaunchAgents/com.myos.app.plist
 
   Manage:
-    launchctl start com.claudeclaw.app
-    launchctl stop  com.claudeclaw.app
-    launchctl unload ~/Library/LaunchAgents/com.claudeclaw.app.plist
+    launchctl start com.myos.app
+    launchctl stop  com.myos.app
+    launchctl unload ~/Library/LaunchAgents/com.myos.app.plist
 
   Logs:
-    tail -f /tmp/claudeclaw.log
-    tail -f /tmp/claudeclaw.err
+    tail -f /tmp/myos.log
+    tail -f /tmp/myos.err
 -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.claudeclaw.app</string>
+  <string>com.myos.app</string>
 
   <key>ProgramArguments</key>
   <array>
     <string>YOUR_NODE_PATH</string>
-    <string>PATH_TO_CLAUDECLAW/dist/index.js</string>
+    <string>PATH_TO_MYOS/dist/index.js</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>PATH_TO_CLAUDECLAW</string>
+  <string>PATH_TO_MYOS</string>
 
   <key>RunAtLoad</key>
   <true/>
@@ -48,9 +48,9 @@
   <integer>5</integer>
 
   <key>StandardOutPath</key>
-  <string>/tmp/claudeclaw.log</string>
+  <string>/tmp/myos.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/claudeclaw.err</string>
+  <string>/tmp/myos.err</string>
 
   <key>EnvironmentVariables</key>
   <dict>

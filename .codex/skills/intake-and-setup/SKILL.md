@@ -1,13 +1,13 @@
 ---
 name: intake-and-setup
 description: |
-  Guided, end-to-end installation of the ClaudeClaw system on the user's Mac.
-  Walks a non-technical user through: inventory of existing Claude Code files,
+  Guided, end-to-end installation of the MyOS system on the user's Mac.
+  Walks a non-technical user through: inventory of existing Codex files,
   consolidation of scattered workspaces, signup + credential collection for
   Supabase + Gemini + Telegram, application of SQL migrations, deployment of
   the brain MCP edge function, installation of 5 launchd brain services,
   creation of the first agent, and verification via smoke test. Use this skill
-  when the user says "set up my claw", "run the setup", "install claudeclaw",
+  when the user says "set up MyOS", "run the setup", "install myos",
   or when they open the starter kit folder with SETUP-PROMPT.md.
 author: Ruan Markram
 version: 1.0.0
@@ -35,11 +35,11 @@ Walk the user through setting up the entire system from bare scratch. This is a 
 
 Ask the user, in sequence:
 
-1. **"Have you used Claude Code before?** If yes, roughly where did you run it from — any folders you can name? Just approximate, like 'I opened a terminal in my Desktop sometimes' or 'I think I had something in Documents'. If you're not sure, that's fine — I'll look around."
+1. **"Have you used Codex before?** If yes, roughly where did you run it from — any folders you can name? Just approximate, like 'I opened a terminal in my Desktop sometimes' or 'I think I had something in Documents'. If you're not sure, that's fine — I'll look around."
 
 2. **"Are there any folders you've been using as a workspace for your work?** Places where you keep notes, project files, or anything AI-related? Again, just rough pointers — 'my Documents folder', 'a folder on Desktop called X'."
 
-3. **"Have you tried installing anything ClaudeClaw, OpenClaw, Hermes, or similar before?** If yes, do you remember where?"
+3. **"Have you tried installing anything MyOS, OpenClaw, Hermes, or similar before?** If yes, do you remember where?"
 
 4. **"Is there anything specific you want me to make sure I preserve?** Like a specific folder, a specific file, a specific project you've been working on?"
 
@@ -47,13 +47,13 @@ Wait between each question. Note the answers.
 
 ### Step 0.2 — Search based on what they said
 
-Now search the locations they pointed at, plus a few sensible defaults. Do NOT assume `~/.claude/`, `~/claudeclaw/`, `~/workspace/`, or any specific path — check if each exists before assuming.
+Now search the locations they pointed at, plus a few sensible defaults. Do NOT assume `~/.codex/`, `~/myos/`, `~/workspace/`, or any specific path — check if each exists before assuming.
 
 **Check these common locations one at a time** (explain each check briefly as you go):
 
-- **Claude Code config** (usually at `~/.claude/` if Claude Code is installed): check if it exists, list what's inside if so.
+- **Codex config** (usually at `~/.codex/` if Codex is installed): check if it exists, list what's inside if so.
 - **User-pointed folders**: run a `find` or `ls` on each folder they mentioned.
-- **Common defaults for scattered work**: `~/Desktop/`, `~/Documents/`, `~/iCloud Drive (if synced)`, `~/Downloads/`. Look for folders with names like `workspace`, `projects`, `claude`, `agents`, `claudeclaw`, or any `CLAUDE.md` files.
+- **Common defaults for scattered work**: `~/Desktop/`, `~/Documents/`, `~/iCloud Drive (if synced)`, `~/Downloads/`. Look for folders with names like `workspace`, `projects`, `codex`, `agents`, `myos`, or any `AGENTS.md` files.
 
 **Use an adaptive search.** Example pattern for each user-indicated folder:
 
@@ -61,7 +61,7 @@ Now search the locations they pointed at, plus a few sensible defaults. Do NOT a
 # For each folder the user pointed at, do a shallow check
 ls -la "$USER_FOLDER"
 # And a shallow recursive search for relevant filenames
-find "$USER_FOLDER" -maxdepth 4 -type f \( -name "CLAUDE.md" -o -name "HANDOFF.md" -o -name "agent.yaml" -o -name ".env" -o -name "SKILL.md" \) 2>/dev/null
+find "$USER_FOLDER" -maxdepth 4 -type f \( -name "AGENTS.md" -o -name "HANDOFF.md" -o -name "agent.yaml" -o -name ".env" -o -name "SKILL.md" \) 2>/dev/null
 ```
 
 **Do NOT deep-scan their entire home directory.** That's invasive and slow. Only go where they've pointed or where common-default locations make sense.
@@ -73,10 +73,10 @@ Summarise what you found. No paths dumped raw. Group by what you think you're lo
 ```
 Here's what I found:
 
-  Claude Code config (~/.claude/):  Looks unused, just defaults. Safe.
+  Codex config (~/.codex/):  Looks unused, just defaults. Safe.
 
   On your Desktop:
-    ~/Desktop/ai-stuff/     Has some notes and a CLAUDE.md from what
+    ~/Desktop/ai-stuff/     Has some notes and a AGENTS.md from what
                             looks like an early setup attempt. About 12 files.
     ~/Desktop/my-writing/   A folder of markdown notes you've been
                             keeping. About 40 files.
@@ -85,7 +85,7 @@ Here's what I found:
     ~/Documents/workspace/  Has project folders inside. Not sure
                             exactly what's here — want me to list them?
 
-  Nothing found matching: claudeclaw, openclaw, hermes.
+  Nothing found matching: myos, openclaw, hermes.
 
 Before we build the new system:
   - Which of these do you want to keep and integrate? (we'll copy them
@@ -143,7 +143,7 @@ Ask these questions in order, one at a time. Wait for each answer.
 
 1. **Your first name?** (used by your agent to address you)
 2. **What do you mainly want this assistant for?** One-to-two sentence answer. Examples: "managing my small business", "staying on top of family admin", "writing and research". This shapes the agent's personality.
-3. **Do you want Telegram access?** Yes = create a bot so you can message the assistant from your phone. No = only use it through your Mac via Claude Code.
+3. **Do you want Telegram access?** Yes = create a bot so you can message the assistant from your phone. No = only use it through your Mac via Codex.
 4. **What timezone are you in?** (so morning briefings fire at the right time)
 
 ### 2.2 — Your main agent
@@ -169,7 +169,7 @@ Then ask:
    - **Analytical** — careful, evidence-first, asks clarifying questions
    - **Supportive coach** — encouraging, reframes problems, cheerleader energy
 
-   Let them mix and match. Capture their answer in free text — you'll bake it into the agent's CLAUDE.md in Phase 14.
+   Let them mix and match. Capture their answer in free text — you'll bake it into the agent's AGENTS.md in Phase 14.
 
 ### 2.3 — Specialist agents (optional, can skip)
 
@@ -201,7 +201,7 @@ For each specialist they want:
 
 Explain to the user:
 
-> Beyond talking in Telegram or Claude Code, your agent can be connected to other services so it can read, write, and act on your behalf. Let me find out which ones you're interested in now — we'll actually wire them up at the end once everything else is working.
+> Beyond talking in Telegram or Codex, your agent can be connected to other services so it can read, write, and act on your behalf. Let me find out which ones you're interested in now — we'll actually wire them up at the end once everything else is working.
 
 Then walk through these categories one at a time. For each, ask **"yes / no / not yet"**:
 
@@ -294,27 +294,27 @@ tree -L 2 ~/workspace/
 
 **Exit criteria:** `~/workspace/` exists with the full scaffolded structure. User has seen the tree.
 
-## Phase 4 — Install ClaudeClaw runtime
+## Phase 4 — Install MyOS runtime
 
-**Goal:** Copy the bundled ClaudeClaw runtime code from this starter kit to `~/claudeclaw/` and install its Node.js dependencies.
+**Goal:** Copy the bundled MyOS runtime code from this starter kit to `~/myos/` and install its Node.js dependencies.
 
 The runtime lives in `starter-runtime/` inside this starter kit — a fully sanitised copy of the TypeScript bot runtime, brain worker scripts, DB migrations, edge function, and launchd templates.
 
 ```bash
 # Copy bundled runtime (this starter kit is your current working directory)
-mkdir -p ~/claudeclaw
-rsync -av --exclude='node_modules/' --exclude='dist/' starter-runtime/ ~/claudeclaw/
+mkdir -p ~/myos
+rsync -av --exclude='node_modules/' --exclude='dist/' starter-runtime/ ~/myos/
 
 # Install Node.js dependencies
-cd ~/claudeclaw && npm install
+cd ~/myos && npm install
 ```
 
-**Explain to the user:** "This is the actual bot code. It lives at `~/claudeclaw/` and will run as a background service once we set it up. The starter kit folder can be moved or deleted after setup finishes — everything from here on lives at `~/claudeclaw/` and `~/workspace/`."
+**Explain to the user:** "This is the actual bot code. It lives at `~/myos/` and will run as a background service once we set it up. The starter kit folder can be moved or deleted after setup finishes — everything from here on lives at `~/myos/` and `~/workspace/`."
 
 **Verify:**
 
 ```bash
-ls ~/claudeclaw/src/ ~/claudeclaw/scripts/ ~/claudeclaw/migrations/ ~/claudeclaw/supabase/functions/brain-mcp/ ~/claudeclaw/launchd/
+ls ~/myos/src/ ~/myos/scripts/ ~/myos/migrations/ ~/myos/supabase/functions/brain-mcp/ ~/myos/launchd/
 ```
 
 Expect to see source files, scripts, migrations, the edge function, and the 6 launchd plists.
@@ -333,7 +333,7 @@ brew install node@20 && brew link node@20 --overwrite
 
 Then retry `npm install`.
 
-**Exit criteria:** `~/claudeclaw/` contains source, scripts, migrations, edge function, launchd plists. `npm install` ran clean.
+**Exit criteria:** `~/myos/` contains source, scripts, migrations, edge function, launchd plists. `npm install` ran clean.
 
 ## Phase 5 — Supabase signup and setup
 
@@ -408,7 +408,7 @@ Wait for browser flow completion.
 > Link this project to your new Supabase project.
 
 ```bash
-cd ~/claudeclaw
+cd ~/myos
 supabase link --project-ref <project-ref>
 ```
 
@@ -481,12 +481,12 @@ Store as `MCP_ACCESS_KEY`. This is a 64-character secret that locks the brain's 
 
 ## Phase 9 — Write the .env file
 
-**Goal:** Create `~/claudeclaw/.env` with every secret collected so far.
+**Goal:** Create `~/myos/.env` with every secret collected so far.
 
-Compose the file from the template at `~/claudeclaw/.env.example`, filling in each value.
+Compose the file from the template at `~/myos/.env.example`, filling in each value.
 
 ```bash
-cat > ~/claudeclaw/.env <<EOF
+cat > ~/myos/.env <<EOF
 # Supabase
 OB1_SUPABASE_URL=<value from Phase 5.4>
 OB1_SUPABASE_ANON_KEY=<value from 5.5>
@@ -506,25 +506,25 @@ TELEGRAM_BOT_TOKEN=<value from 7.3>
 ALLOWED_CHAT_ID=<value from 7.5>
 EOF
 
-chmod 600 ~/claudeclaw/.env  # only the user can read it
+chmod 600 ~/myos/.env  # only the user can read it
 ```
 
 **Verify:**
 
 ```bash
-grep -c "=" ~/claudeclaw/.env  # should match the number of variables above
+grep -c "=" ~/myos/.env  # should match the number of variables above
 ```
 
-**Exit criteria:** `~/claudeclaw/.env` written with all collected values. File permissions are 600.
+**Exit criteria:** `~/myos/.env` written with all collected values. File permissions are 600.
 
 ## Phase 10 — Apply the database migrations
 
 **Goal:** Create the `thoughts` table and all supporting structures in Supabase.
 
 ```bash
-source ~/claudeclaw/.env
-/opt/homebrew/opt/libpq/bin/psql "$OB1_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f ~/claudeclaw/migrations/ob1/001_base_thoughts.sql
-/opt/homebrew/opt/libpq/bin/psql "$OB1_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f ~/claudeclaw/migrations/ob1/002_enhanced_thoughts.sql
+source ~/myos/.env
+/opt/homebrew/opt/libpq/bin/psql "$OB1_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f ~/myos/migrations/ob1/001_base_thoughts.sql
+/opt/homebrew/opt/libpq/bin/psql "$OB1_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f ~/myos/migrations/ob1/002_enhanced_thoughts.sql
 ```
 
 **If `psql` isn't installed, install it:**
@@ -536,7 +536,7 @@ brew install libpq
 **Verify:**
 
 ```bash
-source ~/claudeclaw/.env
+source ~/myos/.env
 /opt/homebrew/opt/libpq/bin/psql "$OB1_SUPABASE_DB_URL" -c "\d thoughts" | head -20
 ```
 
@@ -547,7 +547,7 @@ Show the user: "Your brain database is now ready. It has a `thoughts` table wait
 ## Phase 11 — Deploy the edge function
 
 ```bash
-cd ~/claudeclaw
+cd ~/myos
 source .env
 supabase secrets set GOOGLE_API_KEY="$GOOGLE_API_KEY" MCP_ACCESS_KEY="$MCP_ACCESS_KEY"
 supabase functions deploy brain-mcp --no-verify-jwt
@@ -568,44 +568,44 @@ Expect a response like `{"result":{"protocolVersion":"2024-11-05", ...}}`. If yo
 
 **Exit criteria:** Edge function deployed. Initialize ping returns a valid JSON-RPC response.
 
-## Phase 12 — Build ClaudeClaw
+## Phase 12 — Build MyOS
 
 ```bash
-cd ~/claudeclaw
+cd ~/myos
 npm run build
 ```
 
-**Verify:** `~/claudeclaw/dist/` now exists with compiled JS.
+**Verify:** `~/myos/dist/` now exists with compiled JS.
 
 **Exit criteria:** `npm run build` exits 0.
 
 ## Phase 13 — Install the launchd services
 
-**Goal:** Schedule the 5 brain services and the main bot so they run forever in the background. The plist templates live in `~/claudeclaw/launchd/` (copied there in Phase 4).
+**Goal:** Schedule the 5 brain services and the main bot so they run forever in the background. The plist templates live in `~/myos/launchd/` (copied there in Phase 4).
 
 ```bash
 # Copy templates to the LaunchAgents folder, substituting <USER_HOME> with $HOME.
-cd ~/claudeclaw/launchd
+cd ~/myos/launchd
 
-for plist in com.claudeclaw.*.plist; do
+for plist in com.myos.*.plist; do
   sed "s|<USER_HOME>|$HOME|g" "$plist" > "$HOME/Library/LaunchAgents/$plist"
 done
 
 # Load each service. "main" is the Telegram bot; the other 5 handle the brain.
 for label in main brain-watcher brain-monitor brain-backup brain-drift entity-worker; do
-  launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/com.claudeclaw.$label.plist" 2>/dev/null || \
-    launchctl load -w "$HOME/Library/LaunchAgents/com.claudeclaw.$label.plist"
+  launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/com.myos.$label.plist" 2>/dev/null || \
+    launchctl load -w "$HOME/Library/LaunchAgents/com.myos.$label.plist"
 done
 ```
 
 **Note on `launchctl bootstrap` vs `load`:** `bootstrap` is the modern syntax (macOS 11+). On some systems it returns `Input/output error` — the `||` fallback uses the older `load -w` syntax. Either works.
 
-**If the user opted out of Telegram access in Phase 2**, skip loading the `main` service. The bot will not run without `TELEGRAM_BOT_TOKEN` / `ALLOWED_CHAT_ID` set in `.env`; use Claude Code as the access path instead.
+**If the user opted out of Telegram access in Phase 2**, skip loading the `main` service. The bot will not run without `TELEGRAM_BOT_TOKEN` / `ALLOWED_CHAT_ID` set in `.env`; use Codex as the access path instead.
 
 **Verify:**
 
 ```bash
-launchctl list | grep claudeclaw
+launchctl list | grep myos
 ```
 
 Expect 6 entries with exit code 0 (or 5 if Telegram was skipped).
@@ -624,7 +624,7 @@ Using the user's inputs from Phase 2 (their name, use-case, main agent name, mai
 cp -r ~/workspace/operations/engine-room/agents/_template ~/workspace/operations/engine-room/agents/main
 ```
 
-Then edit `~/workspace/operations/engine-room/agents/main/CLAUDE.md`. Replace every placeholder:
+Then edit `~/workspace/operations/engine-room/agents/main/AGENTS.md`. Replace every placeholder:
 
 - `<AGENT_NAME>` → the name they chose for their main agent (from Phase 2 step 5)
 - `<USER_NAME>` → their first name (from Phase 2 step 1)
@@ -638,11 +638,11 @@ Also edit `~/workspace/operations/engine-room/agents/main/agent.yaml`:
 - `bot_token_env:` → `TELEGRAM_BOT_TOKEN` if they set up Telegram, else leave blank
 - `timezone:` → their timezone
 
-**Symlink back to `~/claudeclaw/agents/` so ClaudeClaw can discover it:**
+**Symlink back to `~/myos/agents/` so MyOS can discover it:**
 
 ```bash
-mkdir -p ~/claudeclaw/agents
-ln -s ~/workspace/operations/engine-room/agents/main ~/claudeclaw/agents/main
+mkdir -p ~/myos/agents
+ln -s ~/workspace/operations/engine-room/agents/main ~/myos/agents/main
 ```
 
 ### 14.2 — Specialist agents (if any)
@@ -657,23 +657,23 @@ cp -r ~/workspace/operations/engine-room/agents/_template \
       ~/workspace/operations/engine-room/agents/<NAME_LOWER>
 ```
 
-Then edit that specialist's `CLAUDE.md`:
+Then edit that specialist's `AGENTS.md`:
 
 - `<AGENT_NAME>` → the specialist's name
 - `<USER_NAME>` / `<USER_CONTEXT>` / `<USER_TIMEZONE>` → same as main
-- **Scope section**: pull from the matching archetype in `docs/AGENT-ARCHETYPES.md` (Compliance / Developer / Content / Strategy / Monitor). Lift the "Personality snippet" block into the CLAUDE.md, adjusting the name.
+- **Scope section**: pull from the matching archetype in `docs/AGENT-ARCHETYPES.md` (Compliance / Developer / Content / Strategy / Monitor). Lift the "Personality snippet" block into the AGENTS.md, adjusting the name.
 - Fold in any user-supplied personality tweaks.
 
 Edit their `agent.yaml`:
 
 - `name:` → specialist name
-- `bot_token_env:` → blank for now (specialists can be wired to their own bot later; for day one they run via the main agent's chat or via Claude Code)
+- `bot_token_env:` → blank for now (specialists can be wired to their own bot later; for day one they run via the main agent's chat or via Codex)
 
 Symlink each one:
 
 ```bash
 ln -s ~/workspace/operations/engine-room/agents/<NAME_LOWER> \
-      ~/claudeclaw/agents/<NAME_LOWER>
+      ~/myos/agents/<NAME_LOWER>
 ```
 
 **Note to the user:** "Specialists don't get their own Telegram bot by default. If you later want, say, your Content agent reachable on its own Telegram chat, we create a second bot via BotFather, add its token to `.env`, and update that agent's `agent.yaml`. Not needed day one."
@@ -681,18 +681,18 @@ ln -s ~/workspace/operations/engine-room/agents/<NAME_LOWER> \
 ### 14.3 — Verify
 
 ```bash
-ls -la ~/claudeclaw/agents/
+ls -la ~/myos/agents/
 ```
 
 Each entry should be a symlink (starts with `l`) pointing at `~/workspace/operations/engine-room/agents/<name>/`.
 
-**Exit criteria:** Main agent plus any requested specialists created from the template, CLAUDE.md files customized, agent.yaml files customized, symlinks in place, directory listing shows them all.
+**Exit criteria:** Main agent plus any requested specialists created from the template, AGENTS.md files customized, agent.yaml files customized, symlinks in place, directory listing shows them all.
 
-## Phase 15 — Register brain-mcp with Claude Code
+## Phase 15 — Register brain-mcp with Codex
 
 ```bash
-source ~/claudeclaw/.env
-claude mcp add --scope user --transport http brain-mcp \
+source ~/myos/.env
+codex mcp add --scope user --transport http brain-mcp \
   "$OB1_SUPABASE_URL/functions/v1/brain-mcp" \
   --header "x-brain-key: $MCP_ACCESS_KEY"
 ```
@@ -700,24 +700,24 @@ claude mcp add --scope user --transport http brain-mcp \
 Verify:
 
 ```bash
-claude mcp list
+codex mcp list
 ```
 
 Expect `brain-mcp` to be listed with a ✓ Connected.
 
-**Exit criteria:** brain-mcp registered and connecting from Claude Code.
+**Exit criteria:** brain-mcp registered and connecting from Codex.
 
-## Phase 16 — Symlink skills into ~/.claude/skills/
+## Phase 16 — Symlink skills into ~/.codex/skills/
 
-For every skill in `~/workspace/operations/engine-room/skills/`, create a symlink in `~/.claude/skills/` so Claude Code auto-discovers them.
+For every skill in `~/workspace/operations/engine-room/skills/`, create a symlink in `~/.codex/skills/` so Codex auto-discovers them.
 
 ```bash
-mkdir -p ~/.claude/skills
+mkdir -p ~/.codex/skills
 for skill in ~/workspace/operations/engine-room/skills/*/; do
   name=$(basename "$skill")
-  ln -s "$skill" ~/.claude/skills/"$name"
+  ln -s "$skill" ~/.codex/skills/"$name"
 done
-ls -la ~/.claude/skills/
+ls -la ~/.codex/skills/
 ```
 
 **Exit criteria:** All skills symlinked.
@@ -725,7 +725,7 @@ ls -la ~/.claude/skills/
 ## Phase 17 — Smoke test
 
 ```bash
-cd ~/claudeclaw
+cd ~/myos
 node scripts/smoke-brain.mjs
 ```
 
@@ -745,7 +745,7 @@ Expect: `[brain monitor] OK`.
 
 **Capture a memory** so the user sees the brain working:
 
-Via the MCP endpoint, capture: "<USER_NAME> finished setting up their ClaudeClaw instance on <date>. Starting with a clean slate." (substitute the user's first name from Phase 2.1).
+Via the MCP endpoint, capture: "<USER_NAME> finished setting up their MyOS instance on <date>. Starting with a clean slate." (substitute the user's first name from Phase 2.1).
 
 **Then run the handoff skill** for the first time: ask the user "update handoff" and let the `handoff-update` skill write the first session log + first HANDOFF.md update.
 
@@ -766,7 +766,7 @@ For **each** item marked "Yes" in the plan, do these in order:
 ### Service-specific playbooks
 
 **Gmail:**
-- Direct user to https://console.cloud.google.com → create project → enable Gmail API → create OAuth credentials → download `credentials.json` → save to `~/claudeclaw/credentials/gmail-creds.json`
+- Direct user to https://console.cloud.google.com → create project → enable Gmail API → create OAuth credentials → download `credentials.json` → save to `~/myos/credentials/gmail-creds.json`
 - Set `GMAIL_CREDS_PATH` in `.env`
 - Run first-time auth: `node scripts/gmail-auth.mjs` (opens browser, user signs in, token gets cached)
 - Test: "Draft an email to myself saying hello."
@@ -813,7 +813,7 @@ For **each** item marked "Yes" in the plan, do these in order:
 - Restart bot; test by asking it to speak a reply.
 
 **War Room (advanced):**
-- Only if user explicitly asked. Python venv + Pipecat install; `WARROOM_ENABLED=true` in `.env`; browser opens at `http://localhost:7860`. Full instructions in `~/claudeclaw/warroom/README.md` if the user chose to install that optional module.
+- Only if user explicitly asked. Python venv + Pipecat install; `WARROOM_ENABLED=true` in `.env`; browser opens at `http://localhost:7860`. Full instructions in `~/myos/warroom/README.md` if the user chose to install that optional module.
 
 **For anything NOT on this list** that the user asked for: tell them honestly that it needs custom integration work (not a day-one task), and add it to the plan under "Future work."
 
@@ -852,7 +852,7 @@ Walk through each one. For each, show an example prompt the user can try RIGHT N
    - The assistant searches your brain and answers.
    - Example to try: "What did I decide about my workspace layout?" (answer should reference the decision we just filed).
 
-**2. Work session.** Open Claude Code or Telegram, work on something, close with /handoff.
+**2. Work session.** Open Codex or Telegram, work on something, close with /handoff.
    - This is the main loop. Walked through in 19.8.
 
 **3. Starting a new project.** Say "new project" or "let's start a project".
@@ -981,7 +981,7 @@ This is the most important section. Spend real time here.
 - At the end of any work session longer than 15 minutes
 - Before switching to a completely different context (e.g. finished project work, now doing personal admin)
 - Before closing your laptop for the day
-- Before opening a new Claude Code session (`/newchat` in Telegram)
+- Before opening a new Codex session (`/newchat` in Telegram)
 
 **When NOT to do it:**
 
@@ -1048,7 +1048,7 @@ Tell the user:
   DAILY RITUAL
 ────────────────────────────────────────────────────────────
 
-  START:  cd ~/workspace && claude    (or message your bot)
+  START:  cd ~/workspace && codex    (or message your bot)
   END:    "update handoff"             (save + close)
 
 ────────────────────────────────────────────────────────────
@@ -1056,7 +1056,7 @@ Tell the user:
 ────────────────────────────────────────────────────────────
 
   1. Factual question    "what did I decide about X?"
-  2. Work session        open claude → work → /handoff
+  2. Work session        open codex → work → /handoff
   3. New project         "let's start a project"
   4. Design workflow     "design a workflow for X"
   5. Capture memory      "remember: <fact>"

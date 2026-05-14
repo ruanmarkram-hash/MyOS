@@ -1,5 +1,5 @@
 """
-War Room Voice Server for ClaudeClaw.
+War Room Voice Server for MyOS.
 
 Three modes, selected by the WARROOM_MODE environment variable:
 
@@ -17,7 +17,7 @@ Three modes, selected by the WARROOM_MODE environment variable:
   elevenlabs         The stitched ElevenLabs STT → router → Claude-bridge →
                      ElevenLabs TTS chain. This is the OS-owned voice path, with
                      per-agent voice IDs from
-                     CLAUDECLAW_CONFIG/warroom/voices.json.
+                     MYOS_CONFIG/warroom/voices.json.
 
 Usage:
     python warroom/server.py

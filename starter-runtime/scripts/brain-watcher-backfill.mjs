@@ -29,4 +29,4 @@ if (result.status !== 0) {
   process.exit(result.status);
 }
 
-console.log(`[backfill] Backfill complete. Check ~/HQ/logs/brain-watcher.log for stats.`);
+console.log(`[backfill] Backfill complete. Check ~/myos/logs/brain-watcher.log for stats.`);

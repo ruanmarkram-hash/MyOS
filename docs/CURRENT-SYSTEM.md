@@ -1,6 +1,6 @@
 # Current System Snapshot
 
-This repo is a portable starter copy of a live ClaudeClaw-style operating system.
+This repo is a portable starter copy of a live MyOS-style operating system.
 It is not a database backup and it does not include private runtime state.
 
 ## What Is Included
@@ -15,7 +15,7 @@ It is not a database backup and it does not include private runtime state.
 - `.env` files, API keys, bot tokens, OAuth tokens, and local Claude settings.
 - `store/`, SQLite databases, WhatsApp sessions, Slack messages, Telegram logs, and conversation history.
 - Built output such as `dist/`, `web/dist/`, `node_modules/`, and local virtualenvs.
-- Personal `CLAUDE.md` files and active agent `agent.yaml` configs.
+- Personal `AGENTS.md` files and active agent `agent.yaml` configs.
 
 ## Main Switches
 
@@ -23,7 +23,7 @@ Set these in `.env` after setup.
 
 ```bash
 # Main LLM provider. Default is Claude.
-LLM_PROVIDER=claude
+LLM_PROVIDER=codex
 # LLM_PROVIDER=codex
 
 # Mission Control UI.
@@ -83,9 +83,9 @@ For a fresh machine:
 ```bash
 git clone <this repo>
 cd <this repo>
-claude
+codex
 ```
 
-Then paste the contents of `SETUP-PROMPT.md` into Claude Code. The setup flow is
+Then paste the contents of `SETUP-PROMPT.md` into Codex. The setup flow is
 designed to ask one question at a time and create the live runtime from the starter
 folders.

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.claudeclaw.warden</string>
+  <string>com.myos.warden</string>
   <key>ProgramArguments</key>
   <array>
     <string>__NODE_PATH__</string>

@@ -96,10 +96,10 @@ describe('getScrubbedSdkEnv', () => {
     expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-from-shell');
   });
 
-  it('keeps CLAUDECLAW_AGENT_ID despite secret-shaped neighbours', () => {
-    process.env.CLAUDECLAW_AGENT_ID = 'mason';
+  it('keeps MYOS_AGENT_ID despite secret-shaped neighbours', () => {
+    process.env.MYOS_AGENT_ID = 'mason';
     const env = getScrubbedSdkEnv();
-    expect(env.CLAUDECLAW_AGENT_ID).toBe('mason');
+    expect(env.MYOS_AGENT_ID).toBe('mason');
   });
 
   it('drops CLAUDE_CODE_* prefix vars (session state) other than auth slots', () => {
@@ -124,7 +124,7 @@ describe('getScrubbedSdkEnv', () => {
   // used by meet-cli runPikaScript / cmdJoinDaily, dashboard meet spawn,
   // and index.ts warroom spawn. Ensures the scrubbed env returned for a
   // spawn site contains ONLY the explicitly-injected keys (plus
-  // CLAUDECLAW_AGENT_ID and non-secret PATH-style vars), never raw
+  // MYOS_AGENT_ID and non-secret PATH-style vars), never raw
   // process.env secrets.
   it('spawn-site shape: only explicit-injected auth survives next to PATH', () => {
     process.env.DASHBOARD_TOKEN = 'leaked';
@@ -136,7 +136,7 @@ describe('getScrubbedSdkEnv', () => {
     process.env.ANTHROPIC_API_KEY = 'leaked-from-shell';
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'leaked-from-shell';
     process.env.PATH = '/usr/bin:/bin';
-    process.env.CLAUDECLAW_AGENT_ID = 'mason';
+    process.env.MYOS_AGENT_ID = 'mason';
 
     // Caller passes only the keys it explicitly intends to forward.
     const env = getScrubbedSdkEnv({
@@ -149,7 +149,7 @@ describe('getScrubbedSdkEnv', () => {
     expect(env.DAILY_API_KEY).toBe('from-dotenv');
     // Non-secret keep-list survives.
     expect(env.PATH).toBe('/usr/bin:/bin');
-    expect(env.CLAUDECLAW_AGENT_ID).toBe('mason');
+    expect(env.MYOS_AGENT_ID).toBe('mason');
     // Everything else from process.env is gone.
     expect(env.DASHBOARD_TOKEN).toBeUndefined();
     expect(env.MCP_ACCESS_KEY).toBeUndefined();
@@ -236,15 +236,15 @@ describe('getScrubbedSdkEnv', () => {
       expect(env.SHARD_REDIS_URL).toBeUndefined();
     });
 
-    it('keeps CLAUDECLAW_AGENT_ID; ANTHROPIC_API_KEY only via re-injection', () => {
+    it('keeps MYOS_AGENT_ID; ANTHROPIC_API_KEY only via re-injection', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-ant';
-      process.env.CLAUDECLAW_AGENT_ID = 'mason';
+      process.env.MYOS_AGENT_ID = 'mason';
       // Plant a few new-pattern secrets alongside.
       process.env.SECRET = 'x';
       process.env.DATABASE_URL = 'postgres://...';
       const env = getScrubbedSdkEnv({ ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY });
       expect(env.ANTHROPIC_API_KEY).toBe('sk-ant');
-      expect(env.CLAUDECLAW_AGENT_ID).toBe('mason');
+      expect(env.MYOS_AGENT_ID).toBe('mason');
       expect(env.SECRET).toBeUndefined();
       expect(env.DATABASE_URL).toBeUndefined();
     });

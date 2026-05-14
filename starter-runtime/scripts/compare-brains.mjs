@@ -28,8 +28,8 @@ const QUERIES = [
 ];
 
 // Load chat_id from sessions
-const ROOT = '~/HQ';
-const DB_PATH = `${ROOT}/store/claudeclaw.db`;
+const ROOT = '~/myos';
+const DB_PATH = `${ROOT}/store/myos.db`;
 const envText = readFileSync(`${ROOT}/.env`, 'utf-8');
 const env = Object.fromEntries(
   envText.split(/\r?\n/)

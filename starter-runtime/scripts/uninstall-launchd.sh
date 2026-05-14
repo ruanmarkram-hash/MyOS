@@ -1,13 +1,13 @@
 #!/bin/bash
-# Uninstall all ClaudeClaw launchd agents
+# Uninstall all MyOS launchd agents
 set -e
 
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 
-echo "Uninstalling ClaudeClaw launchd agents..."
+echo "Uninstalling MyOS launchd agents..."
 echo ""
 
-for plist in "$LAUNCH_AGENTS_DIR"/com.claudeclaw.*.plist; do
+for plist in "$LAUNCH_AGENTS_DIR"/com.myos.*.plist; do
   [ -f "$plist" ] || continue
   label=$(basename "$plist" .plist)
   echo "Unloading $label..."
@@ -17,5 +17,5 @@ for plist in "$LAUNCH_AGENTS_DIR"/com.claudeclaw.*.plist; do
 done
 
 echo ""
-echo "All ClaudeClaw agents uninstalled."
+echo "All MyOS agents uninstalled."
 echo "Processes will stop within a few seconds."

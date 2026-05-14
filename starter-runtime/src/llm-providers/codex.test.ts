@@ -3,7 +3,7 @@ import { PassThrough, Writable } from 'stream';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 const testPaths = vi.hoisted(() => ({
-  projectRoot: '/tmp/claudeclaw-codex-provider-test',
+  projectRoot: '/tmp/myos-codex-provider-test',
 }));
 
 const spawnMock = vi.hoisted(() => vi.fn());

@@ -20,7 +20,7 @@ import pg from 'pg';
 import { classifyGrowth } from './monitor-brain-classify.mjs';
 import { isJsonlIncluded } from './brain-watcher-parser.mjs';
 
-const ROOT = '~/HQ';
+const ROOT = '~/myos';
 const env = Object.fromEntries(
   readFileSync(`${ROOT}/.env`, 'utf-8').split(/\r?\n/)
     .filter((l) => l && !l.startsWith('#') && l.includes('='))
@@ -135,10 +135,10 @@ const newInputFiles = countRecentJsonlFiles(WINDOW_HOURS);
 const growth = classifyGrowth({ recentThoughts: s.recent, newInputFiles, windowHours: WINDOW_HOURS });
 if (growth.level === 'critical') issues.push(growth.message);
 
-// 5. grep ClaudeClaw logs for OB1 errors in window
+// 5. grep MyOS logs for OB1 errors in window
 const logPaths = [
-  '/tmp/claudeclaw-main.log',
-  '/tmp/claudeclaw.log',
+  '/tmp/myos-main.log',
+  '/tmp/myos.log',
   `${ROOT}/store/agent-main.err`,
 ];
 let errorLines = 0;

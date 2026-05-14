@@ -4,7 +4,7 @@ import path from 'path';
 import { loadAgentConfig, listAgentIds, resolveAgentDir, resolveAgentClaudeMd } from './agent-config.js';
 import { createBot } from './bot.js';
 import { checkPendingMigrations } from './migrations.js';
-import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, WARROOM_ENABLED, WARROOM_PORT, resolveMainClaudeMdPath, LLM_PROVIDER } from './config.js';
+import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, MYOS_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, WARROOM_ENABLED, WARROOM_PORT, resolveMainClaudeMdPath, LLM_PROVIDER } from './config.js';
 import { startDashboard } from './dashboard.js';
 import { initDatabase, cleanupOldMissionTasks, insertAuditLog, pruneSentTelegramOutbox, pruneWaMessages, pruneSlackMessages, clearSession } from './db.js';
 import { initSecurity, setAuditCallback, getScrubbedSdkEnv } from './security.js';
@@ -29,7 +29,7 @@ const agentFlagIndex = process.argv.indexOf('--agent');
 const AGENT_ID = agentFlagIndex !== -1 ? process.argv[agentFlagIndex + 1] : 'main';
 
 // Export AGENT_ID to env so child processes (schedule-cli, etc.) inherit it
-process.env.CLAUDECLAW_AGENT_ID = AGENT_ID;
+process.env.MYOS_AGENT_ID = AGENT_ID;
 
 if (AGENT_ID !== 'main') {
   const agentConfig = loadAgentConfig(AGENT_ID);
@@ -53,9 +53,9 @@ if (AGENT_ID !== 'main') {
   });
   logger.info({ agentId: AGENT_ID, name: agentConfig.name }, 'Running as agent');
 } else {
-  // For main bot: read CLAUDE.md from CLAUDECLAW_CONFIG and inject it as
+  // For main bot: read CLAUDE.md from MYOS_CONFIG and inject it as
   // systemPrompt — the same pattern used by sub-agents. Never copy the file
-  // into the repo; that defeats the purpose of CLAUDECLAW_CONFIG and risks
+  // into the repo; that defeats the purpose of MYOS_CONFIG and risks
   // accidentally committing personal config.
   const mainClaudeMd = resolveMainClaudeMdPath();
   if (fs.existsSync(mainClaudeMd)) {
@@ -75,12 +75,12 @@ if (AGENT_ID !== 'main') {
   } else if (!fs.existsSync(path.join(PROJECT_ROOT, 'CLAUDE.md'))) {
     logger.warn(
       'No CLAUDE.md found. Copy CLAUDE.md.example to %s/CLAUDE.md and customize it.',
-      CLAUDECLAW_CONFIG,
+      MYOS_CONFIG,
     );
   }
 }
 
-const PID_FILE = path.join(STORE_DIR, `${AGENT_ID === 'main' ? 'claudeclaw' : `agent-${AGENT_ID}`}.pid`);
+const PID_FILE = path.join(STORE_DIR, `${AGENT_ID === 'main' ? 'myos' : `agent-${AGENT_ID}`}.pid`);
 
 function showBanner(): void {
   const bannerPath = path.join(PROJECT_ROOT, 'banner.txt');
@@ -88,7 +88,7 @@ function showBanner(): void {
     const banner = fs.readFileSync(bannerPath, 'utf-8');
     console.log('\n' + banner);
   } catch {
-    console.log('\n  ClaudeClaw\n');
+    console.log('\n  MyOS\n');
   }
 }
 
@@ -318,7 +318,7 @@ async function main(): Promise<void> {
             'ELEVENLABS_STABILITY',
             'ELEVENLABS_SIMILARITY_BOOST',
             'WARROOM_VOICES_PATH',
-            'CLAUDECLAW_CONFIG',
+            'MYOS_CONFIG',
           ]);
           // Round-4 structural fix: no natural pass-through. Warroom
           // doesn't need ANTHROPIC_API_KEY directly, but if .env doesn't
@@ -514,7 +514,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  logger.info({ agentId: AGENT_ID }, 'Starting ClaudeClaw...');
+  logger.info({ agentId: AGENT_ID }, 'Starting MyOS...');
   logger.info(
     {
       sha: shortSha(RUNTIME_BUILD_META.sha),
@@ -523,7 +523,7 @@ async function main(): Promise<void> {
       pid: process.pid,
       agentId: AGENT_ID,
     },
-    `ClaudeClaw starting | sha=${shortSha(RUNTIME_BUILD_META.sha)} | builtAt=${RUNTIME_BUILD_META.builtAt} | runtime PID=${process.pid}`,
+    `MyOS starting | sha=${shortSha(RUNTIME_BUILD_META.sha)} | builtAt=${RUNTIME_BUILD_META.builtAt} | runtime PID=${process.pid}`,
   );
 
   // Stale-code watch: every 60s, compare the SHA we loaded at startup
@@ -590,7 +590,7 @@ async function main(): Promise<void> {
   staleInterval.unref?.();
 
   // Clear any existing webhook so polling works cleanly (e.g., if token was
-  // previously used with a webhook-based bot or another ClaudeClaw instance).
+  // previously used with a webhook-based bot or another MyOS instance).
   try {
     await bot.api.deleteWebhook({ drop_pending_updates: false });
   } catch (err) {
@@ -600,16 +600,16 @@ async function main(): Promise<void> {
   await bot.start({
     onStart: (botInfo) => {
       setTelegramConnected(true);
-      setBotInfo(botInfo.username ?? '', botInfo.first_name ?? 'ClaudeClaw');
-      logger.info({ username: botInfo.username }, 'ClaudeClaw is running');
+      setBotInfo(botInfo.username ?? '', botInfo.first_name ?? 'MyOS');
+      logger.info({ username: botInfo.username }, 'MyOS is running');
       if (AGENT_ID === 'main') {
-        console.log(`\n  ClaudeClaw online: @${botInfo.username}`);
+        console.log(`\n  MyOS online: @${botInfo.username}`);
         if (!ALLOWED_CHAT_ID) {
           console.log(`  Send /chatid to get your chat ID for ALLOWED_CHAT_ID`);
         }
         console.log();
       } else {
-        console.log(`\n  ClaudeClaw agent [${AGENT_ID}] online: @${botInfo.username}\n`);
+        console.log(`\n  MyOS agent [${AGENT_ID}] online: @${botInfo.username}\n`);
       }
     },
   });

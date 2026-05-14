@@ -41,7 +41,7 @@ function MobileTopBar({ onOpen }: { onOpen: () => void }) {
       </button>
       <div class="flex min-w-0 flex-1 items-center gap-2">
         <div class="h-4 w-4 rounded-sm bg-[var(--color-accent)]" />
-        <span class="truncate text-[13px] font-semibold text-[var(--color-text)]">ClaudeClaw</span>
+        <span class="truncate text-[13px] font-semibold text-[var(--color-text)]">MyOS</span>
       </div>
       <button
         type="button"
@@ -173,7 +173,7 @@ function SidebarFooter() {
           ●
         </div>
         <div class="flex-1 min-w-0">
-          <div class="text-[var(--color-text)] text-[11.5px] truncate">ClaudeClaw</div>
+          <div class="text-[var(--color-text)] text-[11.5px] truncate">MyOS</div>
           <div class="truncate">All systems normal</div>
         </div>
       </div>

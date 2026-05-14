@@ -13,7 +13,7 @@ For the memory system, this means `engine-room/memory/` holds: the SQL migration
 
 ## Reasoning
 
-The previous pattern had infrastructure sources scattered: migrations under `~/HQ/migrations/`, edge function under `~/HQ/supabase/functions/`, operational knowledge spread across code comments, commit messages, and one-off chat transcripts. Migrating off ClaudeClaw would require archaeology to reconstruct how the brain was built.
+The previous pattern had infrastructure sources scattered: migrations under `~/HQ/migrations/`, edge function under `~/HQ/supabase/functions/`, operational knowledge spread across code comments, commit messages, and one-off chat transcripts. Migrating off MyOS would require archaeology to reconstruct how the brain was built.
 
 Consolidating under `engine-room/memory/` means a migration becomes a copy operation: grab `engine-room/`, apply the migrations to a new Supabase project, deploy the edge function with new secrets, point the new runtime at the folder.
 
@@ -25,7 +25,7 @@ Consolidating under `engine-room/memory/` means a migration becomes a copy opera
 
 ## What this unlocks
 
-- Migrating off ClaudeClaw to OpenClaw, Hermes, or another agentic system is tractable. Estimated work: apply 2 migrations, deploy 1 edge function, re-wire 1 MCP client, re-install skills + agents from engine-room folders. No archaeology required.
+- Migrating off MyOS to OpenClaw, Hermes, or another agentic system is tractable. Estimated work: apply 2 migrations, deploy 1 edge function, re-wire 1 MCP client, re-install skills + agents from engine-room folders. No archaeology required.
 - New agentic systems [YOUR NAME] evaluates in future can be stood up against the same OB1 brain for side-by-side comparison without duplicating memory infrastructure.
 - If the brain's storage backend changes (e.g. moves off Supabase), the schema migrations and edge function source are already in one place, so the swap is localised.
 

@@ -1,6 +1,6 @@
 # Memory system runbook
 
-This folder holds the portable artefacts needed to stand up the memory system on a new agentic platform. The current implementation is ClaudeClaw + OB1 (OpenBrain) on Supabase with pgvector. When you migrate off ClaudeClaw, copy this folder to the new machine and follow the steps below.
+This folder holds the portable artefacts needed to stand up the memory system on a new agentic platform. The current implementation is MyOS + OB1 (OpenBrain) on Supabase with pgvector. When you migrate off MyOS, copy this folder to the new machine and follow the steps below.
 
 ## What memory is
 
@@ -75,7 +75,7 @@ If you migrate to OpenClaw, Hermes, or another agentic system:
 
 The `BRAIN` env var in `.env` switches the read path. Set `BRAIN=sqlite` to ignore OB1 and fall back to the SQLite memories table. Useful if the brain is unavailable or if you want to compare answer quality. Setting requires a Sage restart (`/restart` in Telegram) to pick up.
 
-The four brain services in launchd can be stopped with `launchctl bootout gui/$(id -u)/com.claudeclaw.<service>`. They can be resumed with `launchctl bootstrap`. Data integrity is preserved — stopping the services just pauses new capture; existing data stays searchable.
+The four brain services in launchd can be stopped with `launchctl bootout gui/$(id -u)/com.myos.<service>`. They can be resumed with `launchctl bootstrap`. Data integrity is preserved — stopping the services just pauses new capture; existing data stays searchable.
 
 ## Costs
 

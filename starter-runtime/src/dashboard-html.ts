@@ -5,7 +5,7 @@ const WARROOM_ENABLED = warroomEnabled;
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>ClaudeClaw Mission Control</title>
+<title>MyOS Mission Control</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -157,7 +157,7 @@ const WARROOM_ENABLED = warroomEnabled;
 <!-- Top bar -->
 <div class="flex items-center justify-between mb-1">
   <div class="flex items-center gap-3">
-    <h1 class="text-xl font-bold text-white">ClaudeClaw <span style="font-size:13px;font-weight:400;color:#6b7280">Mission Control</span></h1>
+    <h1 class="text-xl font-bold text-white">MyOS <span style="font-size:13px;font-weight:400;color:#6b7280">Mission Control</span></h1>
     <span id="device-badge" class="device-badge"></span>
   </div>
   <div class="flex items-center gap-3">
@@ -1943,8 +1943,8 @@ function cawGoStep2() {
 
   // Set suggested bot names
   var label = id.replace(/[-_]/g, ' ').replace(/\\b\\w/g, function(c) { return c.toUpperCase(); });
-  document.getElementById('caw-suggested-name').textContent = 'ClaudeClaw ' + label;
-  document.getElementById('caw-suggested-username').textContent = 'claudeclaw_' + id.replace(/-/g, '_') + '_bot';
+  document.getElementById('caw-suggested-name').textContent = 'MyOS ' + label;
+  document.getElementById('caw-suggested-username').textContent = 'myos_' + id.replace(/-/g, '_') + '_bot';
 
   // Reset token state
   cawTokenValid = false;

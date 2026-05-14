@@ -12,7 +12,7 @@
 //      file, embeds, inserts into OB1. Dedupe via content_fingerprint on
 //      thoughts table (the same pre-check pattern the one-off import uses).
 //
-// One tick every 10 min via launchd (com.claudeclaw.brain-watcher.plist).
+// One tick every 10 min via launchd (com.myos.brain-watcher.plist).
 
 import { readFileSync, readdirSync, statSync, appendFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -24,11 +24,11 @@ import { parseTurnPairs, stripInjectedContext, isJsonlIncluded } from './brain-w
 import { embed, vecLit, EMBED_DIM, EMBED_MODEL_NAME } from './lib/embed.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
-const ROOT = '~/HQ';
+const ROOT = '~/myos';
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 const CODEX_SESSIONS_DIR = join(homedir(), '.codex', 'archived_sessions');
 const VAULT_DIR = join(homedir(), 'workspace');
-const STATE_DB = join(ROOT, 'store', 'claudeclaw.db');
+const STATE_DB = join(ROOT, 'store', 'myos.db');
 const LOG_PATH = join(ROOT, 'logs', 'brain-watcher.log');
 
 const MTIME_LOOKBACK_MS = process.env.MTIME_LOOKBACK_MS_OVERRIDE
@@ -474,7 +474,7 @@ async function main() {
   const started = Date.now();
   const cutoff = Date.now() - MTIME_LOOKBACK_MS;
 
-  // Pass 1: Claude Code JSONL
+  // Pass 1: Codex JSONL
   const jsonlFiles = discoverRecentJsonl();
   // Pass 2: Codex archived sessions
   const codexFiles = discoverRecentCodexJsonl();

@@ -45,7 +45,7 @@ def project_root() -> str:
 
 
 def main() -> int:
-    db_path = os.path.join(project_root(), "store", "claudeclaw.db")
+    db_path = os.path.join(project_root(), "store", "myos.db")
     db = sqlite3.connect(db_path)
     db.row_factory = sqlite3.Row
 

@@ -120,9 +120,9 @@ async function migrateOb1Schema(client) {
 }
 
 async function backfillSqlite() {
-  const dbPath = `${ROOT}/store/claudeclaw.db`;
+  const dbPath = `${ROOT}/store/myos.db`;
   if (!existsSync(dbPath)) {
-    console.log('local: store/claudeclaw.db not found, skipping');
+    console.log('local: store/myos.db not found, skipping');
     return;
   }
   const db = new Database(dbPath);

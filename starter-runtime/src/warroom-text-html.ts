@@ -1336,7 +1336,7 @@ setInterval(rotateAgentStatuses, 6_000);
 // container class. Persisted in localStorage so the choice sticks
 // across reloads — same per-browser pattern as the other privacy /
 // scale prefs in the v2 dashboard.
-const LAYOUT_KEY = 'claudeclaw.warroom.rosterLayout';
+const LAYOUT_KEY = 'myos.warroom.rosterLayout';
 const VALID_LAYOUTS = ['compact', 'comfortable', 'spacious'];
 
 function applyRosterLayout(name) {

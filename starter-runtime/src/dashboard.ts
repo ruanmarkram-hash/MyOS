@@ -5,7 +5,7 @@ import { serve } from '@hono/node-server';
 
 import fs from 'fs';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel, LLM_PROVIDER, BRAIN, OB1_SUPABASE_URL, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION, OB1_GRAPH_FUNCTION, EMBEDDING_PROVIDER, LLAMACPP_EMBEDDING_URL, LLAMACPP_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODEL_PATH, CODEX_HAIKU_MODEL, CODEX_SONNET_MODEL, CODEX_OPUS_MODEL, CLAUDECLAW_CONFIG } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, MISSION_CONTROL_V2, agentDefaultModel, LLM_PROVIDER, BRAIN, OB1_SUPABASE_URL, MCP_ACCESS_KEY, OB1_BRAIN_FUNCTION, OB1_GRAPH_FUNCTION, EMBEDDING_PROVIDER, LLAMACPP_EMBEDDING_URL, LLAMACPP_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODEL_PATH, CODEX_HAIKU_MODEL, CODEX_SONNET_MODEL, CODEX_OPUS_MODEL, MYOS_CONFIG } from './config.js';
 import crypto from 'crypto';
 import {
   getAllScheduledTasks,
@@ -155,7 +155,7 @@ import { runAttentionAutofixSweep } from './attention-autofix.js';
 import { isEnabled } from './kill-switches.js';
 
 const MAIN_AGENT_MODEL = 'claude-opus-4-7';
-const DASHBOARD_AUTH_COOKIE = 'claudeclaw_dashboard';
+const DASHBOARD_AUTH_COOKIE = 'myos_dashboard';
 const WARROOM_TEXT_ID_RE = /^wr_[a-z0-9]+_[a-f0-9]{6}$/i;
 const CLIENT_MSG_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let mainRestartQueued = false;
@@ -225,7 +225,7 @@ function renderDashboardLogin(next = '', error = ''): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>ClaudeClaw Login</title>
+  <title>MyOS Login</title>
   <style>
     :root { color-scheme: dark; --bg:#0e0e10; --card:#1a1a1c; --border:#2a2a30; --text:#e8e8e6; --muted:#9a9a98; --accent:#8b8af0; --danger:#ef4444; }
     * { box-sizing: border-box; }
@@ -242,7 +242,7 @@ function renderDashboardLogin(next = '', error = ''): string {
 </head>
 <body>
   <main>
-    <h1>ClaudeClaw</h1>
+    <h1>MyOS</h1>
     <p>Sign in to Mission Control. This stores access in an HttpOnly browser cookie so you can use the dashboard without keeping the token in the URL.</p>
     ${escapedError ? `<div class="error">${escapedError}</div>` : ''}
     <form method="post" action="/login">
@@ -304,9 +304,9 @@ function providerSourceForAgent(agentId: string, config?: Pick<AgentConfig, 'pro
 
 function configuredProviderForAgent(agentId: string, config?: Pick<AgentConfig, 'provider'> | null): string {
   // The global LLM_PROVIDER belongs to Sage/main only. Specialist agents
-  // must opt into a non-Claude provider in their own agent.yaml; otherwise a
+  // must opt into a non-default provider in their own agent.yaml; otherwise a
   // main-provider switch makes the entire roster appear to flip providers.
-  return agentId === 'main' ? configuredProviderValue() : (config?.provider || 'claude');
+  return agentId === 'main' ? configuredProviderValue() : (config?.provider || 'codex');
 }
 
 function providerStatusForAgent(agentId: string, config?: Pick<AgentConfig, 'provider'> | null): { provider: LlmProviderName; configuredProvider: string; providerSource: 'global' | 'explicit' | 'default'; providerError: string | null } {
@@ -317,7 +317,7 @@ function providerStatusForAgent(agentId: string, config?: Pick<AgentConfig, 'pro
     return { provider: activeProvider, configuredProvider, providerSource, providerError: null };
   } catch (err: any) {
     return {
-      provider: 'claude',
+      provider: 'codex',
       configuredProvider,
       providerSource,
       providerError: err?.recovery?.userMessage || err?.message || 'Unsupported LLM provider',
@@ -353,7 +353,7 @@ function writeEnvValue(key: string, value: string): void {
 }
 
 const REVIEW_FILE_MAX_BYTES = 50 * 1024 * 1024;
-const REVIEW_EXPORT_DIR = path.join('/tmp', 'claudeclaw-review-exports');
+const REVIEW_EXPORT_DIR = path.join('/tmp', 'myos-review-exports');
 const MSGRAPH_SEND_SCRIPT = path.join(PROJECT_ROOT, 'skills', 'msgraph', 'send_graph_email.py');
 const MSGRAPH_CALENDAR_SCRIPT = path.join(PROJECT_ROOT, 'skills', 'msgraph', 'calendar_ops.py');
 
@@ -1497,10 +1497,10 @@ function collectOpenBrainGraphCandidates(): { nodes: GraphCandidateNode[]; edges
   const edges: GraphCandidateEdge[] = [];
 
   addGraphNode(nodes, {
-    key: 'system:claudeclaw',
-    label: 'ClaudeClaw OS',
+    key: 'system:myos',
+    label: 'MyOS OS',
     type: 'system',
-    properties: { source: 'mission-control', stableKey: 'system:claudeclaw' },
+    properties: { source: 'mission-control', stableKey: 'system:myos' },
   });
   addGraphNode(nodes, {
     key: 'workflow:review-inbox',
@@ -1541,7 +1541,7 @@ function collectOpenBrainGraphCandidates(): { nodes: GraphCandidateNode[]; edges
       properties: { source: 'mission-control', stableKey: agentKey, agentId: task.assigned_agent || 'unassigned' },
     });
     edges.push({
-      sourceKey: 'system:claudeclaw',
+      sourceKey: 'system:myos',
       targetKey: missionKey,
       relationship: 'runs_mission',
       weight: 0.9,
@@ -1711,7 +1711,7 @@ function currentProviderStatus(): { provider: LlmProviderName; providerError: st
     return { provider: currentProvider(), providerError: null };
   } catch (err: any) {
     return {
-      provider: 'claude',
+      provider: 'codex',
       providerError: err?.recovery?.userMessage || err?.message || 'Unsupported LLM provider',
     };
   }
@@ -3425,7 +3425,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
 
   // ── War Room voice configuration ──
   // The repo file is a generic fallback. Personal ElevenLabs voice IDs live
-  // outside git in CLAUDECLAW_CONFIG/warroom/voices.json unless
+  // outside git in MYOS_CONFIG/warroom/voices.json unless
   // WARROOM_VOICES_PATH explicitly points somewhere else.
   type WarroomVoiceEntry = {
     voice_id?: string;
@@ -3450,7 +3450,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
   function warroomVoicesPath(): string {
     const env = readEnvFile(['WARROOM_VOICES_PATH']);
     const override = cleanEnvValue(env.WARROOM_VOICES_PATH);
-    return override || path.join(CLAUDECLAW_CONFIG, 'warroom', 'voices.json');
+    return override || path.join(MYOS_CONFIG, 'warroom', 'voices.json');
   }
 
   // Full Gemini Live voice catalog with one-word style descriptors. Matches
@@ -5224,7 +5224,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     }));
     const agentHealth = ['main', ...listAgentIds()].map((id) => {
       const pidFile = id === 'main'
-        ? path.join(STORE_DIR, 'claudeclaw.pid')
+        ? path.join(STORE_DIR, 'myos.pid')
         : path.join(STORE_DIR, `agent-${id}.pid`);
       let running = false;
       if (fs.existsSync(pidFile)) {
@@ -5472,7 +5472,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const chatId = c.req.query('chatId') || '';
     const info = getBotInfo();
     return c.json({
-      botName: info.name || 'ClaudeClaw',
+      botName: info.name || 'MyOS',
       botUsername: info.username || '',
       pid: process.pid,
       chatId: chatId || null,
@@ -5566,7 +5566,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     });
 
     // Include main bot too
-    const mainPidFile = path.join(STORE_DIR, 'claudeclaw.pid');
+    const mainPidFile = path.join(STORE_DIR, 'myos.pid');
     let mainRunning = false;
     if (fs.existsSync(mainPidFile)) {
       try {
@@ -5583,7 +5583,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       {
         id: 'main',
         name: 'Main',
-        description: 'Primary ClaudeClaw bot',
+        description: 'Primary MyOS bot',
         model: mainRuntime.configuredModel,
         provider: mainRuntime.provider,
         configuredProvider: mainProviderStatus.configuredProvider,
@@ -5637,7 +5637,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const model = body?.model?.trim();
     if (!model) return c.json({ error: 'model required' }, 400);
 
-    const validModels = validModelsForProvider('claude');
+    const validModels = validModelsForProvider(currentProviderStatus().provider);
     if (!validModels.includes(model)) return c.json({ error: `Invalid model` }, 400);
 
     const agentIds = listAgentIds();
@@ -5660,7 +5660,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       if (agentId === 'main') provider = currentProviderStatus().provider;
       else provider = providerStatusForAgent(agentId, loadAgentConfig(agentId)).provider;
     } catch {
-      provider = 'claude';
+      provider = 'codex';
     }
     const validModels = validModelsForProvider(provider);
     if (!validModels.includes(model)) return c.json({ error: `Invalid model for ${provider}. Valid: ${validModels.join(', ')}` }, 400);

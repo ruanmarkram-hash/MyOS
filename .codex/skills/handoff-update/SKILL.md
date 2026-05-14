@@ -51,7 +51,7 @@ the user cancels mid-flow, leave the proposed diff in
    LIMIT 100;
    ```
 
-   Connect via `psql "$OB1_SUPABASE_DB_URL"` (sourcing `~/claudeclaw/.env` first).
+   Connect via `psql "$OB1_SUPABASE_DB_URL"` (sourcing `~/myos/.env` first).
 
 2. List any new per-sprint session docs in:
    - `~/workspace/projects/*/sessions/` modified since last update
@@ -67,13 +67,13 @@ the user cancels mid-flow, leave the proposed diff in
 
 Decide whether the session being handed off is primarily:
 - `projects/<project-name>/` — code/product work on a named project
-- `operations/engine-room/` — ClaudeClaw / brain / agents / launchd work
+- `operations/engine-room/` — MyOS / brain / agents / launchd work
 - `operations/<other-domain>/` — marketing, recruitment, compliance, etc.
 
 **Rules:**
 1. If the work touched `<your-project>`, `<another-project>`, `<third-project>`, or any
    other known project repo — goes to `projects/<project>/`.
-2. If the work touched `~/claudeclaw/`, `src/`, `scripts/`, `launchd plists`, brain
+2. If the work touched `~/myos/`, `src/`, `scripts/`, `launchd plists`, brain
    services, agents, or the OB1/Supabase stack — goes to
    `operations/engine-room/`.
 3. If the work was marketing/recruitment/compliance/support-work — goes to
@@ -126,7 +126,7 @@ Rewrite the top sections in place (not the whole file). The structure:
 ```markdown
 # HANDOFF
 **Updated:** <current ISO timestamp + one-line session summary>
-**Maintained by:** <AGENT_NAME> / Claude Code (on-demand via /handoff)
+**Maintained by:** <AGENT_NAME> / Codex (on-demand via /handoff)
 
 ## ⭐ Current state
 <one paragraph: overall posture across projects/operations, what's live,
@@ -142,7 +142,7 @@ Next up: <if anything, else drop this line>
 ### <example-domain> [ACTIVE] [owner: <AGENT_NAME>]
 ...
 
-### claudeclaw / engine-room [ACTIVE] [owner: <AGENT_NAME>]
+### myos / engine-room [ACTIVE] [owner: <AGENT_NAME>]
 ...
 
 ## 🚧 Blocked / awaiting decision

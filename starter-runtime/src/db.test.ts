@@ -163,8 +163,8 @@ describe('database', () => {
 
       clearSession('chat1');
 
-      expect(getSession('chat1', 'main', 'claude')).toBeUndefined();
-      expect(getSession('chat1', 'main', 'codex')).toBe('codex-sess');
+      expect(getSession('chat1', 'main', 'codex')).toBeUndefined();
+      expect(getSession('chat1', 'main', 'claude')).toBe('claude-sess');
     });
 
     it('clearAllSessions removes every provider session for the chat and agent', () => {

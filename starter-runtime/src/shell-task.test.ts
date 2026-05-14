@@ -34,7 +34,7 @@ describe('tryExtractShellCommand', () => {
     // Audit-style prompts that ask the agent to run several commands and
     // synthesize must NOT be bypassed.
     const got = tryExtractShellCommand(
-      'Run: launchctl list | grep claudeclaw\nExecute exactly: python3 ~/foo.py'
+      'Run: launchctl list | grep myos\nExecute exactly: python3 ~/foo.py'
     );
     expect(got).toBeNull();
   });
@@ -128,20 +128,20 @@ describe('buildShellTaskEnv', () => {
     expect(env.SOMETHING_ELSE).toBeUndefined();
   });
 
-  it('keeps locale family (LC_*) and CLAUDECLAW_AGENT_ID', () => {
+  it('keeps locale family (LC_*) and MYOS_AGENT_ID', () => {
     const env = buildShellTaskEnv({
       PATH: '/x',
       LC_ALL: 'en_AU.UTF-8',
       LC_CTYPE: 'en_AU.UTF-8',
       LANG: 'en_AU.UTF-8',
       TZ: 'Australia/Brisbane',
-      CLAUDECLAW_AGENT_ID: 'mason',
+      MYOS_AGENT_ID: 'mason',
     });
     expect(env.LC_ALL).toBe('en_AU.UTF-8');
     expect(env.LC_CTYPE).toBe('en_AU.UTF-8');
     expect(env.LANG).toBe('en_AU.UTF-8');
     expect(env.TZ).toBe('Australia/Brisbane');
-    expect(env.CLAUDECLAW_AGENT_ID).toBe('mason');
+    expect(env.MYOS_AGENT_ID).toBe('mason');
   });
 
   it('skips empty-string allowlisted entries', () => {

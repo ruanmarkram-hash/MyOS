@@ -14,7 +14,7 @@ describe('agent runtime prompt', () => {
   it('wraps the OS-owned agent definition before the user message', () => {
     const prompt = buildAgentRuntimePrompt('Do the task', 'You are Sage.', { provider: 'claude', model: 'claude-opus-4-7' });
 
-    expect(prompt).toContain('[ClaudeClaw runtime contract]');
+    expect(prompt).toContain('[MyOS runtime contract]');
     expect(prompt).toContain('[Agent role - follow these instructions]');
     expect(prompt).toContain('You are Sage.');
     expect(prompt).toContain('LLM provider: claude');

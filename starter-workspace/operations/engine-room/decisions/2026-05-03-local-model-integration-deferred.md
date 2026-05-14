@@ -7,7 +7,7 @@
 
 ## Decision
 
-The Qwen3-Coder-Next + Qwen3.6-27B + Qwen3.6-35B-A3B GGUFs at `/path/to/models/` are not being wired into ClaudeClaw at this time. No `LocalLlamaProvider`, no llama-swap daemon, no priority queue, no fallback chain to local. The hardware stays available but unused by the harness.
+The Qwen3-Coder-Next + Qwen3.6-27B + Qwen3.6-35B-A3B GGUFs at `/path/to/models/` are not being wired into MyOS at this time. No `LocalLlamaProvider`, no llama-swap daemon, no priority queue, no fallback chain to local. The hardware stays available but unused by the harness.
 
 This is a deferral, not a rejection. The architecture work (4-tier routing audit + RAM/swap/priority-queue runtime design + specialist HuggingFace model shortlist) is preserved in the session log and PDF artefacts for revival when there's a real reason.
 
@@ -33,8 +33,8 @@ Alternatives considered: (a) build local now and target only Tier-1 — declined
 
 - Engineering attention stays on Phase 3 cutover preparation + Mason Opus guardrail + custom workflow launch readiness rather than on a parallel local-model build.
 - The harness retains its current shape: Claude / Codex / Gemini providers, no local complexity. Easier to reason about, easier to debug.
-- Reference architecture preserved at `/tmp/claudeclaw-routing-audit.pdf` and `/tmp/claudeclaw-local-runtime.pdf` for revival without re-deriving.
+- Reference architecture preserved at `/tmp/myos-routing-audit.pdf` and `/tmp/myos-local-runtime.pdf` for revival without re-deriving.
 
 ## Superseded by / supersedes
 
-Standalone. Aligns with the Codex migration plan at `~/workspace/projects/claudeclaw-codex-migration/PLAN.md` Phase 4/5 gating ("local hardware ~6 weeks") — this decision says "hardware arrived early, but the gate is now real cost-driver evidence, not just hardware availability."
+Standalone. Aligns with the Codex migration plan at `~/workspace/projects/myos-codex-migration/PLAN.md` Phase 4/5 gating ("local hardware ~6 weeks") — this decision says "hardware arrived early, but the gate is now real cost-driver evidence, not just hardware availability."

@@ -708,7 +708,7 @@ function snapshotAndPushMissionBranch(wt: MissionWorktree): boolean {
 /**
  * Prefix injected at the top of every mission prompt that runs inside a
  * worktree. Tells the agent (a) where it's running, (b) which branch its
- * commits go on, and (c) NOT to cd back to ~/HQ — that would
+ * commits go on, and (c) NOT to cd back to ~/myos — that would
  * defeat the isolation. The merge step is handled by the scheduler.
  */
 function buildWorktreePromptHeader(wt: MissionWorktree, missionId: string): string {
@@ -719,9 +719,9 @@ function buildWorktreePromptHeader(wt: MissionWorktree, missionId: string): stri
     `On branch:`,
     `  ${wt.branch}`,
     `Rules:`,
-    `  • Do NOT cd to ~/HQ or any other path. Stay in this worktree.`,
+    `  • Do NOT cd to ~/myos or any other path. Stay in this worktree.`,
     `  • Commit your work to this branch. Do NOT push — the scheduler pushes and fast-forwards main after you finish.`,
-    `  • The shared ~/HQ tree is read by 5 other agents simultaneously; moving its HEAD breaks them.`,
+    `  • The shared ~/myos tree is read by 5 other agents simultaneously; moving its HEAD breaks them.`,
     `  • Mission id: ${missionId}`,
     ``,
     `Mission brief follows:`,

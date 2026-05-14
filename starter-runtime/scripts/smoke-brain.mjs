@@ -6,7 +6,7 @@
 process.env.BRAIN = 'ob1';
 
 const { pingBrain, captureThought, searchThoughts, brainEnabled } =
-  await import('~/HQ/dist/brain/client.js');
+  await import('~/myos/dist/brain/client.js');
 
 function fail(msg) {
   console.error(`FAIL: ${msg}`);

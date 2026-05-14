@@ -3,12 +3,12 @@
 // Origin: 2026-05-07 morning. Warden's daily audit fires CRITICAL "ob1-brain:
 // monitor-brain.mjs reported last 4h growth: +0" at the start of Brisbane
 // work hours, even when ingestion is healthy. The actual cause is innocent:
-// user sleeps, no Claude Code / Codex sessions are active, the brain-watcher
+// user sleeps, no Codex / Codex sessions are active, the brain-watcher
 // has nothing to ingest, and the next monitor tick legitimately sees 0 new
 // thoughts. Patching the watcher is wrong — the bug is the alert threshold.
 //
 // Distinguish "ingestion broken" from "no input arrived" by comparing the
-// growth window against the count of NEW upstream jsonl files (Claude Code
+// growth window against the count of NEW upstream jsonl files (Codex
 // session logs + Codex archived sessions) whose mtime falls inside the same
 // window. If there was no input, growth=0 is expected, not a failure.
 //

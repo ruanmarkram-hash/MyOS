@@ -37,13 +37,13 @@ import time
 from dataclasses import dataclass
 
 ENV_FILE = os.path.expanduser("~/HQ/.env")
-SQLITE_DB = os.path.expanduser("~/HQ/store/claudeclaw.db")
+SQLITE_DB = os.path.expanduser("~/HQ/store/myos.db")
 PSQL = "/opt/homebrew/opt/libpq/bin/psql"
 
 EXTRACTION_STALE_MIN = 360
 REAL_TURN_THRESHOLD = 5
 
-# ClaudeClaw services split by lifecycle. Both groups MUST be loaded; the
+# MyOS services split by lifecycle. Both groups MUST be loaded; the
 # difference is how we interpret pid="-" / last_exit="-" between runs.
 #
 # PERSISTENT: KeepAlive=true, RunAtLoad=true. Should be running continuously.
@@ -54,19 +54,19 @@ REAL_TURN_THRESHOLD = 5
 # after a successful exit while waiting for next trigger). Only flag when
 # last_exit is a non-zero numeric value — that's a real crash.
 PERSISTENT_AGENTS = (
-    "com.claudeclaw.main",
-    "com.claudeclaw.warden",
-    "com.claudeclaw.charter",
-    "com.claudeclaw.ember",
-    "com.claudeclaw.marlow",
-    "com.claudeclaw.mason",
+    "com.myos.main",
+    "com.myos.warden",
+    "com.myos.charter",
+    "com.myos.ember",
+    "com.myos.marlow",
+    "com.myos.mason",
 )
 SCHEDULED_AGENTS = (
-    "com.claudeclaw.brain-watcher",     # StartInterval 600s
-    "com.claudeclaw.brain-monitor",     # StartInterval 21600s
-    "com.claudeclaw.entity-worker",     # StartInterval 180s
-    "com.claudeclaw.brain-backup",      # StartCalendarInterval
-    "com.claudeclaw.brain-drift",       # StartCalendarInterval
+    "com.myos.brain-watcher",     # StartInterval 600s
+    "com.myos.brain-monitor",     # StartInterval 21600s
+    "com.myos.entity-worker",     # StartInterval 180s
+    "com.myos.brain-backup",      # StartCalendarInterval
+    "com.myos.brain-drift",       # StartCalendarInterval
 )
 EXPECTED_AGENTS = PERSISTENT_AGENTS + SCHEDULED_AGENTS
 
@@ -166,7 +166,7 @@ def _check_launchctl() -> LaunchctlReport:
 
     seen: dict[str, tuple[str, str]] = {}  # label -> (pid, last_exit)
     for line in out.splitlines():
-        if "com.claudeclaw" not in line:
+        if "com.myos" not in line:
             continue
         # `launchctl list` columns are tab/space separated; first three are
         # PID, LastExitStatus, Label. Labels never contain whitespace today,

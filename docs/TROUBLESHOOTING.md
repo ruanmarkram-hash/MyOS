@@ -44,7 +44,7 @@ You weren't logged in to the Supabase CLI, or your project link broke.
 
 ```bash
 supabase login    # opens browser to confirm
-cd ~/claudeclaw
+cd ~/myos
 supabase link --project-ref <your-project-ref>
 ```
 
@@ -53,10 +53,10 @@ supabase link --project-ref <your-project-ref>
 Your macOS version uses the older syntax. Use `load` instead:
 
 ```bash
-launchctl load -w ~/Library/LaunchAgents/com.claudeclaw.<name>.plist
+launchctl load -w ~/Library/LaunchAgents/com.myos.<name>.plist
 ```
 
-### `npm install` fails in `~/claudeclaw/`
+### `npm install` fails in `~/myos/`
 
 Usually Node version is too old. Check:
 
@@ -86,7 +86,7 @@ The edge function is down or the MCP access key is wrong. Check:
 If it's deployed but returning 401, redeploy with the secret set:
 
 ```bash
-cd ~/claudeclaw
+cd ~/myos
 source .env
 supabase secrets set MCP_ACCESS_KEY="$MCP_ACCESS_KEY"
 supabase functions deploy brain-mcp --no-verify-jwt
@@ -96,20 +96,20 @@ supabase functions deploy brain-mcp --no-verify-jwt
 
 Two possible causes:
 
-1. **BRAIN=sqlite in `.env`** but you expected OB1 to be live. Check `grep BRAIN= ~/claudeclaw/.env`. If it says `sqlite`, change to `ob1` and restart <AGENT_NAME>.
+1. **BRAIN=sqlite in `.env`** but you expected OB1 to be live. Check `grep BRAIN= ~/myos/.env`. If it says `sqlite`, change to `ob1` and restart <AGENT_NAME>.
 
 2. **<AGENT_NAME> hasn't restarted** since the brain came online. In Telegram, send `/restart`. Or via launchctl:
 
    ```bash
-   launchctl kickstart -k gui/$(id -u)/com.claudeclaw.main
+   launchctl kickstart -k gui/$(id -u)/com.myos.main
    ```
 
-### Skills not discovered by Claude Code
+### Skills not discovered by Codex
 
-Claude Code reads from `~/.claude/skills/`. Check the symlinks:
+Codex reads from `~/.codex/skills/`. Check the symlinks:
 
 ```bash
-ls -la ~/.claude/skills/
+ls -la ~/.codex/skills/
 ```
 
 Each entry should be a symlink (starts with `l`) pointing at `/Users/.../workspace/operations/engine-room/skills/<name>`.
@@ -117,22 +117,22 @@ Each entry should be a symlink (starts with `l`) pointing at `/Users/.../workspa
 If any are broken, re-create:
 
 ```bash
-rm ~/.claude/skills/<name>
-ln -s ~/workspace/operations/engine-room/skills/<name> ~/.claude/skills/<name>
+rm ~/.codex/skills/<name>
+ln -s ~/workspace/operations/engine-room/skills/<name> ~/.codex/skills/<name>
 ```
 
 ### Agent not loading ("agent <name> not found")
 
-ClaudeClaw looks for agents in `~/claudeclaw/agents/<name>/` or `$CLAUDECLAW_CONFIG/agents/<name>/`. With the engine-room pattern, those should be symlinks:
+MyOS looks for agents in `~/myos/agents/<name>/` or `$MYOS_CONFIG/agents/<name>/`. With the engine-room pattern, those should be symlinks:
 
 ```bash
-ls -la ~/claudeclaw/agents/
+ls -la ~/myos/agents/
 ```
 
 If missing, re-create:
 
 ```bash
-ln -s ~/workspace/operations/engine-room/agents/<name> ~/claudeclaw/agents/<name>
+ln -s ~/workspace/operations/engine-room/agents/<name> ~/myos/agents/<name>
 ```
 
 ### Brain-watcher log is stale (not ticking)
@@ -140,19 +140,19 @@ ln -s ~/workspace/operations/engine-room/agents/<name> ~/claudeclaw/agents/<name
 Check if the launchd service is loaded:
 
 ```bash
-launchctl list | grep claudeclaw
+launchctl list | grep myos
 ```
 
 You should see 5 entries (brain-watcher, entity-worker, brain-monitor, brain-backup, brain-drift). If brain-watcher is missing:
 
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claudeclaw.brain-watcher.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.myos.brain-watcher.plist
 ```
 
 If it keeps exiting with non-zero, check the error log:
 
 ```bash
-tail -30 ~/claudeclaw/logs/brain-watcher.stderr.log
+tail -30 ~/myos/logs/brain-watcher.stderr.log
 ```
 
 ### Entity queue is growing, not draining
@@ -160,21 +160,21 @@ tail -30 ~/claudeclaw/logs/brain-watcher.stderr.log
 The entity-worker service may have died. Kick it manually:
 
 ```bash
-launchctl kickstart gui/$(id -u)/com.claudeclaw.entity-worker
+launchctl kickstart gui/$(id -u)/com.myos.entity-worker
 ```
 
 Watch the log:
 
 ```bash
-tail -f ~/claudeclaw/logs/entity-worker.log
+tail -f ~/myos/logs/entity-worker.log
 ```
 
 ### `/handoff` skill doesn't trigger
 
-Claude Code uses the skill's description to decide when to fire. Check the skill file exists:
+Codex uses the skill's description to decide when to fire. Check the skill file exists:
 
 ```bash
-cat ~/.claude/skills/handoff-update/SKILL.md | head -15
+cat ~/.codex/skills/handoff-update/SKILL.md | head -15
 ```
 
 If it exists but the model isn't picking up on "update handoff", try being more explicit:
@@ -192,7 +192,7 @@ Free tier gives you 2 projects and 500MB database. At your usage it's unlikely t
 Check if the brain-watcher already ingested it. Query OB1:
 
 ```bash
-cd ~/claudeclaw
+cd ~/myos
 source .env
 /opt/homebrew/opt/libpq/bin/psql "$OB1_SUPABASE_DB_URL" -c "
   SELECT content FROM thoughts
@@ -207,7 +207,7 @@ If the content is there, the file can be reconstructed (mostly) from the capture
 Restore from the last brain-backup:
 
 ```bash
-ls ~/claudeclaw/store/brain-backups/
+ls ~/myos/store/brain-backups/
 ```
 
 Find the most recent folder. Inside is a JSON file. Import the thought(s) that contain HANDOFF.md snapshots and recover.
@@ -224,7 +224,7 @@ git checkout <older-sha> -- memory/HANDOFF.md
 
 ### Re-run the whole setup
 
-Open the starter kit folder, `claude`, paste SETUP-PROMPT.md. The intake skill checks what's already done and only does missing steps.
+Open the starter kit folder, `codex`, paste SETUP-PROMPT.md. The intake skill checks what's already done and only does missing steps.
 
 ### Start completely fresh
 
@@ -233,20 +233,20 @@ Open the starter kit folder, `claude`, paste SETUP-PROMPT.md. The intake skill c
 ```bash
 # Stop all services
 for svc in brain-watcher entity-worker brain-monitor brain-backup brain-drift main; do
-  launchctl bootout gui/$(id -u)/com.claudeclaw.$svc 2>/dev/null
+  launchctl bootout gui/$(id -u)/com.myos.$svc 2>/dev/null
 done
 
 # Back up workspace first (just in case)
 mv ~/workspace ~/workspace-old-$(date +%Y%m%d)
 
-# Remove ClaudeClaw source
-rm -rf ~/claudeclaw
+# Remove MyOS source
+rm -rf ~/myos
 
 # Remove launchd plists
-rm ~/Library/LaunchAgents/com.claudeclaw.*.plist
+rm ~/Library/LaunchAgents/com.myos.*.plist
 
-# Remove Claude Code skill symlinks
-rm ~/.claude/skills/*
+# Remove Codex skill symlinks
+rm ~/.codex/skills/*
 
 # You'll also want to delete the Supabase project manually from the dashboard
 # (https://supabase.com → project settings → Delete project)

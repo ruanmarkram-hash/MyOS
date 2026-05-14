@@ -91,7 +91,7 @@ function createSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS sessions (
       chat_id    TEXT NOT NULL,
       agent_id   TEXT NOT NULL DEFAULT 'main',
-      provider   TEXT NOT NULL DEFAULT 'claude',
+      provider   TEXT NOT NULL DEFAULT 'codex',
       session_id TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (chat_id, agent_id, provider)
@@ -549,7 +549,7 @@ export function listAgentFileHistory(filePath: string, limit = 50): AgentFileHis
 
 export function initDatabase(): void {
   fs.mkdirSync(STORE_DIR, { recursive: true });
-  const dbPath = path.join(STORE_DIR, 'claudeclaw.db');
+  const dbPath = path.join(STORE_DIR, 'myos.db');
 
   // Validate encryption key is available before proceeding
   getEncryptionKey();
@@ -620,7 +620,7 @@ function runMigrations(database: Database.Database): void {
         CREATE TABLE ${tempTable} (
           chat_id    TEXT NOT NULL,
           agent_id   TEXT NOT NULL DEFAULT 'main',
-          provider   TEXT NOT NULL DEFAULT 'claude',
+          provider   TEXT NOT NULL DEFAULT 'codex',
           session_id TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           PRIMARY KEY (chat_id, agent_id, provider)
@@ -1067,20 +1067,20 @@ export function _testDbHandle(): Database.Database {
   return db;
 }
 
-export function getSession(chatId: string, agentId = 'main', provider = 'claude'): string | undefined {
+export function getSession(chatId: string, agentId = 'main', provider = 'codex'): string | undefined {
   const row = db
     .prepare('SELECT session_id FROM sessions WHERE chat_id = ? AND agent_id = ? AND provider = ?')
     .get(chatId, agentId, provider) as { session_id: string } | undefined;
   return row?.session_id;
 }
 
-export function setSession(chatId: string, sessionId: string, agentId = 'main', provider = 'claude'): void {
+export function setSession(chatId: string, sessionId: string, agentId = 'main', provider = 'codex'): void {
   db.prepare(
     'INSERT OR REPLACE INTO sessions (chat_id, agent_id, provider, session_id, updated_at) VALUES (?, ?, ?, ?, ?)',
   ).run(chatId, agentId, provider, sessionId, new Date().toISOString());
 }
 
-export function clearSession(chatId: string, agentId = 'main', provider = 'claude'): void {
+export function clearSession(chatId: string, agentId = 'main', provider = 'codex'): void {
   db.prepare('DELETE FROM sessions WHERE chat_id = ? AND agent_id = ? AND provider = ?').run(chatId, agentId, provider);
 }
 

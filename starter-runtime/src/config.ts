@@ -17,7 +17,7 @@ const envConfig = readEnvFile([
   'DASHBOARD_PORT',
   'DASHBOARD_TOKEN',
   'DASHBOARD_URL',
-  'CLAUDECLAW_CONFIG',
+  'MYOS_CONFIG',
   'DB_ENCRYPTION_KEY',
   'GOOGLE_API_KEY',
   'AGENT_TIMEOUT_MS',
@@ -125,15 +125,14 @@ export const ELEVENLABS_VOICE_ID = envConfig.ELEVENLABS_VOICE_ID ?? '';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// PROJECT_ROOT is the claudeclaw/ directory — where CLAUDE.md lives.
-// The SDK uses this as cwd, which causes Claude Code to load our CLAUDE.md
-// and all global skills from ~/.claude/skills/ via settingSources.
+// PROJECT_ROOT is the myos/ directory — where the runtime instruction file lives.
+// The SDK uses this as cwd, which lets provider adapters resolve runtime files and skills.
 export const PROJECT_ROOT = path.resolve(__dirname, '..');
 export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 
 // ── External config directory ────────────────────────────────────────
 // Personal config files (CLAUDE.md, agent.yaml, agent CLAUDE.md) can live
-// outside the repo in CLAUDECLAW_CONFIG (default ~/.claudeclaw) so they
+// outside the repo in MYOS_CONFIG (default ~/.myos) so they
 // never get committed. The repo ships only .example template files.
 
 /** Expand ~/... to an absolute path. */
@@ -145,17 +144,17 @@ export function expandHome(p: string): string {
 }
 
 const rawConfigDir =
-  process.env.CLAUDECLAW_CONFIG || envConfig.CLAUDECLAW_CONFIG || '~/.claudeclaw';
+  process.env.MYOS_CONFIG || envConfig.MYOS_CONFIG || '~/.myos';
 
 /**
  * Absolute path to the external config directory.
- * Defaults to ~/.claudeclaw. Set CLAUDECLAW_CONFIG in .env or environment to override.
+ * Defaults to ~/.myos. Set MYOS_CONFIG in .env or environment to override.
  */
-export const CLAUDECLAW_CONFIG = expandHome(rawConfigDir);
+export const MYOS_CONFIG = expandHome(rawConfigDir);
 
 /** Active main CLAUDE.md path, matching startup's external-config preference. */
 export function resolveMainClaudeMdPath(): string {
-  const externalPath = path.join(CLAUDECLAW_CONFIG, 'CLAUDE.md');
+  const externalPath = path.join(MYOS_CONFIG, 'CLAUDE.md');
   if (fs.existsSync(externalPath)) return externalPath;
   return path.join(PROJECT_ROOT, 'CLAUDE.md');
 }
@@ -163,7 +162,7 @@ export function resolveMainClaudeMdPath(): string {
 // Telegram limits
 export const MAX_MESSAGE_LENGTH = 4096;
 
-// How often to refresh the typing indicator while Claude is thinking (ms).
+// How often to refresh the typing indicator while the model is thinking (ms).
 // Telegram's typing action expires after ~5s, so 4s keeps it continuous.
 export const TYPING_REFRESH_MS = 4000;
 
@@ -193,7 +192,7 @@ export const CONTEXT_LIMIT = parseInt(
   10,
 );
 
-// Dashboard — web UI for monitoring ClaudeClaw state
+// Dashboard — web UI for monitoring MyOS state
 export const DASHBOARD_PORT = parseInt(
   process.env.DASHBOARD_PORT || envConfig.DASHBOARD_PORT || '3141',
   10,
@@ -234,9 +233,9 @@ export const LLAMACPP_EMBEDDING_MODEL =
 export const LOCAL_EMBEDDING_MODEL_PATH =
   process.env.LOCAL_EMBEDDING_MODEL_PATH || envConfig.LOCAL_EMBEDDING_MODEL_PATH || '';
 
-// LLM provider for agent execution. Claude remains the production default.
+// LLM provider for agent execution. Codex is the production default.
 export const LLM_PROVIDER =
-  process.env.LLM_PROVIDER || envConfig.LLM_PROVIDER || 'claude';
+  process.env.LLM_PROVIDER || envConfig.LLM_PROVIDER || 'codex';
 
 export const CODEX_HAIKU_MODEL =
   process.env.CODEX_HAIKU_MODEL || envConfig.CODEX_HAIKU_MODEL || 'gpt-5.4-nano';

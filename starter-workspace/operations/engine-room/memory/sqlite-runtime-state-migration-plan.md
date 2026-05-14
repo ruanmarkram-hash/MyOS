@@ -6,11 +6,11 @@
 
 ## Goal
 
-Move the live ClaudeClaw SQLite runtime state out of HQ ownership and into the engine-room portability model, without breaking the current ClaudeClaw fleet.
+Move the live MyOS SQLite runtime state out of HQ ownership and into the engine-room portability model, without breaking the current MyOS fleet.
 
 This covers the local SQLite state at:
 
-`/Users/sagecos1/HQ/store/claudeclaw.db`
+`/Users/sagecos1/HQ/store/myos.db`
 
 This database is not only memory. It also contains operational state for sessions, scheduled tasks, mission tasks, audit logs, token usage, cost tracking, hive mind, and local fallback memory.
 
@@ -18,15 +18,15 @@ This database is not only memory. It also contains operational state for session
 
 Long-term target:
 
-`/Users/sagecos1/workspace/operations/engine-room/runtime-state/claudeclaw-store/claudeclaw.db`
+`/Users/sagecos1/workspace/operations/engine-room/runtime-state/myos-store/myos.db`
 
 Compatibility target while HQ still runs:
 
-`/Users/sagecos1/HQ/store -> /Users/sagecos1/workspace/operations/engine-room/runtime-state/claudeclaw-store`
+`/Users/sagecos1/HQ/store -> /Users/sagecos1/workspace/operations/engine-room/runtime-state/myos-store`
 
 or an explicit env/config override:
 
-`CLAUDECLAW_STORE_DIR=/Users/sagecos1/workspace/operations/engine-room/runtime-state/claudeclaw-store`
+`MYOS_STORE_DIR=/Users/sagecos1/workspace/operations/engine-room/runtime-state/myos-store`
 
 Prefer the env/config override if modifying HQ runtime code is in scope. Prefer the symlink only as a low-code bridge.
 
@@ -34,9 +34,9 @@ Prefer the env/config override if modifying HQ runtime code is in scope. Prefer 
 
 Move as a store directory, not just one DB file:
 
-- `claudeclaw.db`
-- `claudeclaw.db-wal`
-- `claudeclaw.db-shm`
+- `myos.db`
+- `myos.db-wal`
+- `myos.db-shm`
 - `*.pid`
 - local runtime backups
 - brain backups if still intentionally tied to HQ store
@@ -45,30 +45,30 @@ Move as a store directory, not just one DB file:
 Before moving, checkpoint SQLite so WAL state is clean:
 
 ```bash
-sqlite3 /Users/sagecos1/HQ/store/claudeclaw.db "PRAGMA wal_checkpoint(FULL);"
+sqlite3 /Users/sagecos1/HQ/store/myos.db "PRAGMA wal_checkpoint(FULL);"
 ```
 
 ## Migration Phases
 
 ### Phase 0: Inventory
 
-- List every hardcoded reference to `store/claudeclaw.db`, `HQ/store`, and `STORE_DIR`.
+- List every hardcoded reference to `store/myos.db`, `HQ/store`, and `STORE_DIR`.
 - Classify each reference as runtime, script, skill, scheduled task prompt, decision/session doc, or historical note.
 - Update only live runtime/script references. Do not rewrite historical session logs.
 
 Known live references to handle:
 
 - `~/HQ/src/config.ts` currently derives `STORE_DIR` from `PROJECT_ROOT/store`.
-- `engine-room/skills/rules-sync/sync.py` hardcodes `/Users/sagecos1/HQ/store/claudeclaw.db`.
-- `engine-room/skills/rules-sync/monthly_audit.py` hardcodes `/Users/sagecos1/HQ/store/claudeclaw.db`.
-- Agent CLAUDE.md files use `$(git rev-parse --show-toplevel)/store/claudeclaw.db`, which remains valid if HQ has a compatibility store path.
+- `engine-room/skills/rules-sync/sync.py` hardcodes `/Users/sagecos1/HQ/store/myos.db`.
+- `engine-room/skills/rules-sync/monthly_audit.py` hardcodes `/Users/sagecos1/HQ/store/myos.db`.
+- Agent CLAUDE.md files use `$(git rev-parse --show-toplevel)/store/myos.db`, which remains valid if HQ has a compatibility store path.
 
 ### Phase 1: Add Store Path Override
 
 Modify HQ runtime to resolve `STORE_DIR` from an env var first:
 
 ```text
-CLAUDECLAW_STORE_DIR
+MYOS_STORE_DIR
 ```
 
 Fallback remains:
@@ -77,20 +77,20 @@ Fallback remains:
 path.resolve(PROJECT_ROOT, 'store')
 ```
 
-Add `CLAUDECLAW_STORE_DIR` to `.env.example` and any relevant setup docs, but do not set it until the migration run.
+Add `MYOS_STORE_DIR` to `.env.example` and any relevant setup docs, but do not set it until the migration run.
 
 ### Phase 2: Prepare Engine-Room Store
 
 Create:
 
 ```text
-/Users/sagecos1/workspace/operations/engine-room/runtime-state/claudeclaw-store/
+/Users/sagecos1/workspace/operations/engine-room/runtime-state/myos-store/
 ```
 
 Set restrictive permissions:
 
 ```bash
-chmod 700 /Users/sagecos1/workspace/operations/engine-room/runtime-state/claudeclaw-store
+chmod 700 /Users/sagecos1/workspace/operations/engine-room/runtime-state/myos-store
 ```
 
 Do not commit the live DB. Add ignore rules for:
@@ -105,7 +105,7 @@ runtime-state/
 
 ### Phase 3: Stop Fleet And Move State
 
-Stop the ClaudeClaw fleet cleanly:
+Stop the MyOS fleet cleanly:
 
 - Main Sage via Telegram `/restart` or launchd stop if doing a full maintenance window.
 - Specialist agents with launchd stop or kickstart after the move.
@@ -113,7 +113,7 @@ Stop the ClaudeClaw fleet cleanly:
 Checkpoint the DB:
 
 ```bash
-sqlite3 /Users/sagecos1/HQ/store/claudeclaw.db "PRAGMA wal_checkpoint(FULL);"
+sqlite3 /Users/sagecos1/HQ/store/myos.db "PRAGMA wal_checkpoint(FULL);"
 ```
 
 Copy the entire store directory to the new location with metadata preserved.
@@ -121,14 +121,14 @@ Copy the entire store directory to the new location with metadata preserved.
 Keep a timestamped backup before changing anything:
 
 ```text
-/Users/sagecos1/HQ/store/backups/claudeclaw-pre-engine-room-store-YYYYMMDD-HHMMSS.db
+/Users/sagecos1/HQ/store/backups/myos-pre-engine-room-store-YYYYMMDD-HHMMSS.db
 ```
 
 ### Phase 4: Compatibility Bridge
 
 Choose one bridge:
 
-1. **Env override:** set `CLAUDECLAW_STORE_DIR` in `/Users/sagecos1/HQ/.env`.
+1. **Env override:** set `MYOS_STORE_DIR` in `/Users/sagecos1/HQ/.env`.
 2. **Symlink:** replace `/Users/sagecos1/HQ/store` with a symlink to the engine-room store directory.
 
 Env override is cleaner because it makes ownership explicit. Symlink is simpler and preserves scripts that expect `HQ/store`.
@@ -150,10 +150,10 @@ Restart the fleet and verify:
 Minimum commands:
 
 ```bash
-sqlite3 <new-store>/claudeclaw.db "SELECT COUNT(*) FROM scheduled_tasks;"
-sqlite3 <new-store>/claudeclaw.db "SELECT COUNT(*) FROM mission_tasks;"
-sqlite3 <new-store>/claudeclaw.db "SELECT COUNT(*) FROM sessions;"
-sqlite3 <new-store>/claudeclaw.db "SELECT agent_id, action, summary FROM hive_mind ORDER BY created_at DESC LIMIT 5;"
+sqlite3 <new-store>/myos.db "SELECT COUNT(*) FROM scheduled_tasks;"
+sqlite3 <new-store>/myos.db "SELECT COUNT(*) FROM mission_tasks;"
+sqlite3 <new-store>/myos.db "SELECT COUNT(*) FROM sessions;"
+sqlite3 <new-store>/myos.db "SELECT agent_id, action, summary FROM hive_mind ORDER BY created_at DESC LIMIT 5;"
 ```
 
 ### Phase 6: Codex Capture Bridge
@@ -180,18 +180,18 @@ The bridge must redact obvious secrets before capture and print exactly what it 
 Only after Codex/ChatGPT becomes the active runtime candidate:
 
 - Define which SQLite tables remain needed.
-- Replace ClaudeClaw-specific session IDs with OpenAI/Codex thread IDs where useful.
+- Replace MyOS-specific session IDs with OpenAI/Codex thread IDs where useful.
 - Preserve scheduled tasks, audit logs, mission tasks, hive mind, and lessons unless explicitly retired.
 - Add an OpenAI-native read/write adapter rather than letting Codex write raw SQL ad hoc.
 
-Do not drop ClaudeClaw tables until the new runtime has run in parallel for at least one week.
+Do not drop MyOS tables until the new runtime has run in parallel for at least one week.
 
 ## Rollback
 
 Rollback must be one command path:
 
 1. Stop fleet.
-2. Point `CLAUDECLAW_STORE_DIR` back to `/Users/sagecos1/HQ/store`, or restore the original `HQ/store` directory if using a symlink.
+2. Point `MYOS_STORE_DIR` back to `/Users/sagecos1/HQ/store`, or restore the original `HQ/store` directory if using a symlink.
 3. Restart fleet.
 4. Verify Telegram, dashboard, scheduled tasks, mission tasks, and hive mind.
 
@@ -201,8 +201,8 @@ Keep the pre-move backup until at least two successful daily cycles have passed.
 
 The migration is complete only when:
 
-- No live script hardcodes `/Users/sagecos1/HQ/store/claudeclaw.db` unless it is intentionally using the compatibility symlink.
-- The ClaudeClaw fleet runs normally for 24 hours from the engine-room-owned store.
+- No live script hardcodes `/Users/sagecos1/HQ/store/myos.db` unless it is intentionally using the compatibility symlink.
+- The MyOS fleet runs normally for 24 hours from the engine-room-owned store.
 - OB1 capture and search remain healthy.
 - SQLite fallback remains functional.
 - Codex capture can write a test `source='codex'` memory and `agent_id='codex'` hive row without corrupting existing state.

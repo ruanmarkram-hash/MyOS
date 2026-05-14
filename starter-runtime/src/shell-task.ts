@@ -3,7 +3,7 @@
  *
  * Background: many scheduled tasks are wrappers that just run a single shell
  * command verbatim and return stdout (heartbeats, route_invoices, refresh,
- * etc.). Spawning a full Claude Code session for each one is fragile — API
+ * etc.). Spawning a full Codex session for each one is fragile — API
  * hiccups, slow context loads, or model tool-only responses can blow past the
  * 10m task timeout for what should be a sub-second check. Overnight 2026-05-02
  * we observed multiple heartbeat tasks killed at 10m and one audit returning
@@ -21,7 +21,7 @@
  *
  * Anything else (audits, briefings, judgment-required prompts) is left alone.
  *
- * Aligned with claudeclaw-codex-migration PLAN.md Phase 4: trivial scheduled
+ * Aligned with myos-codex-migration PLAN.md Phase 4: trivial scheduled
  * tasks should be agent-free regardless of provider. Reduces the surface that
  * Phase 3 cutover has to revalidate on Codex.
  */
@@ -39,7 +39,7 @@ import { isLikelySecretEnvName } from './security.js';
  *
  * Audited existing silent shell tasks (sqlite scheduled_tasks WHERE
  * silent=1): every task that needs secrets sources `.env` explicitly
- * inside its own bash command (e.g. `set -a && source ~/HQ/.env
+ * inside its own bash command (e.g. `set -a && source ~/myos/.env
  * && set +a && psql ...`). None rely on env inheritance for secrets.
  *
  * So the safe behaviour is to drop the entire parent env and pass only
@@ -59,7 +59,7 @@ const SHELL_TASK_ENV_ALLOWLIST = [
   'TZ',
   'TMPDIR',
   // Keep the agent id so log lines / hive-mind writes know who fired.
-  'CLAUDECLAW_AGENT_ID',
+  'MYOS_AGENT_ID',
 ] as const;
 
 // Locale family — LC_ALL, LC_CTYPE, LC_MESSAGES, etc. — kept as a prefix

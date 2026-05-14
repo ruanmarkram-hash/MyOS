@@ -1,6 +1,6 @@
 ---
 name: improve-codebase-architecture
-description: Use when asked to improve, refactor, simplify, harden, or review a codebase architecture. Guides agents through evidence-led architecture diagnosis, root-cause refactoring, dependency and boundary cleanup, migration planning, tests, and verification without speculative rewrites or broad churn. Especially useful for Mason, ClaudeClaw engineering work, Codex, and Claude CLI.
+description: Use when asked to improve, refactor, simplify, harden, or review a codebase architecture. Guides agents through evidence-led architecture diagnosis, root-cause refactoring, dependency and boundary cleanup, migration planning, tests, and verification without speculative rewrites or broad churn. Especially useful for Mason, MyOS engineering work, Codex, and Claude CLI.
 triggers:
   - architecture
   - refactor

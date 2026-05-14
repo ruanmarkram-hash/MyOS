@@ -1,4 +1,4 @@
-# ClaudeClaw Mobile Voice Agent Redesign
+# MyOS Mobile Voice Agent Redesign
 
 ## Boundary
 
@@ -13,12 +13,12 @@ The actual app should not be buried inside the Engine Room, because it is provid
 
 Build a phone-friendly voice console for the current desktop AI stack. It should feel like ChatGPT/Gemini-style voice chat, while the actual execution host remains the desktop.
 
-ClaudeClaw is the current execution provider. The interface should be designed so another provider can be plugged in later without rewriting the Engine Room.
+MyOS is the current execution provider. The interface should be designed so another provider can be plugged in later without rewriting the Engine Room.
 
 ## Current Bones
 
-- `~/HQ`: ClaudeClaw OS, current execution provider.
-- `~/HQ/dist/agent-voice-bridge.js`: current direct voice-to-ClaudeClaw bridge.
+- `~/HQ`: MyOS OS, current execution provider.
+- `~/HQ/dist/agent-voice-bridge.js`: current direct voice-to-MyOS bridge.
 - `~/workspace/operations/engine-room`: portable system layer.
 - `~/sage-voice`: existing React voice UI.
 - `~/sage-voice-native`: existing Expo mobile wrapper.
@@ -32,7 +32,7 @@ flowchart LR
   Access --> Server["Desktop voice server"]
   Server --> STT["STT: Groq Whisper or local Whisper"]
   Server --> Contract["Engine Room voice-agent contract"]
-  Contract --> Adapter["Current adapter: ClaudeClaw"]
+  Contract --> Adapter["Current adapter: MyOS"]
   Adapter --> CLI["Claude CLI / Claude Code SDK"]
   CLI --> Tools["Desktop files, apps, MCP, agents, scheduled tasks"]
   Adapter --> Contract
@@ -46,7 +46,7 @@ flowchart LR
 1. The phone app is an interface, not the trusted execution host.
 2. The desktop server owns orchestration and keeps secrets off the phone.
 3. Engine Room stores portable rules, preferences, adapter contracts, and decisions.
-4. ClaudeClaw is the current adapter, not the permanent boundary.
+4. MyOS is the current adapter, not the permanent boundary.
 5. ElevenLabs stays as the TTS engine.
 6. Direct CLI/SDK calls are preferred over compatibility gateways.
 7. Dangerous desktop actions require explicit confirmation.
@@ -67,7 +67,7 @@ flowchart LR
 - `POST /api/tts`: response text to ElevenLabs audio stream.
 - `GET /api/health`: checks adapter, engine root, STT, and TTS readiness.
 
-## Current ClaudeClaw Adapter
+## Current MyOS Adapter
 
 The current chat path calls:
 
@@ -78,7 +78,7 @@ node /Users/sagecos1/HQ/dist/agent-voice-bridge.js \
   --message "<transcribed text>"
 ```
 
-Specialized agent calls can pass `--agent mason`, `--agent charter`, `--agent marlow`, and so on where those agents exist in ClaudeClaw.
+Specialized agent calls can pass `--agent mason`, `--agent charter`, `--agent marlow`, and so on where those agents exist in MyOS.
 
 ## Mobile Access
 
@@ -94,7 +94,7 @@ The server should never be exposed without auth because it can invoke desktop au
 
 1. Keep this decision and adapter contract in the Engine Room.
 2. Keep runtime code in `sage-voice`, `sage-voice-native`, and `sage-voice-server` or a future dedicated project folder.
-3. Introduce a provider adapter boundary: `ClaudeClawAdapter` first, future providers later.
+3. Introduce a provider adapter boundary: `MyOSAdapter` first, future providers later.
 4. Move all secrets to backend env vars.
 5. Keep ElevenLabs behind backend endpoints.
 6. Simplify the mobile UI around the core voice loop first.
