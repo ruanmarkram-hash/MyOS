@@ -13,7 +13,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Mock } from 'vitest';
 import { extractFileMarkers } from './bot.js';
+
+type AsyncReplyMock = Mock<(...args: any[]) => Promise<void>>;
 
 // ── Helper: create a temp file with known content ───────────────────
 function createTempFile(filename: string, content: string): string {
@@ -53,17 +56,17 @@ function loadEnv(): { token: string; chatId: string } {
 // ── Unit tests: extractFileMarkers → mocked Grammy context ─────────
 describe('file sending: mocked Grammy context', () => {
   let mockCtx: {
-    reply: ReturnType<typeof vi.fn>;
-    replyWithDocument: ReturnType<typeof vi.fn>;
-    replyWithPhoto: ReturnType<typeof vi.fn>;
+    reply: AsyncReplyMock;
+    replyWithDocument: AsyncReplyMock;
+    replyWithPhoto: AsyncReplyMock;
     chat: { id: number };
   };
 
   beforeEach(() => {
     mockCtx = {
-      reply: vi.fn().mockResolvedValue(undefined),
-      replyWithDocument: vi.fn().mockResolvedValue(undefined),
-      replyWithPhoto: vi.fn().mockResolvedValue(undefined),
+      reply: vi.fn<(...args: any[]) => Promise<void>>().mockResolvedValue(undefined),
+      replyWithDocument: vi.fn<(...args: any[]) => Promise<void>>().mockResolvedValue(undefined),
+      replyWithPhoto: vi.fn<(...args: any[]) => Promise<void>>().mockResolvedValue(undefined),
       chat: { id: 12345 },
     };
   });
