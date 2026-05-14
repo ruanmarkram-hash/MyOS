@@ -1761,6 +1761,58 @@ describe('GET /api/home dashboard endpoints', () => {
     // Durable row stays assigned (NOT auto-resolved) because the mission failed.
     expect(getAttentionItem(item.id)?.status).toBe('assigned');
   });
+
+  it('marks terminal mission attention rows as failed', async () => {
+    createMissionTask('m-terminal-failed-attention', 'Terminal mission broke', 'do it', 'mason', 'dashboard', 7);
+    completeMissionTask('m-terminal-failed-attention', null, 'failed', 'boom');
+
+    const body = await jsonOf(await get('/api/home/attention'));
+    const row = body.items.find((r: any) => r.title === 'Terminal mission broke');
+    expect(row).toBeTruthy();
+    expect(row).toMatchObject({
+      source: 'mission',
+      workStatus: 'failed',
+      linkedMissionId: null,
+    });
+  });
+
+  it('links terminal mission attention rows to delegated follow-ups until completion', async () => {
+    createMissionTask('m-terminal-parent', 'Terminal parent', 'do it', 'mason', 'dashboard', 7);
+    completeMissionTask('m-terminal-parent', null, 'failed', 'boom');
+
+    const firstBody = await jsonOf(await get('/api/home/attention'));
+    const firstRow = firstBody.items.find((r: any) => r.title === 'Terminal parent');
+    expect(firstRow).toBeTruthy();
+    const attentionId = String(firstRow.id).replace(/^attention:/, '');
+
+    createMissionTask('m-terminal-followup', 'Follow up: Terminal parent', 'fix it', 'mason', 'dashboard', 7);
+    upsertMissionReview({
+      taskId: 'm-terminal-parent',
+      reviewStatus: 'waiting_followup',
+      resolution: 'delegated',
+      followupTaskId: 'm-terminal-followup',
+    });
+
+    const queuedBody = await jsonOf(await get('/api/home/attention'));
+    const queuedRow = queuedBody.items.find((r: any) => r.id === firstRow.id);
+    expect(queuedRow).toMatchObject({
+      workStatus: 'queued',
+      agentId: 'mason',
+      linkedMissionId: 'm-terminal-followup',
+    });
+    expect(getAttentionItem(attentionId)?.linked_mission_id).toBe('m-terminal-followup');
+
+    expect(claimNextMissionTask('mason')?.id).toBe('m-terminal-followup');
+    const runningBody = await jsonOf(await get('/api/home/attention'));
+    const runningRow = runningBody.items.find((r: any) => r.id === firstRow.id);
+    expect(runningRow).toMatchObject({ workStatus: 'running' });
+
+    completeMissionTask('m-terminal-followup', 'Fixed.', 'completed');
+    const doneBody = await jsonOf(await get('/api/home/attention'));
+    expect(doneBody.items.find((r: any) => r.id === firstRow.id)).toBeUndefined();
+    expect(getAttentionItem(attentionId)?.status).toBe('resolved');
+    expect(getMissionReview('m-terminal-parent')?.review_status).toBe('resolved');
+  });
 });
 
 describe('GET /api/tasks (scheduled)', () => {

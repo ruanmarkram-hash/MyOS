@@ -2054,19 +2054,24 @@ function syncReportAttentionItems(tasks: ScheduledTask[], missions: MissionTask[
 
 type AttentionWorkStatus = 'new' | 'queued' | 'running' | 'done' | 'failed';
 
+function missionStatusToAttentionWorkStatus(mission: MissionTask): AttentionWorkStatus {
+  if (mission.status === 'completed') return 'done';
+  if (mission.status === 'failed' || mission.status === 'partial' || mission.status === 'cancelled') return 'failed';
+  if (mission.status === 'running') return 'running';
+  if (mission.status === 'queued') return 'queued';
+  return 'new';
+}
+
 function deriveAttentionWorkStatus(item: AttentionItem, missionsById: Map<string, MissionTask>): AttentionWorkStatus {
-  if (item.status === 'open' && !item.assigned_agent) return 'new';
-  // assigned (or claimed-but-no-mission) rows: look at the linked mission
   if (item.linked_mission_id) {
     const mission = missionsById.get(item.linked_mission_id);
-    if (mission) {
-      if (mission.status === 'completed') return 'done';
-      if (mission.status === 'failed' || mission.status === 'partial') return 'failed';
-      if (mission.status === 'running') return 'running';
-      if (mission.status === 'queued') return 'queued';
-      if (mission.status === 'cancelled') return 'failed';
-    }
+    if (mission) return missionStatusToAttentionWorkStatus(mission);
   }
+  if (item.source_kind === 'mission') {
+    const mission = missionsById.get(item.source_id);
+    if (mission && TERMINAL_MISSION_STATUSES.has(mission.status)) return missionStatusToAttentionWorkStatus(mission);
+  }
+  if (item.status === 'open' && !item.assigned_agent) return 'new';
   // assigned but no live mission row found — treat as queued
   if (item.status === 'assigned') return 'queued';
   return 'new';
@@ -2172,7 +2177,12 @@ function syncTerminalMissionAttentionItems(missions: MissionTask[]): void {
     }
     if (review?.review_status === 'waiting_followup') {
       const existing = getAttentionItemBySourceKey(sourceKey);
-      if (existing?.status === 'open') updateAttentionStatus(existing.id, 'assigned');
+      const followup = review.followup_task_id ? getMissionTask(review.followup_task_id) : null;
+      if (existing && followup && !TERMINAL_MISSION_STATUSES.has(followup.status)) {
+        markAttentionAssigned(existing.id, followup.id, followup.assigned_agent);
+      } else if (existing?.status === 'open') {
+        updateAttentionStatus(existing.id, 'assigned');
+      }
       continue;
     }
     upsertAttentionItem({
@@ -2187,9 +2197,18 @@ function syncTerminalMissionAttentionItems(missions: MissionTask[]): void {
   }
 }
 
-function closeTerminalMissionAttention(missionId: string, status: 'resolved' | 'archived' | 'assigned'): void {
+function closeTerminalMissionAttention(
+  missionId: string,
+  status: 'resolved' | 'archived' | 'assigned',
+  linkedMissionId?: string | null,
+  assignedAgent?: string | null,
+): void {
   const existing = getAttentionItemBySourceKey(`mission:${missionId}:terminal`);
   if (existing && (existing.status === 'open' || existing.status === 'assigned')) {
+    if (status === 'assigned' && linkedMissionId) {
+      markAttentionAssigned(existing.id, linkedMissionId, assignedAgent ?? null);
+      return;
+    }
     updateAttentionStatus(existing.id, status);
   }
 }
@@ -4206,7 +4225,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         }
         const extraInstructions = (body.instructions || '').trim().slice(0, 6000);
         if (extraInstructions) appendMissionTaskInstruction(existingFollowup.id, extraInstructions);
-        closeTerminalMissionAttention(id, 'assigned');
+        closeTerminalMissionAttention(id, 'assigned', existingFollowup.id, assignedAgent);
         return c.json({ ok: true, task: getMissionTask(existingFollowup.id), review: existingReview, reused: true });
       }
     }
@@ -4230,7 +4249,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
       followupTaskId: childId,
       instruction: instructions,
     });
-    closeTerminalMissionAttention(task.id, 'assigned');
+    closeTerminalMissionAttention(task.id, 'assigned', childId, assignedAgent);
     return c.json({ ok: true, task: childTask, review, reused: false }, 201);
   });
 
