@@ -37,9 +37,9 @@ Everything below works with `TELEGRAM_BOT_TOKEN`, `ALLOWED_CHAT_ID`, and one aut
 | **Text messaging** | Full MyOS runtime from your phone. Tools, skills, memory, and local files. |
 | **Photos and documents** | Send a photo or PDF, the configured runtime reads and analyzes it |
 | **Session persistence** | Context carries across every message, even after restarts |
-| **Memory system** | SQLite-backed memory that learns about you over time |
+| **Brain system** | SQLite memory by default, with OB1/OpenBrain integration for external long-term memory |
 | **Scheduled tasks** | Ask MyOS to run anything on a cron schedule |
-| **Web dashboard** | Live monitoring, task management, memory viewer |
+| **Control Centre** | V2 web control centre for agents, missions, brain, chat, runtime health, reliability, usage, and settings |
 | **Mission Control** | Create tasks, assign to agents, track progress |
 | **Multi-agent** | Run specialist agents (research, comms, content, ops) in parallel |
 | **All your skills** | Runtime skills and Claude-compatible skills can auto-load |
@@ -56,6 +56,7 @@ These are powerful but require extra API keys or services. Each one has its own 
 | **Voice output (cloud)** | ElevenLabs, Gradium, or Kokoro | Higher quality than macOS `say` |
 | **Video analysis** | `GOOGLE_API_KEY` | Gemini analyzes videos you send |
 | **Memory consolidation** | `GOOGLE_API_KEY` | Gemini detects patterns across conversations |
+| **OB1/OpenBrain backend** | OB1 Supabase project + MCP access key | External brain store with search, capture, graph, and whole-brain map |
 | **War Room** | `GOOGLE_API_KEY` + Python venv | Live voice boardroom with your agent team via Gemini Live |
 | **WhatsApp bridge** | Puppeteer + QR scan | Highly experimental. Read/send WhatsApp from Telegram |
 
@@ -570,26 +571,28 @@ Type anything that isn't a number or `r <text>` to exit Slack mode and return to
 
 ---
 
-## Dashboard (optional)
+## Control Centre (optional)
 
 
-A live web page that shows you everything happening inside your assistant: what tasks are scheduled, what it remembers, how much you're spending, and whether it's healthy. You open it from Telegram with one tap.
+A live web control centre that shows you everything happening inside your OS: what needs attention, which agents are running, what missions are queued, how the runtime stack is configured, what the brain knows, and whether the system is healthy. You open it from Telegram with one tap.
 
-### How the dashboard works
+The current interface is Mission Control v2, a Vite/Preact app in `web/`. The legacy single-file dashboard still exists for comparison, but the real control surface is the v2 app.
+
+### How the Control Centre works
 
 ![MyOS dashboard architecture](assets/dashboard-architecture.jpeg)
 
-When you start MyOS, a small web page starts running alongside the bot. It reads directly from the same database the bot uses and shows you the data in real time.
+When you start MyOS, the control centre starts running alongside the bot. It reads directly from the same database and backend APIs the bot uses and shows you the data in real time.
 
 Here's what happens when you use it:
 
 1. **You send `/dashboard` in Telegram**: the bot replies with a clickable link
-2. **You tap the link**: a web page opens in your browser with four live panels
+2. **You tap the link**: the Control Centre opens in your browser
 3. **The page updates itself every 60 seconds**: no need to refresh manually
 
 By default, this web page only works on the same computer running the bot. If you want to open it from your phone while you're out, you can add a free tunnel (explained below).
 
-**Nothing leaves your machine.** The dashboard reads your local database and shows it to you. No data is sent to any cloud service.
+**Nothing leaves your machine unless you configure an external backend.** The default dashboard reads your local database. If you enable OB1/OpenBrain, brain search and capture also call your configured OB1 Supabase functions.
 
 ### What you'll see
 
@@ -602,22 +605,28 @@ At the top of the dashboard, a **summary stats bar** gives you an at-a-glance ov
 | **Cost Today** | Total API spend for the day |
 | **Memories** | Total memories stored in the system |
 
-Below that, the dashboard is organized into panels:
+The v2 Control Centre is organized into workspaces:
 
-| Panel | What it shows you |
+| Area | What it shows you |
 |-------|-------------------|
-| **Agents** | Status cards for every configured agent. Shows live/off status, model, today's turns and cost. Click a card to see recent conversation, hive mind activity, and Start/Stop/Delete controls. **+ New Agent** button opens a 3-step wizard to create and activate a new agent directly from the dashboard. |
-| **Hive Mind** | A real-time activity feed showing what each agent has been doing, with timestamps and color-coded agent names. Includes a privacy blur toggle. |
-| **Tasks** | Unassigned mission tasks waiting to be routed. Create tasks with a title and prompt, then either drag them to an agent column or click **Auto-assign** to let Gemini classify and route them automatically. |
-| **Mission Control** | A kanban board with one column per agent. Shows running and recently completed tasks per agent. Click **History** to open a paginated drawer of all completed tasks with full results. Completed tasks stay visible for 30 minutes, then move to history. |
-| **Scheduled Tasks** | Recurring cron tasks. Shows status, next run countdown, last result. Pause, resume, or delete directly. |
-| **Memory Landscape** | Total memories, consolidation insights, importance distribution chart. Sections for fading memories (salience < 0.5) and recently retrieved. Tap to browse all memories in a drill-down drawer. Includes a 30-day memory creation timeline. |
-| **System Health** | Context window gauge (green/yellow/red), session age, compaction count, connection status for Telegram, WhatsApp, and Slack. |
-| **Tokens & Cost** | Today's spend, all-time cost, 30-day cost timeline chart, cache hit rate chart. |
+| **Home** | Brief outputs, needs-attention queue, mission queue, calendar, OS controls, runtime stack, and reliability summary |
+| **Review Inbox** | Items that need human review before they become action or memory |
+| **Mission Control** | A kanban board with one column per agent, running tasks, completed results, history, and auto-assignment |
+| **Agents** | Status cards, live/off controls, model/provider settings, recent conversation, hive mind activity, and a new-agent wizard |
+| **Chat** | Real-time chat with the active runtime through the dashboard, including streamed responses and stop controls |
+| **Runtime Stack** | Provider, model, brain backend, embeddings, dashboard mutations, kill switches, and readiness checks |
+| **Reliability** | Surfaced failures, stale missions, restart state, dead letters, scheduled-task issues, and clear/follow-up actions |
+| **Brain** | OB1/OpenBrain or SQLite brain status, browse, search, capture, graph, whole-brain map, and ingestion controls |
+| **Memories** | Local memory stats, pinned memories, fading memories, recent retrievals, and memory timeline |
+| **Hive Mind** | Cross-agent activity feed with timestamps and agent names |
+| **Usage** | Token usage, cost, cache rates, and recent model calls |
+| **Audit** | Security and action audit log |
+| **War Room** | Voice/text meeting surfaces for working with your agent team |
+| **Voices, Files, Settings** | Voice configuration, uploaded files, dashboard settings, and system configuration |
 
-The dashboard also has a **live chat overlay**: a floating chat button that opens a real-time conversation panel. You can send messages to the active runtime directly from the dashboard and see responses stream in via SSE (Server-Sent Events). It shows tool progress in real time and has a stop button to abort queries mid-execution. Messages sent from the dashboard are also relayed to your Telegram chat.
+The Control Centre also supports live chat over SSE (Server-Sent Events). You can send messages to the active runtime directly from the browser, see streamed responses, and stop a query mid-execution. Messages sent from the dashboard are also relayed to your Telegram chat.
 
-On your phone it's a single scrollable page. On a computer it splits into two columns automatically.
+On your phone it uses a compact responsive layout. On a computer it becomes a dense operational console.
 
 ### How to turn it on
 
@@ -641,11 +650,12 @@ Add this line:
 DASHBOARD_TOKEN=paste_the_long_string_here
 ```
 
-That's the only setting you need. There are two optional ones you can ignore for now:
+That's the only setting you need for the dashboard server. These optional settings control routing and remote access:
 
 ```
 DASHBOARD_PORT=3141          # the dashboard uses port 3141 by default. only change this if something else on your computer already uses that port
 DASHBOARD_URL=               # leave this blank for now. you only fill this in if you set up phone access (Step 5 below)
+MISSION_CONTROL_V2=1         # serve the v2 Control Centre at /; with 0, v2 is still reachable at /v2
 ```
 
 Save the file.
@@ -659,7 +669,7 @@ npm start
 
 You should see a log line that says `Dashboard server running`. If you don't, double-check that `DASHBOARD_TOKEN` is in your `.env`.
 
-#### Step 4: Open the dashboard
+#### Step 4: Open the Control Centre
 
 The easiest way: **send `/dashboard` to your bot in Telegram.** It replies with a clickable link. Tap it. Done.
 
@@ -669,7 +679,7 @@ http://localhost:3141/?token=YOUR_TOKEN&chatId=YOUR_CHAT_ID
 ```
 Replace `YOUR_TOKEN` with the password from Step 1, and `YOUR_CHAT_ID` with the `ALLOWED_CHAT_ID` from your `.env`.
 
-**You're done.** The dashboard now works on the machine running the bot.
+**You're done.** The Control Centre now works on the machine running the bot.
 
 If that's all you need, stop here. The next step is only if you want to access the dashboard from your phone while away from home.
 
@@ -783,6 +793,12 @@ All endpoints require `?token=YOUR_TOKEN`. Per-user endpoints also need `&chatId
 | `GET /api/memories/list?chatId=&sector=&limit=&offset=` | Paginated memory drill-down |
 | `GET /api/health?chatId=` | Context gauge, session stats, connections |
 | `GET /api/tokens?chatId=` | Cost stats, 30-day timeline, cache rate |
+| `GET /api/runtime/stack` | Runtime provider, brain backend, embeddings, kill switches, and readiness |
+| `GET /api/brain/status` | Active brain backend, OpenBrain readiness, local mirror stats, ingestion queue |
+| `GET /api/brain/search?q=` | Brain search through SQLite or OB1/OpenBrain |
+| `POST /api/brain/capture` | Capture a thought into the active brain backend and local mirror |
+| `GET /api/brain/thoughts` | OpenBrain thought list when OB1 is configured |
+| `GET /api/brain/map` | Whole-brain OpenBrain map for the Brain graph view |
 | `GET /api/info` | Bot name, username, PID |
 | `GET /api/chat/stream` | SSE stream for real-time chat events (user messages, assistant responses, tool progress) |
 | `GET /api/chat/history?chatId=&limit=&beforeId=` | Paginated conversation history |
@@ -987,7 +1003,14 @@ The `store/` directory (database, WhatsApp session, logs) is gitignored with mul
 
 ![MyOS memory system](assets/memory-diagram.jpeg)
 
-MyOS has a structured memory system that extracts, consolidates, and recalls knowledge across all sessions. Everything is automatic.
+MyOS has a structured brain system that extracts, consolidates, and recalls knowledge across all sessions. It has two backends:
+
+| Backend | Use case |
+|---------|----------|
+| `BRAIN=sqlite` | Default local memory in `store/myos.db`, with FTS5 search, salience, pinning, and decay |
+| `BRAIN=ob1` | OB1/OpenBrain integration through Supabase functions and MCP access keys, with external search, capture, graph, and whole-brain map |
+
+The local SQLite mirror remains available so the Control Centre can stay inspectable even when OpenBrain is not configured or temporarily unavailable.
 
 ### Layer 1. Session resumption
 
@@ -995,11 +1018,11 @@ Every time you send a message, MyOS resumes the active provider session using a 
 
 Use `/newchat` to start a completely fresh session when you want a clean slate.
 
-### Layer 2. Structured memory extraction (Gemini-powered)
+### Layer 2. Structured memory extraction
 
-After each conversation turn, Gemini Flash evaluates whether the exchange contains anything worth remembering long-term. If it does, it extracts structured data: a summary, entities, topics, connections to other memories, and an importance score (0.0 to 1.0). Only memories scoring 0.5+ are saved. This filters out noise like "ok thanks" or command acknowledgments.
+After each conversation turn, the memory ingestor evaluates whether the exchange contains anything worth remembering long-term. If it does, it extracts structured data: a summary, entities, topics, connections to other memories, and an importance score (0.0 to 1.0). Only memories scoring 0.5+ are saved. This filters out noise like "ok thanks" or command acknowledgments.
 
-Each memory also gets a vector embedding for semantic search.
+With SQLite, memories are saved locally and embedded for semantic search. With OB1/OpenBrain, captures go to OB1 through `capture_thought`, while dashboard-visible records are mirrored locally for graph and audit visibility.
 
 **Importance tiers and decay:**
 
@@ -1016,7 +1039,7 @@ Memories that are actually useful in conversations get a salience boost (+0.1 pe
 
 Before every message, five parallel searches build your memory context:
 
-1. **Semantic vector search**: finds memories similar in meaning to your message (cosine similarity > 0.3)
+1. **Brain search**: searches SQLite or OB1/OpenBrain depending on `BRAIN`
 2. **High-importance recall**: recent memories with importance >= 0.5
 3. **Consolidation insights**: patterns detected across multiple memories (e.g., "User consistently prefers X over Y")
 4. **Team activity**: what other agents have done in the last 24 hours (from the Hive Mind)
@@ -1042,7 +1065,22 @@ Insights:
 
 A background process finds patterns across unconsolidated memories: themes, contradictions, and connections. When a newer memory contradicts an older one, the older memory is superseded (importance reduced, marked as outdated). Consolidation insights surface in the memory context block.
 
-Requires `GOOGLE_API_KEY` in your `.env` (Gemini Flash, costs ~$0.03/day).
+Requires `GOOGLE_API_KEY` in your `.env` for Gemini-backed extraction and consolidation. OB1/OpenBrain also requires its own Supabase and MCP access settings.
+
+### OB1/OpenBrain integration
+
+Set `BRAIN=ob1` to use OB1/OpenBrain as the active brain backend. MyOS calls your configured OB1 Supabase functions for search, capture, thought browsing, graph neighbors, stats, and whole-brain map data.
+
+| Variable | What it does |
+|----------|--------------|
+| `BRAIN=ob1` | Selects OB1/OpenBrain instead of the local-only SQLite backend |
+| `OB1_SUPABASE_URL` | Supabase project URL that hosts the OB1 functions |
+| `MCP_ACCESS_KEY` | Access key sent to the OB1 MCP functions |
+| `OB1_BRAIN_FUNCTION` | Brain MCP function name. Defaults to `brain-mcp` |
+| `OB1_GRAPH_FUNCTION` | Graph MCP function name. Defaults to `ob-graph-mcp` |
+| `OB1_SUPABASE_SERVICE_KEY` | Optional service key for direct thought listing, stats, and map views |
+
+The Brain page in the Control Centre shows whether OpenBrain is configured, which backend is active, how many local mirror records exist, recent OpenBrain thoughts, and ingestion candidates from mission manifests, brief outputs, and decision files.
 
 ### Commands
 
@@ -1353,6 +1391,13 @@ For Claude-compatible skills, browse the Claude Code skill ecosystem or use the 
 | `DASHBOARD_TOKEN` | No | 48-char hex token for dashboard access |
 | `DASHBOARD_PORT` | No | Dashboard port (default: `3141`) |
 | `DASHBOARD_URL` | No | Public URL if using Cloudflare Tunnel |
+| `MISSION_CONTROL_V2` | No | `1` serves the v2 Control Centre at `/`; `0` keeps legacy at `/` and v2 at `/v2` |
+| `BRAIN` | No | Brain backend: `sqlite` default, or `ob1` for OB1/OpenBrain |
+| `OB1_SUPABASE_URL` | No | OB1 Supabase project URL |
+| `MCP_ACCESS_KEY` | No | Access key for OB1 MCP functions |
+| `OB1_BRAIN_FUNCTION` | No | OB1 brain function name, default `brain-mcp` |
+| `OB1_GRAPH_FUNCTION` | No | OB1 graph function name, default `ob-graph-mcp` |
+| `OB1_SUPABASE_SERVICE_KEY` | No | Optional service key for direct OpenBrain thought list, stats, and map views |
 | `CLAUDE_CODE_OAUTH_TOKEN` | No | Claude provider OAuth token override |
 
 ---
@@ -1540,7 +1585,7 @@ flowchart TD
     DL --> Handler
     Bot -->|text| Handler["handleMessage()"]
 
-    Handler -->|"5-layer retrieval"| Mem["Memory Layer\nVector + FTS5 + Gemini"]
+    Handler -->|"5-layer retrieval"| Mem["Brain Layer\nSQLite + OB1/OpenBrain"]
     Mem -->|context block| Agent
 
     Handler -->|"@agent: syntax"| Orch["orchestrator.ts\nAgent delegation"]
@@ -1558,10 +1603,10 @@ flowchart TD
 
     Sched["Scheduler\ncron + mission tasks"] -->|every 60s| Agent
     WA["WhatsApp daemon\n:4242"] --> Bot
-    Dashboard["Dashboard\nHono + SSE"] --> Bot
+    Dashboard["Control Centre v2\nVite + Hono APIs + SSE"] --> Bot
     Mission["Mission Control\nTasks inbox + kanban"] --> Sched
 
-    DB[("SQLite\nstore/myos.db")] --- Mem
+    DB[("SQLite\nstore/myos.db\nlocal mirror + ops data")] --- Mem
     DB --- Sched
     DB --- WA
     DB --- Dashboard
@@ -1569,6 +1614,8 @@ flowchart TD
 
     Gemini["Gemini API\nextraction + auto-assign"] --- Mem
     Gemini --- Mission
+    OB1["OB1/OpenBrain\nSupabase functions + graph"] --- Mem
+    OB1 --- Dashboard
 ```
 
 ---
@@ -1603,6 +1650,7 @@ myos/
 │   ├── memory.ts            5-layer context injection and memory feedback
 │   ├── memory-ingest.ts     Gemini-powered memory extraction from conversations
 │   ├── memory-consolidate.ts Pattern detection across memories (every 30 min)
+│   ├── brain/               OB1/OpenBrain client, adapter, graph, and provider helpers
 │   ├── embeddings.ts        Vector embeddings for semantic memory search
 │   ├── gemini.ts            Gemini API client (extraction, classification)
 │   ├── scheduler.ts         Cron + mission task runner. checks every 60 seconds
@@ -1613,8 +1661,8 @@ myos/
 │   ├── slack.ts             Slack API client (conversations, messages, send)
 │   ├── slack-cli.ts         CLI wrapper for Slack (used by the slack skill)
 │   ├── whatsapp.ts          WhatsApp client via whatsapp-web.js
-│   ├── dashboard.ts         Web dashboard server (Hono + API routes + token auth)
-│   ├── dashboard-html.ts    Dashboard HTML/CSS/JS (Tailwind + Chart.js, no build step)
+│   ├── dashboard.ts         Control Centre API server, auth, v2 router, SSE
+│   ├── dashboard-html.ts    Legacy dashboard HTML/CSS/JS fallback
 │   ├── state.ts             Shared state and SSE event emitter
 │   ├── message-queue.ts     Per-chat FIFO queue (prevents session collisions)
 │   ├── config.ts            Reads .env safely (never pollutes process.env)
@@ -1634,6 +1682,12 @@ myos/
 │   ├── status.ts         Health check. run with: npm run status
 │   ├── notify.sh         Sends a Telegram message from the shell (used by the runtime)
 │   └── wa-daemon.ts      WhatsApp daemon. run separately for WhatsApp bridge
+│
+│  ← Mission Control v2 / Control Centre frontend
+├── web/
+│   ├── src/pages/         Home, Brain, Mission Control, Agents, Chat, Runtime, Reliability, Settings
+│   ├── src/components/    Shared UI components
+│   └── dist/              Built by npm run build:web, mirrored to dist/web/
 │
 │  ← Runtime data (auto-created, gitignored)
 ├── store/
