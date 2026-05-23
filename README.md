@@ -9,7 +9,7 @@
         |___/
 ```
 
-> Your Claude Code CLI, delivered to your phone via Telegram.
+> Your personal AI operating system, delivered to your phone via Telegram.
 
 ### Getting Started
 
@@ -20,30 +20,30 @@ npm install
 npm run setup
 ```
 
-MyOS is not a chatbot wrapper. It spawns the actual `claude` CLI on your Mac or Linux machine and pipes the result back to your Telegram chat. Everything that works in your terminal (your skills, your tools, your context) works from your phone.
+MyOS is not a chatbot wrapper. It is a local AI runtime that runs on your Mac or Linux machine, routes each message through the configured model provider, and pipes the result back to your Telegram chat. Claude Code and Codex are supported provider backends today via `LLM_PROVIDER=claude` or `LLM_PROVIDER=codex`; the rest of the OS, memory, scheduling, dashboard, and agent system sits above that provider boundary.
 
 ---
 
 ## What You Get
 
-MyOS has two tiers of features. The **core** features work out of the box with just a Telegram bot token. The **experimental** features are opt-in and require additional setup.
+MyOS has two tiers of features. The **core** features work out of the box once Telegram and one model provider are configured. The **experimental** features are opt-in and require additional setup.
 
 ### Core Features (zero to hero in 5 minutes)
 
-Everything below works with just `TELEGRAM_BOT_TOKEN` and `ALLOWED_CHAT_ID`. No extra API keys.
+Everything below works with `TELEGRAM_BOT_TOKEN`, `ALLOWED_CHAT_ID`, and one authenticated provider runtime. No extra feature API keys.
 
 | Feature | What it does |
 |---------|-------------|
-| **Text messaging** | Full Claude Code from your phone. All tools, all skills. |
-| **Photos and documents** | Send a photo or PDF, Claude reads and analyzes it |
+| **Text messaging** | Full MyOS runtime from your phone. Tools, skills, memory, and local files. |
+| **Photos and documents** | Send a photo or PDF, the configured runtime reads and analyzes it |
 | **Session persistence** | Context carries across every message, even after restarts |
 | **Memory system** | SQLite-backed memory that learns about you over time |
-| **Scheduled tasks** | Ask Claude to run anything on a cron schedule |
+| **Scheduled tasks** | Ask MyOS to run anything on a cron schedule |
 | **Web dashboard** | Live monitoring, task management, memory viewer |
 | **Mission Control** | Create tasks, assign to agents, track progress |
 | **Multi-agent** | Run specialist agents (research, comms, content, ops) in parallel |
-| **All your skills** | Every skill in `~/.claude/skills/` auto-loads |
-| **File sending** | Claude can create and send files back to you |
+| **All your skills** | Runtime skills and Claude-compatible skills can auto-load |
+| **File sending** | Your assistant can create and send files back to you |
 | **Voice output (macOS)** | Uses `say` + ffmpeg locally, no API key needed |
 
 ### Experimental Features (opt-in, additional setup)
@@ -75,8 +75,8 @@ Follow these steps in order. The whole thing takes about 5 minutes.
 |-------------|-------|
 | **Node.js 20+** | Check: `node --version`. Download at [nodejs.org](https://nodejs.org) |
 | **Git** | Check: `git --version`. If you've never used git, also run the two commands below |
-| **Claude Code CLI** | Install: `npm i -g @anthropic-ai/claude-code` |
-| **Claude account** | Log in: `claude login` (free, Pro, or Max plan) |
+| **Model runtime** | Configure at least one provider. Claude Code and Codex are supported today |
+| **Provider auth** | Claude: `claude login` or `ANTHROPIC_API_KEY`. Codex: Codex CLI auth or `OPENAI_API_KEY` |
 | **Telegram account** | Any existing account works |
 
 **First time using git?** Run these two commands first (use your own name and email):
@@ -88,7 +88,7 @@ Without this, git operations will fail with a confusing error about missing iden
 
 **macOS users:** After starting MyOS for the first time, your Mac may show "Node wants to access..." permission dialogs. You need to click Allow on each one or the bot will silently hang. Keep an eye on your Mac screen during the first run.
 
-**Which Claude plan works best?** MyOS runs the `claude` CLI, so any plan works (Free, Pro, Max). However, complex multi-step tasks (building skills, debugging code, multi-agent work) perform significantly better on **Opus**: If you're on the Free or Pro plan and Claude struggles with a task, the model matters. Sonnet is fast but often can't handle the kind of agentic work MyOS enables. Max ($100 or $200) with Opus is the recommended experience.
+**Which provider works best?** MyOS is provider-aware. Set `LLM_PROVIDER=claude` to use Claude Code, or `LLM_PROVIDER=codex` to use Codex. The `/model` command and agent configs use tier names like `haiku`, `sonnet`, and `opus`; MyOS maps those tiers to the active provider's configured model IDs. Complex multi-step work benefits from a stronger model tier regardless of provider.
 
 **New to the terminal?** Download [Warp](https://www.warp.dev), it's a modern terminal with AI built in. If you hit any OS-level issues during setup (permissions, missing tools, PATH problems), type `/agent` in Warp and describe what went wrong. It will walk you through fixing it. This alone will save you hours of Googling.
 
@@ -127,16 +127,16 @@ npm run setup
 
 The wizard walks you through everything interactively:
 
-- Checks your environment (Node, Claude CLI, builds if needed)
+- Checks your environment (Node, selected provider runtime, builds if needed)
 - Asks which features you want (voice, video, War Room, WhatsApp)
 - Sets up your Telegram bot token and auto-detects your chat ID
 - **Configures security**: PIN lock, emergency kill phrase, idle auto-lock
-- Creates your `CLAUDE.md` personality file from a template
+- Creates your `CLAUDE.md` personality file from a template. The filename is kept for Claude Code and existing tooling compatibility, but MyOS treats it as the agent context contract across providers
 - Collects API keys **only for the features you selected**
 - Optionally sets up specialist agents (custom or from templates)
 - Offers to start the bot immediately when done
 
-> **Prefer to let Claude handle it?** After cloning, `cd` into the repo, run `claude`, and paste:
+> **Prefer to let your assistant handle it?** After cloning, `cd` into the repo, open your configured local coding assistant, and paste:
 > ```
 > I just cloned MyOS. Please read README.md and set me up completely.
 > install deps, configure .env, help me get any API keys I need, and set up
@@ -167,7 +167,7 @@ or
 Check my calendar for today
 ```
 
-or just start talking. Claude Code is running on your machine, it has access to your files, the web, and every skill you've installed.
+or just start talking. The MyOS runtime is running on your machine, with access to the files, tools, web, and skills exposed by your configured provider.
 
 ---
 
@@ -206,7 +206,7 @@ npm run status
 Output looks like:
 ```
   ✓  Node v22.3.0
-  ✓  Claude CLI 1.0.12
+  ✓  Provider runtime: codex
   ✓  Bot token: @YourBotName
   ✓  Chat ID: 1234567890
   ✓  Voice STT: Groq (configured)
@@ -233,7 +233,7 @@ npm run build          # recompile TypeScript
 
 Then restart the bot (Ctrl+C and `npm start`, or restart the background service).
 
-**Do not** point Claude at the GitHub URL to read updates. Claude works with local files, so you need the repo cloned on your machine. `git pull` is how you stay current.
+**Do not** ask the assistant to read updates from the GitHub URL alone. MyOS works with local files, so you need the repo cloned on your machine. `git pull` is how you stay current.
 
 **Upgrading from V1?** If you heavily customized V1, start fresh with V2 and copy over your `.env` and any CLAUDE.md customizations. If you kept V1 mostly stock, `git pull` will work.
 
@@ -241,16 +241,17 @@ Then restart the bot (Ctrl+C and `npm start`, or restart the background service)
 
 ## Cloud deployment (advanced)
 
-MyOS is designed to run on a local Mac or Linux host. Most setup paths assume you have run `claude login` on the host, you have a writable filesystem for SQLite plus skill caches, and process restarts mean your own machine or service manager restarts the bot. If you host it on Railway, Fly, Render, Hetzner, or another VM/container platform, two things break by default.
+MyOS is designed to run on a local Mac or Linux host. Most setup paths assume you have configured provider auth on the host, you have a writable filesystem for SQLite plus skill caches, and process restarts mean your own machine or service manager restarts the bot. If you host it on Railway, Fly, Render, Hetzner, or another VM/container platform, two things break by default.
 
-### 1. Claude Code cannot authenticate
+### 1. Provider auth may not exist in the container
 
-The Claude Code CLI normally reads OAuth credentials created by `claude login` on the host. A fresh container has no such file. The subprocess exits immediately and MyOS retries, often surfacing only `Claude Code subprocess crashed. Retrying...`.
+Local provider CLIs normally read credentials from your home directory, such as `~/.claude/` for Claude Code or `~/.codex/` for Codex. A fresh container has no such file. The subprocess exits immediately and MyOS retries, often surfacing only a provider subprocess crash.
 
 Pick one of:
 
-- **Long-lived OAuth token (Max plan).** On your local machine run `claude setup-token`. Set the printed token on your cloud host as `CLAUDE_CODE_OAUTH_TOKEN=<token>`, then redeploy.
-- **API key (pay per token).** Get a key from [console.anthropic.com](https://console.anthropic.com). Set `ANTHROPIC_API_KEY=<key>`. This bypasses your subscription and bills per request.
+- **Claude Code OAuth token.** On your local machine run `claude setup-token`. Set the printed token on your cloud host as `CLAUDE_CODE_OAUTH_TOKEN=<token>`, then redeploy.
+- **Anthropic API key.** Set `ANTHROPIC_API_KEY=<key>` when using `LLM_PROVIDER=claude`.
+- **Codex/OpenAI auth.** Set `LLM_PROVIDER=codex` and provide Codex CLI auth on the host or an `OPENAI_API_KEY`, depending on how you run Codex.
 
 ### 2. Container storage is ephemeral
 
@@ -265,8 +266,8 @@ Mount a persistent volume at the project root, or at minimum make `store/` persi
 
 ### Other gotchas
 
-- **CPU/RAM:** each query can spawn a full Node plus Claude Code runtime. 512 MB minimum, 1 GB recommended.
-- **Outbound network:** the host must reach Anthropic, Telegram, and any optional services you enable.
+- **CPU/RAM:** each query can spawn a full Node plus provider runtime. 512 MB minimum, 1 GB recommended.
+- **Outbound network:** the host must reach your configured model provider, Telegram, and any optional services you enable.
 - **launchd/systemd:** skip local background-service setup if the platform manages the process.
 - **Cloudflare Tunnel:** if the dashboard is hosted on a public cloud URL, you usually do not need the local tunnel.
 
@@ -284,7 +285,7 @@ See the feature table at the top of this README. Core features work with zero ex
 
 ## API Keys: What Each Does
 
-> **Most users only need a Telegram bot token.** Everything below the Telegram section is optional and only needed for experimental features.
+> **Most users only need a Telegram bot token plus provider auth.** Everything below the Telegram and provider sections is optional and only needed for experimental features.
 
 ### Telegram Bot Token (required)
 
@@ -292,9 +293,22 @@ See the feature table at the top of this README. Core features work with zero ex
 
 ---
 
+### Provider auth (required)
+
+MyOS needs one authenticated model runtime.
+
+| Provider | Configure | Notes |
+|----------|-----------|-------|
+| Claude Code | `LLM_PROVIDER=claude`, then run `claude login` or set `ANTHROPIC_API_KEY` | Default provider for fresh installs |
+| Codex | `LLM_PROVIDER=codex`, then use Codex CLI auth or set `OPENAI_API_KEY` | Tier aliases map through `CODEX_HAIKU_MODEL`, `CODEX_SONNET_MODEL`, and `CODEX_OPUS_MODEL` |
+
+Specialist agents can override the main setting in `agents/<id>/agent.yaml` with `provider: claude` or `provider: codex`.
+
+---
+
 ### Groq: voice input (optional)
 
-**What it does:** Transcribes your voice notes using Whisper before passing them to Claude.
+**What it does:** Transcribes your voice notes using Whisper before passing them to the active MyOS runtime.
 
 **Get it:** [console.groq.com](https://console.groq.com). free tier, no card needed.
 
@@ -311,7 +325,7 @@ See the feature table at the top of this README. Core features work with zero ex
 
 ### ElevenLabs: voice output (optional)
 
-**What it does:** Converts Claude's responses to audio in your cloned voice.
+**What it does:** Converts assistant responses to audio in your cloned voice.
 
 **Get it:** [elevenlabs.io](https://elevenlabs.io) → clone your voice under "Voice Lab" → copy the Voice ID string.
 
@@ -372,15 +386,15 @@ Google released an official CLI that covers Drive, Gmail, Calendar, Sheets, Docs
 <details>
 <summary><strong>What's a CLI, and how is it different from a skill or MCP?</strong></summary>
 
-There are three ways Claude can interact with external services. They all achieve similar things, but work differently under the hood:
+There are three ways the active runtime can interact with external services. They all achieve similar things, but work differently under the hood:
 
-| | What it is | How Claude uses it |
+| | What it is | How the runtime uses it |
 |---|---|---|
-| **CLI** (Command Line Interface) | A program you install on your machine that runs commands in the terminal. Think of it like a text-based app. | Claude runs terminal commands like `workspace drive list` or `workspace gmail send` through the Bash tool. It's the same as if you typed those commands yourself. |
-| **Skill** | A markdown file (`.md`) that teaches Claude how to do something specific, usually by combining CLI commands, API calls, or code into a workflow. | Claude reads the skill file and follows its instructions. MyOS's bundled Gmail skill, for example, tells Claude which Python scripts to run and how to format the output. |
-| **MCP** (Model Context Protocol) | A server that runs in the background and gives Claude access to tools directly, without going through the terminal. | Claude calls MCP tools natively, like calling a function. No terminal commands needed. It's the most seamless option but requires a running MCP server. |
+| **CLI** (Command Line Interface) | A program you install on your machine that runs commands in the terminal. Think of it like a text-based app. | The runtime runs terminal commands like `workspace drive list` or `workspace gmail send` through its shell tool. It's the same as if you typed those commands yourself. |
+| **Skill** | A markdown file (`.md`) that teaches the runtime how to do something specific, usually by combining CLI commands, API calls, or code into a workflow. | The runtime reads the skill file and follows its instructions. MyOS's bundled Gmail skill, for example, tells the runtime which Python scripts to run and how to format the output. |
+| **MCP** (Model Context Protocol) | A server that runs in the background and gives the runtime access to tools directly, without going through the terminal. | The runtime calls MCP tools natively, like calling a function. No terminal commands needed. It's the most seamless option but requires a running MCP server. |
 
-In short: a CLI is a tool you run in the terminal, a skill is a set of instructions that tells Claude how to use tools, and an MCP is a live server that gives Claude direct access to tools. They can all do similar things, just with different tradeoffs in setup and flexibility.
+In short: a CLI is a tool you run in the terminal, a skill is a set of instructions that tells the runtime how to use tools, and an MCP is a live server that gives the runtime direct access to tools. They can all do similar things, just with different tradeoffs in setup and flexibility.
 
 </details>
 
@@ -432,28 +446,28 @@ Voice note sent
 Groq Whisper → transcribed text
   ↓
 Check for voice-back trigger phrases
-  ├── found → Claude runs → TTS cascade → audio reply
+  ├── found → runtime runs → TTS cascade → audio reply
   │                         (ElevenLabs → Gradium → macOS say)
-  └── not found → Claude runs → text reply
+  └── not found → runtime runs → text reply
 ```
 
 > **Want full voice conversations?** The War Room (experimental) lets you have live voice meetings with your agent team using Gemini Live. No Deepgram or Cartesia needed. The recommended setup is just `GOOGLE_API_KEY`. See the War Room section below.
 
 ### Photos → analyzed immediately
 
-Send a photo with or without a caption. Caption becomes the instruction. No caption. Claude describes what it sees.
+Send a photo with or without a caption. Caption becomes the instruction. No caption. The runtime describes what it sees.
 
 ### Documents → read and processed
 
-Any file Claude Code can open: PDFs, code, markdown, CSV, plain text. Caption is the instruction.
+Any file your configured provider can open: PDFs, code, markdown, CSV, plain text. Caption is the instruction.
 
 ### Videos → Gemini analysis
 
-MyOS downloads the video to `workspace/uploads/` and tells Claude to analyze it with the `gemini-api-dev` skill. Without `GOOGLE_API_KEY`, Claude receives the file path but can't understand the content. Telegram caps downloads at 20MB.
+MyOS downloads the video to `workspace/uploads/` and tells the runtime to analyze it with the `gemini-api-dev` skill. Without `GOOGLE_API_KEY`, the runtime receives the file path but can't understand the content. Telegram caps downloads at 20MB.
 
-### File sending → Claude sends you files
+### File sending → MyOS sends you files
 
-Ask Claude to create a file (PDF, spreadsheet, image, text) and send it to you. Claude creates the file on your machine, includes a `[SEND_FILE:/path]` marker in its response, and the bot sends it as a Telegram attachment. Works with any file type up to 50MB.
+Ask your assistant to create a file (PDF, spreadsheet, image, text) and send it to you. The runtime creates the file on your machine, includes a `[SEND_FILE:/path]` marker in its response, and the bot sends it as a Telegram attachment. Works with any file type up to 50MB.
 
 ```
 "Write a haiku about AI and send it to me as a text file"
@@ -461,15 +475,15 @@ Ask Claude to create a file (PDF, spreadsheet, image, text) and send it to you. 
 "Generate a chart of monthly revenue and send the image"
 ```
 
-Claude can also send photos inline using `[SEND_PHOTO:/path]`, and attach captions via `[SEND_FILE:/path|caption text]`. Multiple files in a single response are sent in order. If a file doesn't exist, you get an error message instead of a crash.
+The runtime can also send photos inline using `[SEND_PHOTO:/path]`, and attach captions via `[SEND_FILE:/path|caption text]`. Multiple files in a single response are sent in order. If a file doesn't exist, you get an error message instead of a crash.
 
 ### Sessions persist
 
-Claude Code sessions carry full context across messages. Reference something from earlier. Claude knows. Send `/newchat` to start fresh.
+MyOS keeps provider-specific sessions across messages. Reference something from earlier and the active runtime has the conversation context. Send `/newchat` to start fresh.
 
 ### Skills load automatically
 
-Every skill in `~/.claude/skills/` loads on every session. Call them directly (`/gmail check inbox`) or describe what you want. Claude routes automatically if you've listed the skill in `CLAUDE.md`.
+Skills load through the active provider's supported mechanism. Claude-compatible skills in `~/.claude/skills/` are supported for Claude Code and compatibility workflows. Call skills directly (`/gmail check inbox`) or describe what you want. MyOS injects your `CLAUDE.md` context contract so the runtime knows how to route them.
 
 ---
 
@@ -481,9 +495,9 @@ Every skill in `~/.claude/skills/` loads on every session. Call them directly (`
 |---------|-------------|
 | `/help` | List all available commands |
 | `/stop` | Cancel the current agent query mid-execution. works from Telegram and the dashboard |
-| `/model` | Switch Claude model for this chat. `/model haiku` for speed, `/model sonnet` for balance, `/model opus` (default) for full power. Resets on restart |
+| `/model` | Switch model tier for this chat. `/model haiku` for speed, `/model sonnet` for balance, `/model opus` for full power. MyOS maps the tier to the active provider's configured model. Resets on restart |
 | `/voice` | Toggle voice replies on/off for all messages. When off, voice notes still get transcribed and executed. replies just come back as text |
-| `/newchat` | Wipe the Claude Code session and start fresh. Use when context gets stale or the conversation window is filling up |
+| `/newchat` | Wipe the active provider session and start fresh. Use when context gets stale or the conversation window is filling up |
 | `/respin` | Pull the last 20 conversation turns back into a fresh session. Run this right after `/newchat` to keep recent context without the full token weight |
 | `/memory` | Show what the bot remembers about you (recent memories from SQLite) |
 | `/forget` | Clear the session ID only. Memories stay and decay naturally over time |
@@ -528,18 +542,18 @@ The next time the bot starts, `/tldr` appears in Telegram's autocomplete alongsi
 
 **Important:** Telegram aggressively caches the command menu on mobile. After installing a new skill and restarting the bot, you may need to fully close Telegram (swipe it away from your app switcher, not just minimize) and reopen it before the new `/` commands appear.
 
-Any `/command` not in the built-in list (like `/todo`, `/gmail`, `/tldr`) passes through to Claude and routes to whatever matching skill you have installed.
+Any `/command` not in the built-in list (like `/todo`, `/gmail`, `/tldr`) passes through to the active runtime and routes to whatever matching skill you have installed.
 
 ### /newchat + /respin workflow
 
-Context windows fill up over long conversations. When things start feeling off or Claude starts missing context:
+Context windows fill up over long conversations. When things start feeling off or the runtime starts missing context:
 
 1. Send `/newchat` to start a completely fresh session
 2. Send `/respin` immediately after
 
-`/respin` pulls the last 20 conversation turns from the database and feeds them back into the new session as context. Claude sees what you discussed recently without carrying the full token weight of the old session. It's like a soft restart.
+`/respin` pulls the last 20 conversation turns from the database and feeds them back into the new session as context. The runtime sees what you discussed recently without carrying the full token weight of the old session. It's like a soft restart.
 
-The pulled-in turns are marked as historical context (not new messages), so Claude treats them as background rather than active conversation.
+The pulled-in turns are marked as historical context (not new messages), so the runtime treats them as background rather than active conversation.
 
 ### /slack interface
 
@@ -552,7 +566,7 @@ r <text>         reply to the open conversation
 r 2 <text>       quick-reply to conversation #2 without opening it
 ```
 
-Type anything that isn't a number or `r <text>` to exit Slack mode and return to normal Claude.
+Type anything that isn't a number or `r <text>` to exit Slack mode and return to normal chat.
 
 ---
 
@@ -601,7 +615,7 @@ Below that, the dashboard is organized into panels:
 | **System Health** | Context window gauge (green/yellow/red), session age, compaction count, connection status for Telegram, WhatsApp, and Slack. |
 | **Tokens & Cost** | Today's spend, all-time cost, 30-day cost timeline chart, cache hit rate chart. |
 
-The dashboard also has a **live chat overlay**: a floating chat button that opens a real-time conversation panel. You can send messages to Claude directly from the dashboard and see responses stream in via SSE (Server-Sent Events). It shows tool progress in real time and has a stop button to abort queries mid-execution. Messages sent from the dashboard are also relayed to your Telegram chat.
+The dashboard also has a **live chat overlay**: a floating chat button that opens a real-time conversation panel. You can send messages to the active runtime directly from the dashboard and see responses stream in via SSE (Server-Sent Events). It shows tool progress in real time and has a stop button to abort queries mid-execution. Messages sent from the dashboard are also relayed to your Telegram chat.
 
 On your phone it's a single scrollable page. On a computer it splits into two columns automatically.
 
@@ -849,15 +863,15 @@ If you get "Slack not connected", double-check:
 - The `.env` file has no extra spaces around the `=` sign
 - You restarted MyOS after adding the token
 
-### Using Slack from Claude Code (skill)
+### Using Slack from the runtime (skill)
 
-MyOS ships with a Slack CLI at `dist/slack-cli.js` and a matching skill in `skills/slack/`. To use Slack via natural language from any Claude Code session:
+MyOS ships with a Slack CLI at `dist/slack-cli.js` and a matching skill in `skills/slack/`. To use Slack via natural language from any MyOS session:
 
 ```bash
 cp -r skills/slack ~/.claude/skills/slack
 ```
 
-Then just say "check my slack" or "message Jane on slack saying hey" and Claude handles the rest.
+Then just say "check my slack" or "message Jane on slack saying hey" and the active runtime handles the rest.
 
 ### Slack CLI reference
 
@@ -911,7 +925,7 @@ npm start
 
 **Entrance music:** The War Room can play background music during the cinematic intro. Upload any mp3 via the "upload" link in the War Room sidebar. The file saves to `warroom/music.mp3` (gitignored) and plays at low volume, fading out when the session connects. No music ships by default.
 
-**Legacy mode:** If you prefer the original stitched pipeline (Deepgram STT + Claude + Cartesia TTS), set `WARROOM_MODE=legacy` and provide `DEEPGRAM_API_KEY` + `CARTESIA_API_KEY`. This has higher latency (~10s per turn) but runs the full Claude Code stack per utterance.
+**Legacy mode:** If you prefer the original stitched pipeline (Deepgram STT + model runtime + Cartesia TTS), set `WARROOM_MODE=legacy` and provide `DEEPGRAM_API_KEY` + `CARTESIA_API_KEY`. This has higher latency (~10s per turn) but runs the full MyOS agent stack per utterance.
 
 **Rebuilding the Pipecat client bundle:** If you modify `warroom/client.js`, rebuild with:
 ```bash
@@ -977,7 +991,7 @@ MyOS has a structured memory system that extracts, consolidates, and recalls kno
 
 ### Layer 1. Session resumption
 
-Every time you send a message, Claude Code resumes the same session using a stored session ID. This means Claude carries your full conversation history across messages without you re-sending anything. It's the same as if you never left the terminal.
+Every time you send a message, MyOS resumes the active provider session using a stored session ID. This means the runtime carries your conversation history across messages without you re-sending anything. It's the same as if you never left the terminal.
 
 Use `/newchat` to start a completely fresh session when you want a clean slate.
 
@@ -1008,7 +1022,7 @@ Before every message, five parallel searches build your memory context:
 4. **Team activity**: what other agents have done in the last 24 hours (from the Hive Mind)
 5. **Conversation history recall**: triggered when you say things like "remember when" or "what did we discuss"
 
-The results are deduplicated and prepended to your message as a block Claude sees:
+The results are deduplicated and prepended to your message as a block the runtime sees:
 
 ```
 [Memory context]
@@ -1061,7 +1075,7 @@ High-importance memories (0.8+) trigger a Telegram notification when saved, givi
 
 ## Scheduled tasks
 
-Tell Claude what you want, in plain language:
+Tell MyOS what you want, in plain language:
 
 ```
 Every Monday at 9am, summarize AI news from the past week and send it to me
@@ -1069,7 +1083,7 @@ Every weekday at 8am, check my calendar and inbox and give me a briefing
 Every 4 hours, check for new emails from clients and flag anything urgent
 ```
 
-Claude creates and manages tasks via the built-in CLI. Manage them directly too:
+MyOS creates and manages tasks via the built-in CLI. Manage them directly too:
 
 ```bash
 node dist/schedule-cli.js list
@@ -1137,7 +1151,7 @@ MyOS ships with SQLite and **creates everything automatically on first run**: No
 **Schema:**
 
 ```sql
-sessions          -- Claude Code session IDs, one per chat per agent
+sessions          -- Provider session IDs, one per chat per agent
 memories          -- Structured memories with importance, salience, embeddings
 memories_fts      -- Virtual FTS5 table, auto-synced via triggers
 consolidations    -- Insights synthesized across memories (patterns, contradictions)
@@ -1173,7 +1187,7 @@ SELECT * FROM sessions;
 
 ## Customizing your assistant (CLAUDE.md)
 
-`CLAUDE.md` is loaded into every Claude Code session. It's the personality and context file. The main thing to edit to make MyOS yours.
+`CLAUDE.md` is MyOS's agent context file. The name stays `CLAUDE.md` for Claude Code and existing tooling compatibility, but MyOS treats it as a provider-neutral runtime contract and injects it across supported providers. It's the main thing to edit to make MyOS yours.
 
 The sections that matter most:
 
@@ -1181,9 +1195,9 @@ The sections that matter most:
 
 **Who you are**: What you do, your projects, your context. The more specific, the less you have to explain per message.
 
-**Your environment**: File paths Claude should be able to reach without being told: your Obsidian vault, project directories, anything you reference regularly.
+**Your environment**: File paths the runtime should be able to reach without being told: your Obsidian vault, project directories, anything you reference regularly.
 
-**Skills table**: Maps skill names to trigger phrases. This teaches Claude to invoke them automatically when you describe a task.
+**Skills table**: Maps skill names to trigger phrases. This teaches the runtime to invoke them automatically when you describe a task.
 
 **Message format**: How responses should look in Telegram: tight and scannable, summary-first for long outputs, how to handle task lists.
 
@@ -1191,13 +1205,13 @@ The sections that matter most:
 
 ## Building your context stack
 
-MyOS gets more useful the more context you give it. Each layer compounds on the last. Your CLAUDE.md is the foundation, skills add capabilities, and your file system becomes the knowledge base. The more you invest in these layers, the less you explain per message and the more your agents can do autonomously.
+MyOS gets more useful the more context you give it. Each layer compounds on the last. Your `CLAUDE.md` context file is the foundation, skills add capabilities, and your file system becomes the knowledge base. The more you invest in these layers, the less you explain per message and the more your agents can do autonomously.
 
 Here's how to think about it if you're a business owner:
 
 ### Layer 1: CLAUDE.md (who you are)
 
-This is the base. Every session loads it. Tell Claude about your business, your role, your tools, your preferences. Open Claude Code in your terminal and try:
+This is the base. Every session loads it. Tell the runtime about your business, your role, your tools, your preferences. Open your configured coding assistant in your terminal and try:
 
 ```
 Update my CLAUDE.md with this context:
@@ -1211,7 +1225,7 @@ Update my CLAUDE.md with this context:
 
 ### Layer 2: File system (what you know)
 
-Claude can read any file on your machine. Organize key business docs where agents can find them:
+The runtime can read any file on your machine that its provider and tool permissions can access. Organize key business docs where agents can find them:
 
 ```
 Create a ~/Business folder structure for my MyOS agents:
@@ -1239,7 +1253,7 @@ Install these skills into ~/.claude/skills/:
 Then test: send "check my email" to your bot on Telegram.
 ```
 
-The skill catalog is at [github.com/anthropics/claude-code/tree/main/skills](https://github.com/anthropics/claude-code/tree/main/skills). Community skills work too. Anything in `~/.claude/skills/` auto-loads for every agent.
+Claude-compatible skills can live in `~/.claude/skills/`, and the bundled MyOS skills use that compatibility path today. Community skills work too. The provider boundary is separate from the skill layout, so the context contract can keep using this path even when the active provider is Codex.
 
 ### Layer 4: Agents (who does what)
 
@@ -1252,15 +1266,15 @@ Once you have context and skills, specialist agents multiply your throughput:
 | content | Drafts, social posts, scripts | First-draft writing |
 | ops | Calendar, billing, task management | Admin work |
 
-Each agent gets its own 1M context window, its own CLAUDE.md personality, and access to every skill you've installed.
+Each agent gets its own context window, its own `CLAUDE.md` personality, and access to every skill you've installed.
 
 ### The compounding effect
 
 Each layer makes the others more powerful:
 
-- **CLAUDE.md** alone: Claude knows who you are but can't do much
-- **+ Files**: Claude can reference your SOPs, templates, and client notes
-- **+ Skills**: Claude can send emails, check your calendar, browse the web
+- **CLAUDE.md** alone: the runtime knows who you are but can't do much
+- **+ Files**: the runtime can reference your SOPs, templates, and client notes
+- **+ Skills**: the runtime can send emails, check your calendar, browse the web
 - **+ Agents**: Four specialists working in parallel, each with full context
 - **+ Scheduled tasks**: Agents running autonomously on a cron (daily email triage, weekly reports)
 - **+ Memory**: Every interaction teaches the system. It remembers client preferences, project history, your patterns
@@ -1277,7 +1291,7 @@ The startup banner is in `banner.txt` at the project root. Replace it with anyth
 
 ## Skills to install
 
-MyOS auto-loads every skill in `~/.claude/skills/`. Install a skill by copying its folder there.
+MyOS supports the Claude-compatible `~/.claude/skills/` layout for bundled skills and existing skill libraries. Install a skill by copying its folder there.
 
 ### Bundled skills
 
@@ -1312,7 +1326,7 @@ cp -r skills/tldr ~/.claude/skills/tldr
   - Docs: [github.com/google-gemini/gemini-skills/.../gemini-api-dev/SKILL.md](https://github.com/google-gemini/gemini-skills/blob/main/skills/gemini-api-dev/SKILL.md)
   - Install: copy the `gemini-api-dev` folder to `~/.claude/skills/`
 
-Browse more: [github.com/anthropics/claude-code](https://github.com/anthropics/claude-code)
+For Claude-compatible skills, browse the Claude Code skill ecosystem or use the bundled skills in this repo.
 
 ---
 
@@ -1322,7 +1336,12 @@ Browse more: [github.com/anthropics/claude-code](https://github.com/anthropics/c
 |----------|----------|-------------|
 | `TELEGRAM_BOT_TOKEN` | Yes | From [@BotFather](https://t.me/botfather) |
 | `ALLOWED_CHAT_ID` | Yes | Your chat ID. send `/chatid` to get it |
-| `ANTHROPIC_API_KEY` | No | Pay-per-token instead of Max subscription |
+| `LLM_PROVIDER` | No | Runtime provider for the main bot. Supported: `claude`, `codex`. Defaults to `claude` |
+| `ANTHROPIC_API_KEY` | No | Claude provider API key for pay-per-token billing |
+| `OPENAI_API_KEY` | No | Codex provider API key, if you run Codex with API-key auth |
+| `CODEX_HAIKU_MODEL` | No | Codex model mapped from `/model haiku` |
+| `CODEX_SONNET_MODEL` | No | Codex model mapped from `/model sonnet` |
+| `CODEX_OPUS_MODEL` | No | Codex model mapped from `/model opus` |
 | `GROQ_API_KEY` | No | Voice input. [console.groq.com](https://console.groq.com) |
 | `ELEVENLABS_API_KEY` | No | Voice output. [elevenlabs.io](https://elevenlabs.io) |
 | `ELEVENLABS_VOICE_ID` | No | Your ElevenLabs voice ID string |
@@ -1334,7 +1353,7 @@ Browse more: [github.com/anthropics/claude-code](https://github.com/anthropics/c
 | `DASHBOARD_TOKEN` | No | 48-char hex token for dashboard access |
 | `DASHBOARD_PORT` | No | Dashboard port (default: `3141`) |
 | `DASHBOARD_URL` | No | Public URL if using Cloudflare Tunnel |
-| `CLAUDE_CODE_OAUTH_TOKEN` | No | Override which Claude account is used |
+| `CLAUDE_CODE_OAUTH_TOKEN` | No | Claude provider OAuth token override |
 
 ---
 
@@ -1352,23 +1371,18 @@ npm run typecheck # Type-check without compiling
 
 ---
 
-## Is this compliant with Anthropic's Terms of Service?
+## Provider terms and auth model
 
-**It's a grey area, but signs point to yes for personal use.** Anthropic's Agent SDK (`@anthropic-ai/claude-agent-sdk`) is a published, official package. Boris Cherny (Anthropic) has indicated the Agent SDK can be used for personal usage with a Claude subscription. MyOS uses this SDK exclusively.
+MyOS is a provider-agnostic runtime. It does not scrape model websites, extract browser tokens, or impersonate a provider's hosted product. It calls the configured provider backend from your own machine.
 
-**How MyOS works:** The Agent SDK's `query()` spawns the `claude` binary as a child process. That subprocess manages its own auth from `~/.claude/`. MyOS never reads or transmits your token. It runs Claude Code and reads the output, identical to typing `claude -p "message"` in a terminal.
+| Provider | How MyOS runs it | Auth source |
+|----------|------------------|-------------|
+| `claude` | Official Claude Code path through the Anthropic Agent SDK | `claude login`, `CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_API_KEY` |
+| `codex` | `codex exec --json` subprocess | Codex CLI auth in `~/.codex/` or `OPENAI_API_KEY` |
 
-| | MyOS | Token-extraction tools |
-|---|---|---|
-| Runs the official `claude` CLI | ✅ | ❌ |
-| Auth stays in `~/.claude/` | ✅ | ❌ |
-| Uses Anthropic-published SDK | ✅ | ❌ |
-| Single-user, personal machine | ✅ | ❌ |
-| Anthropic telemetry intact | ✅ | ❌ |
+Each provider has its own terms, usage limits, telemetry, and billing model. For always-on, server, or multi-user deployments, API-key billing is usually clearer than relying on a personal desktop subscription.
 
-**What's clearly not OK:** Tools that extract your OAuth token and make API calls with it from third-party code, or impersonate Claude Code without running it.
-
-For server or multi-user deployments, set `ANTHROPIC_API_KEY` to use pay-per-token billing. This removes any ambiguity since you're paying directly for usage.
+MyOS reads provider output and stores conversation state in its own SQLite database. Provider credentials stay in the provider's normal local auth location or in `.env`, which is gitignored.
 
 ---
 
@@ -1389,7 +1403,7 @@ These protections are active in every MyOS installation, no configuration needed
 | **Message encryption** | WhatsApp and Slack message bodies are encrypted with AES-256-GCM before being written to the database. The key is stored in `.env` (gitignored). |
 | **Message auto-purge** | A 3-day retention sweep runs on startup and every 24 hours, deleting all message data from `wa_messages`, `wa_outbox`, `wa_message_map`, and `slack_messages`. |
 
-**`bypassPermissions` mode.** The bot runs Claude Code with `permissionMode: 'bypassPermissions'` because there is no terminal to approve tool-use prompts. Claude can execute any tool (shell commands, file reads, web requests) without confirmation. This is safe when the bot is locked to your chat ID on your own machine. Do not expose it to untrusted users.
+**Permission bypass mode.** The bot runs provider backends without interactive approval prompts because there is no terminal to approve each tool-use request. The active runtime can execute allowed tools (shell commands, file reads, web requests) without confirmation. This is safe when the bot is locked to your chat ID on your own machine. Do not expose it to untrusted users.
 
 ### PIN lock (opt-in)
 
@@ -1433,7 +1447,7 @@ Or view it in the dashboard via the API: `GET /api/audit?limit=50`.
 
 **WhatsApp daemon runs on localhost only.** The `wa-daemon` HTTP API (port 4242) and Chrome DevTools Protocol (port 9222) bind to `127.0.0.1`. They are not accessible from outside your machine, but any local process can reach them.
 
-**`notify.sh` is called by Claude.** The notification script sends Telegram messages via `curl`. Since Claude has full shell access, it can call this script with any content. This is by design (progress updates), but prompt injection via external content could theoretically cause unexpected messages.
+**`notify.sh` is called by the runtime.** The notification script sends Telegram messages via `curl`. Since the runtime may have shell access, it can call this script with any content. This is by design (progress updates), but prompt injection via external content could theoretically cause unexpected messages.
 
 ---
 
@@ -1443,7 +1457,7 @@ Or view it in the dashboard via the API: `GET /api/audit?limit=50`.
 - Check `ALLOWED_CHAT_ID` matches the number from `/chatid`
 - Check logs: `tail -f /tmp/myos.log`
 - Run `npm run status` for a full health check
-- Verify Claude auth: `claude --version`
+- Verify provider auth: for Claude, run `claude --version`; for Codex, run `codex --version`
 - **macOS:** Check if your Mac is showing "Node wants to access..." permission dialogs. The bot hangs until you click Allow. This is easy to miss if your Mac screen is off or in the background.
 
 **Setup fails at bracket placeholders**
@@ -1457,9 +1471,9 @@ Or view it in the dashboard via the API: `GET /api/audit?limit=50`.
 - Git needs these set once, globally, before it can do anything
 
 **Can't access the internet / "break out"**
-- MyOS runs the real Claude Code CLI, which has full internet access through its built-in tools (web search, web fetch, bash with curl, etc.)
-- If Claude says it can't access the internet, it's likely a skill or prompt issue, not a MyOS limitation
-- Make sure your Claude Code CLI works in the terminal first: open a terminal, run `claude`, and ask it to search the web
+- MyOS runs the active provider runtime locally, with whatever web and shell tools that provider exposes
+- If the runtime says it can't access the internet, it's likely a provider, skill, or prompt issue, not a MyOS limitation
+- Make sure your selected provider works in the terminal first. For Claude, run `claude`; for Codex, run `codex`
 
 **Voice notes return an error**
 - `GROQ_API_KEY` must be in `.env` and the bot restarted after adding it
@@ -1488,10 +1502,10 @@ Or view it in the dashboard via the API: `GET /api/audit?limit=50`.
 ## Common confusions
 
 **"Do I need the mega prompt / Rebuild_Prompt.md?"**
-No. There is no separate prompt to execute and no `Rebuild_Prompt.md` file. `CLAUDE.md` in the repo **is** the prompt, it loads automatically into every Claude Code session. You personalize it once (replace the `[BRACKETED]` placeholders with your info) and forget about it. Just clone the repo, run setup, and go. When you `git pull` updates, your personalized `.env` stays untouched (gitignored) and `CLAUDE.md` changes are merged by git.
+No. There is no separate prompt to execute and no `Rebuild_Prompt.md` file. `CLAUDE.md` in the repo **is** the agent context contract. The filename is kept for compatibility, but MyOS injects it into supported providers. You personalize it once (replace the `[BRACKETED]` placeholders with your info) and forget about it. Just clone the repo, run setup, and go. When you `git pull` updates, your personalized `.env` stays untouched (gitignored) and `CLAUDE.md` changes are merged by git.
 
 **"Does this use Claude Remote?"**
-No. MyOS has nothing to do with Anthropic's Remote product. It runs the `claude` CLI locally on your own machine (Mac, Linux, or Windows via WSL2) and pipes results to Telegram. No cloud VMs, no remote sessions.
+No. MyOS has nothing to do with Anthropic's Remote product. It runs the configured provider backend locally on your own machine (Mac, Linux, or Windows via WSL2) and pipes results to Telegram. No cloud VMs, no remote sessions.
 
 **"Does this work on Windows?"**
 Yes, through WSL2. Install WSL2, clone MyOS inside the WSL filesystem, and follow the normal Linux setup steps. The setup wizard detects Windows and offers WSL2 or PM2 options.
@@ -1499,14 +1513,14 @@ Yes, through WSL2. Install WSL2, clone MyOS inside the WSL filesystem, and follo
 **"What is GOOGLE_API_KEY for?"**
 Video analysis via Google Gemini. It is **not** for Gmail or Google Calendar (those use separate OAuth credentials via the gmail and google-calendar skills). Get it free at [aistudio.google.com](https://aistudio.google.com).
 
-**"Should I watch the Claude Code video first?"**
-Recommended but not required. The video covers how Claude Code works under the hood, which helps you understand what MyOS is actually doing. But you can set up MyOS first and watch it later.
+**"Should I understand Claude Code or Codex first?"**
+Helpful but not required. MyOS wraps the provider runtime behind a stable OS layer. You can set up MyOS first, then learn the provider-specific details when you need to debug auth, tools, or model choice.
 
 **"How do I update when a new version drops?"**
 `cd MyOS && git pull && npm install && npm run migrate && npm run build` then restart. See [Updating MyOS](#updating-myos) above.
 
 **"Telegram formatting looks broken / not formatting properly"**
-MyOS converts Claude's Markdown to Telegram-safe HTML (bold, italic, code blocks, links). Telegram's formatting support is limited compared to a full web page. If something looks off, it's usually Telegram's rendering, not a bug. For very long or complex responses, the formatting is intentionally kept simple to avoid Telegram parse errors.
+MyOS converts model Markdown to Telegram-safe HTML (bold, italic, code blocks, links). Telegram's formatting support is limited compared to a full web page. If something looks off, it's usually Telegram's rendering, not a bug. For very long or complex responses, the formatting is intentionally kept simple to avoid Telegram parse errors.
 
 **"Can I add extra security like 2FA?"**
 `ALLOWED_CHAT_ID` restricts the bot to your Telegram account, which is the default security layer. Community members have added Google Authenticator (TOTP) for tiered permissions (read-only vs elevated actions with time-limited re-auth). This isn't built in yet, but it's a straightforward addition to `handleMessage()` in `src/bot.ts` if you want that extra layer.
@@ -1532,10 +1546,12 @@ flowchart TD
     Handler -->|"@agent: syntax"| Orch["orchestrator.ts\nAgent delegation"]
     Orch -->|route to agent| Agent
 
-    Agent["agent.ts\nClaude Agent SDK"] -->|spawns subprocess| CC["claude CLI\n~/.claude/ auth"]
-    CC -->|loads| Config["CLAUDE.md\n+ ~/.claude/skills/"]
-    CC -->|uses| Tools["Bash · Web · MCP\nFile system · APIs"]
-    CC -->|result| Agent
+    Agent["agent.ts\nProvider boundary"] -->|selects| Provider["LLM provider\nLLM_PROVIDER"]
+    Provider --> Claude["Claude Code\nclaude CLI + ~/.claude/ auth"]
+    Provider --> Codex["Codex\ncodex exec + ~/.codex/ auth"]
+    Provider -->|loads| Config["CLAUDE.md context\n+ runtime skills"]
+    Provider -->|uses| Tools["Bash · Web · MCP\nFile system · APIs"]
+    Provider -->|result| Agent
 
     Agent --> Format["Format + Split\nMarkdown to HTML"]
     Format -->|reply| TGAPI
@@ -1577,7 +1593,10 @@ myos/
 ├── src/
 │   ├── index.ts             Main entrypoint. starts everything
 │   ├── bot.ts               Handles all Telegram messages (text, voice, photo, etc.)
-│   ├── agent.ts             Runs Claude Code via Agent SDK
+│   ├── agent.ts             Runs the selected LLM provider
+│   ├── llm-provider.ts      Provider registry and runtime contract
+│   ├── llm-providers/       Claude and Codex provider backends
+│   ├── model-router.ts      Maps model tiers to provider model IDs
 │   ├── agent-config.ts      Loads agent YAML configs and CLAUDE.md templates
 │   ├── orchestrator.ts      Agent delegation routing (@agent: syntax)
 │   ├── db.ts                SQLite database. all tables and queries
@@ -1603,7 +1622,7 @@ myos/
 │   ├── obsidian.ts          Obsidian vault context injection (per agent)
 │   └── logger.ts            Structured logging via pino
 │
-│  ← Skills (copy to ~/.claude/skills/ to activate)
+│  ← Skills (copy to ~/.claude/skills/ to activate compatibility skills)
 ├── skills/
 │   ├── gmail/SKILL.md     Gmail inbox management
 │   ├── google-calendar/   Calendar events, invites, availability
@@ -1613,7 +1632,7 @@ myos/
 ├── scripts/
 │   ├── setup.ts          Interactive setup wizard. run with: npm run setup
 │   ├── status.ts         Health check. run with: npm run status
-│   ├── notify.sh         Sends a Telegram message from the shell (used by Claude)
+│   ├── notify.sh         Sends a Telegram message from the shell (used by the runtime)
 │   └── wa-daemon.ts      WhatsApp daemon. run separately for WhatsApp bridge
 │
 │  ← Runtime data (auto-created, gitignored)
@@ -1642,7 +1661,7 @@ This is a core feature, not experimental. Setting up multiple agents is straight
 
 **How it works in plain English:** Each agent is just another Telegram bot running the same MyOS code, but with a different personality file (CLAUDE.md) and a different Telegram token. They all share your machine, your database, and your skills. The main agent can delegate work to specialists, and they ping you back on Telegram when they're done.
 
-MyOS can run **specialist agents** alongside the main bot. Each agent is its own Telegram bot with its own personality, its own Claude Code session, and its own chat on your phone.
+MyOS can run **specialist agents** alongside the main bot. Each agent is its own Telegram bot with its own personality, its own provider session, and its own chat on your phone.
 
 ![Agent avatars](assets/agent-comms.png) ![Agent avatars](assets/agent-content.png) ![Agent avatars](assets/agent-ops.png) ![Agent avatars](assets/agent-research.png)
 
@@ -1658,14 +1677,14 @@ Agents let you split the work:
 
 | What | Main bot | Specialist agents |
 |------|----------|-------------------|
-| Context window | Shared across all tasks | Each gets its own 1M window |
+| Context window | Shared across all tasks | Each gets its own configured window |
 | Personality | General purpose | Focused CLAUDE.md per role |
-| Model | Opus (default) | Sonnet (cheaper, fast enough for routine work) |
+| Model | Configured default tier | Usually a cheaper/faster tier unless overridden |
 | Scheduled tasks | All fire in one process | Scoped per agent |
 | Obsidian context | Optional | Auto-injected from assigned vault folders |
-| Cost | Full Opus pricing | Sonnet by default, /model opus when needed |
+| Cost | Main provider/model pricing | Agent-specific provider/model pricing |
 
-All agents share your machine, your SQLite database, your global skills (`~/.claude/skills/`), and your `.env` secrets. A **hive mind** table lets agents log what they did so any agent (or the main bot) can see cross-agent activity.
+All agents share your machine, your SQLite database, your global skills, and your `.env` secrets. A **hive mind** table lets agents log what they did so any agent (or the main bot) can see cross-agent activity.
 
 **This is 100% optional.** `npm start` with no flags works exactly like before. Zero breaking changes.
 
@@ -1673,12 +1692,12 @@ All agents share your machine, your SQLite database, your global skills (`~/.cla
 
 Think about the roles that make sense for your workflow. Here are the templates we ship:
 
-| Template | What it handles | Default model |
+| Template | What it handles | Default model tier |
 |----------|----------------|---------------|
-| `comms` | Email, Slack, WhatsApp, YouTube comments, community forums, LinkedIn DMs | Sonnet |
-| `content` | YouTube scripts, LinkedIn posts, carousels, trend research | Sonnet |
-| `ops` | Calendar, billing, Stripe, Gumroad, admin, task management | Sonnet |
-| `research` | Deep web research, academic sources, competitive intel | Sonnet |
+| `comms` | Email, Slack, WhatsApp, YouTube comments, community forums, LinkedIn DMs | Balanced |
+| `content` | YouTube scripts, LinkedIn posts, carousels, trend research | Balanced |
+| `ops` | Calendar, billing, Stripe, Gumroad, admin, task management | Balanced |
+| `research` | Deep web research, academic sources, competitive intel | Balanced |
 
 You can start with one and add more later. Or use the blank `_template` and define your own role entirely.
 
@@ -1711,6 +1730,7 @@ name: Comms
 description: Email, Slack, WhatsApp, YouTube comments, community forums, LinkedIn
 telegram_bot_token_env: COMMS_BOT_TOKEN
 model: claude-sonnet-4-6
+provider: claude
 
 # Optional: auto-inject open tasks from your Obsidian vault
 obsidian:
@@ -1732,7 +1752,7 @@ You handle all human communication on the user's behalf.
 
 Add the bot token to `.env`:
 ```
-COMMS_BOT_TOKEN=1234567890:AAFxxxxxxxxxxxxxxxxxxxxxxx
+COMMS_BOT_TOKEN=__TELEGRAM_BOT_TOKEN__
 ```
 
 ### Step 4: Start your agents
@@ -1834,12 +1854,12 @@ Every agent runs the exact same `createBot()` code path as the main bot. There's
 - Photo, document, and video handling (including Gemini video analysis)
 - File sending (`[SEND_FILE:...]` markers)
 - All built-in slash commands: /newchat, /respin, /voice, /model, /memory, /stop, /wa, /slack
-- All global skills from `~/.claude/skills/` (auto-discovered and registered in each bot's Telegram command menu)
+- All global compatibility skills from `~/.claude/skills/` (auto-discovered and registered in each bot's Telegram command menu)
 - Memory system (FTS5 search, salience decay) -- isolated per agent
 - Context window tracking and compaction warnings
 - WhatsApp and Slack integration
 
-**Inheritance works like this:** agents and the main bot share the same compiled codebase (`dist/`), the same SQLite database, the same `.env` secrets, and the same global skills directory (`~/.claude/skills/`). Each agent just has its own Telegram bot token, its own `CLAUDE.md` personality, and its own session state.
+**Inheritance works like this:** agents and the main bot share the same compiled codebase (`dist/`), the same SQLite database, the same `.env` secrets, and the same global skills directory. Each agent just has its own Telegram bot token, its own `CLAUDE.md` personality, optional provider/model overrides, and its own session state.
 
 This means when you:
 - **Install a new skill** to `~/.claude/skills/` -- every agent picks it up on restart, including its `/slash` command in Telegram's menu
@@ -1977,7 +1997,7 @@ Flags:
 | `--name` | Yes | Display name shown in the dashboard and logs |
 | `--description` | Yes | What this agent does |
 | `--token` | Yes | Telegram bot token from @BotFather |
-| `--model` | No | Claude model (default: `claude-sonnet-4-6`) |
+| `--model` | No | Model ID or tier alias for the agent. Resolved through the active provider |
 | `--template` | No | Template to clone from (default: `_template`) |
 | `--activate` | No | Install launchd/systemd service and start immediately |
 
@@ -2020,7 +2040,7 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setMyProfilePhoto" \
 
 ### Resource usage
 
-5 Node.js processes (main + 4 agents) use ~500MB RAM total at idle. Each `runAgent()` call spawns a separate Claude Code subprocess that exits when done. SQLite WAL mode handles concurrent access from all processes with no contention.
+5 Node.js processes (main + 4 agents) use ~500MB RAM total at idle. Each `runAgent()` call spawns a separate provider subprocess that exits when done. SQLite WAL mode handles concurrent access from all processes with no contention.
 
 ---
 
