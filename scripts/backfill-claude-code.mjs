@@ -19,7 +19,7 @@ import pg from 'pg';
 import { embed, vecLit, EMBED_DIM, EMBED_MODEL_NAME } from './lib/embed.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
-const ROOT = '/Users/sc/HQ';
+const ROOT = process.env.PROJECT_ROOT || new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 const STATE_DB = join(ROOT, 'store', 'myos.db');
 const LOG_PATH = `/tmp/backfill-${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
@@ -78,13 +78,13 @@ const pool = new pg.Pool({ connectionString: PG_URL, max: 10 });
 // ── Folder discovery ────────────────────────────────────────────────
 function isIncluded(folderName) {
   if (folderName.includes('claude-worktrees')) return false;
-  // strip "-Users-sagecos1" prefix, then check against inclusion set
+  // Strip the encoded home-directory prefix, then check against inclusion set.
   const stripped = folderName
-    .replace(/^-Users-sagecos1-?-?/, '')
+    .replace(/^-Users-[^-]+-?-?/, '')
     .replace(/^-/, '');
   if (stripped === '') return true;              // bare home dir
   if (/^HQ(-|$)/.test(stripped)) return true;    // HQ or HQ-agents-*
-  if (/^sonke-hub/.test(stripped)) return true;
+  if (/^myos/.test(stripped)) return true;
   if (/^openclaw/.test(stripped)) return true;
   return false;
 }

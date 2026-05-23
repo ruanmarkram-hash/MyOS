@@ -16,7 +16,7 @@
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 
-const ROOT = '/Users/sc/HQ';
+const ROOT = process.env.PROJECT_ROOT || new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DRY_RUN = process.argv.includes('--dry-run');
 
 const env = Object.fromEntries(

@@ -39,7 +39,7 @@ import { isLikelySecretEnvName } from './security.js';
  *
  * Audited existing silent shell tasks (sqlite scheduled_tasks WHERE
  * silent=1): every task that needs secrets sources `.env` explicitly
- * inside its own bash command (e.g. `set -a && source /Users/sc/HQ/.env
+ * inside its own bash command (e.g. `set -a && source <project-root>/.env
  * && set +a && psql ...`). None rely on env inheritance for secrets.
  *
  * So the safe behaviour is to drop the entire parent env and pass only

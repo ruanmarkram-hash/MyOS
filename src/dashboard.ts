@@ -702,7 +702,7 @@ function isReviewSpawnedTask(task: MissionTask): boolean {
   return task.created_by === 'review-inbox' || /^(retry|follow up):/i.test(task.title);
 }
 
-// Category A — anything that needs Ruan's hands or judgement.
+// Category A — anything that needs the user's hands or judgement.
 // Broadened per 2026-05-06 spec: "anything with a deliverable that was asked
 // for, or developed and needs my review, or is waiting for me to send".
 // Keep the regex permissive; Category C (auto-hide) is handled by the
@@ -710,15 +710,15 @@ function isReviewSpawnedTask(task: MissionTask): boolean {
 // picky here.
 const HUMAN_ACTION_PATTERN = new RegExp([
   // Direct asks for action / decision
-  'needs? (?:your|ruan)',
-  'requires? (?:your|ruan|approval|review|sign[- ]?off|input|decision|attention|confirmation|authori[sz]ation)',
-  'awaiting (?:you|your|ruan|review|approval|sign[- ]?off|decision|confirmation|input|response)',
-  'waiting (?:on|for) (?:you|ruan|your)',
-  'blocked (?:on|by) (?:you|ruan)',
-  'pending (?:your|ruan|approval|review|sign[- ]?off|decision|confirmation)',
-  // Verbs Ruan must perform
+  'needs? (?:your|user)',
+  'requires? (?:your|user|approval|review|sign[- ]?off|input|decision|attention|confirmation|authori[sz]ation)',
+  'awaiting (?:you|your|user|review|approval|sign[- ]?off|decision|confirmation|input|response)',
+  'waiting (?:on|for) (?:you|user|your)',
+  'blocked (?:on|by) (?:you|user)',
+  'pending (?:your|user|approval|review|sign[- ]?off|decision|confirmation)',
+  // Verbs the user must perform
   'please (?:review|send|sign|approve|confirm|decide|choose|grant|authori[sz]e|check|provide)',
-  'ready (?:for you|to send|to sign|for review|for approval|for your review|for ruan)',
+  'ready (?:for you|to send|to sign|for review|for approval|for your review|for user)',
   '(?:^|\\s|: )(?:review|send|sign|approve|decide|grant|authori[sz]e|choose|confirm)\\s+(?:and|the|this|these|attached|draft|email|message|document|deliverable|pack|file|response|invoice|reply)',
   // Sign-off / approval framings
   'sign[- ]?off (?:required|needed|please)',
@@ -735,7 +735,7 @@ const HUMAN_ACTION_PATTERN = new RegExp([
   'grant permission',
   // "Your X" patterns
   'your (?:input|decision|approval|review|sign[- ]?off|attention|confirmation|authori[sz]ation|hands?|call)',
-  // Ready-for-Ruan-to-send patterns
+  // Ready-for-the user-to-send patterns
   'ready to (?:send|sign|email|publish|share|deliver|submit)',
   'draft (?:ready|prepared|complete|done)',
   // Deliverable-handoff phrasing
@@ -746,7 +746,7 @@ const HUMAN_ACTION_PATTERN = new RegExp([
   // Restart / system hand
   'send /restart',
 ].join('|'), 'i');
-const NO_HUMAN_ACTION_PATTERN = /\b(?:no|none|without)\s+(?:human\s+|manual\s+|your\s+|ruan\s+)?(?:action|review|approval|follow[- ]?up|intervention)\s+(?:required|needed|pending)|\bno\s+(?:deliverable|human action|manual action|review)\b/i;
+const NO_HUMAN_ACTION_PATTERN = /\b(?:no|none|without)\s+(?:human\s+|manual\s+|your\s+|user\s+)?(?:action|review|approval|follow[- ]?up|intervention)\s+(?:required|needed|pending)|\bno\s+(?:deliverable|human action|manual action|review)\b/i;
 
 function containsHumanActionSignal(task: MissionTask): boolean {
   const text = reviewOutcomeText(task);
@@ -755,7 +755,7 @@ function containsHumanActionSignal(task: MissionTask): boolean {
 }
 
 // Intent-based deliverable detector. No agent exclusion — a mason or warden
-// completion that produced a deliverable Ruan needs to review still counts.
+// completion that produced a deliverable the user needs to review still counts.
 // (2026-05-06: removed the hard mason/warden exclusion that was filtering
 // 32/34 completions out of the inbox.)
 function isNonDevDeliverable(task: MissionTask): boolean {
@@ -766,22 +766,22 @@ function isNonDevDeliverable(task: MissionTask): boolean {
 
 // Category B — "you asked for this and it's sorted" framing.
 //
-// True when the mission's lineage traces back to a Ruan-facing surface:
-//   - mission-cli invocation by Sage (created_by='main') — Ruan asked Sage on Telegram
+// True when the mission's lineage traces back to a user-facing surface:
+//   - mission-cli invocation by Sage (created_by='main') — the user asked Sage on Telegram
 //   - dashboard Home/Needs-Attention assignment (created_by='dashboard')
 //   - review-inbox follow-up (created_by='review-inbox')
 //   - prompt explicitly cites a morning-brief / Warden / Home-attention origin
-//   - parent mission (via "Source mission:" / "Parent mission:" reference) was Ruan-originated
+//   - parent mission (via "Source mission:" / "Parent mission:" reference) was user-originated
 //
-// Internal agent-to-agent chatter (created_by=<specialist>, no Ruan-facing
+// Internal agent-to-agent chatter (created_by=<specialist>, no user-facing
 // breadcrumb in the prompt) returns false.
-// `created_by` values that *prove* a Ruan-facing origin. 'dashboard' is
+// `created_by` values that *prove* a user-facing origin. 'dashboard' is
 // excluded because it's the generic default for any mission_cli call from
 // the dashboard surface, including internal cron + agent-to-agent traffic;
 // dashboard-originated Home/Needs-Attention follow-ups are detected via the
-// explicit prompt breadcrumbs in RUAN_ORIGIN_PROMPT_HINTS instead.
-const RUAN_FACING_CREATORS = new Set(['main', 'review-inbox', 'telegram', 'cli']);
-const RUAN_ORIGIN_PROMPT_HINTS = /(needs attention item from home dashboard|scheduled needs attention follow-up|action needed|morning brief|warden alert|warden report|imessage|whatsapp|telegram message|slack message|asked by ruan|requested by ruan|from ruan)/i;
+// explicit prompt breadcrumbs in USER_ORIGIN_PROMPT_HINTS instead.
+const USER_FACING_CREATORS = new Set(['main', 'review-inbox', 'telegram', 'cli']);
+const USER_ORIGIN_PROMPT_HINTS = /(needs attention item from home dashboard|scheduled needs attention follow-up|action needed|morning brief|warden alert|warden report|imessage|whatsapp|telegram message|slack message|asked by user|requested by user|from user)/i;
 
 function parentMissionIdFromPrompt(prompt: string): string | null {
   const m = prompt.match(/(?:Source mission|Parent mission):\s*([A-Za-z0-9_-]+)/i);
@@ -790,8 +790,8 @@ function parentMissionIdFromPrompt(prompt: string): string | null {
 
 function originatedFromUser(task: MissionTask, missions: MissionTask[], depth = 0): boolean {
   if (depth > 4) return false;
-  if (RUAN_FACING_CREATORS.has(task.created_by)) return true;
-  if (RUAN_ORIGIN_PROMPT_HINTS.test(task.prompt)) return true;
+  if (USER_FACING_CREATORS.has(task.created_by)) return true;
+  if (USER_ORIGIN_PROMPT_HINTS.test(task.prompt)) return true;
   const parentId = parentMissionIdFromPrompt(task.prompt);
   if (parentId) {
     const parent = missions.find((m) => m.id === parentId);
@@ -801,7 +801,7 @@ function originatedFromUser(task: MissionTask, missions: MissionTask[], depth = 
 }
 
 // True when this completed mission deserves a "sorted ✓" heads-up rather
-// than an action prompt. Distinct from Category A — these don't need Ruan
+// than an action prompt. Distinct from Category A — these don't need the user
 // to do anything, but he asked for them so he wants to know they landed.
 function isSortedCompletion(task: MissionTask, missions: MissionTask[]): boolean {
   if (task.status !== 'completed') return false;
@@ -819,18 +819,18 @@ function defaultReviewStatusForTask(task: MissionTask, missions: MissionTask[]):
   const manifest = getMissionManifest(task);
   if (task.status === 'failed' || task.status === 'partial') {
     // Failures and partials are never routine history. They are the loop
-    // breakages Ruan needs surfaced so he can retry, redirect, or archive.
-    // Keep ancient internal agent noise out unless the lineage is Ruan-facing.
+    // breakages the user needs surfaced so he can retry, redirect, or archive.
+    // Keep ancient internal agent noise out unless the lineage is user-facing.
     return (isRecentActionableFailure(task) || originatedFromUser(task, missions)) ? 'needs_triage' : null;
   }
   if (task.status === 'completed') {
     if (completedMissionHasFollowUp(task, missions)) return null;
     if (manifest.route === 'needs_triage') return 'needs_triage';
     if (manifest.route === 'needs_review') return 'needs_review';
-    // Category A: anything that needs Ruan's hands or a deliverable he asked for.
+    // Category A: anything that needs the user's hands or a deliverable he asked for.
     if (containsHumanActionSignal(task)) return 'needs_review';
     if (isNonDevDeliverable(task)) return 'needs_review';
-    // Category B: Ruan-originated lineage — surface as a "sorted ✓" heads-up.
+    // Category B: user-originated lineage — surface as a "sorted ✓" heads-up.
     if (isSortedCompletion(task, missions)) return 'needs_review';
     // Category C: routine internal chatter — auto-hide.
     return null;
@@ -923,7 +923,7 @@ function reviewWhyText(task: MissionTask, review: MissionReview, missions: Missi
   if (manifest.route === 'needs_review') return 'The mission manifest explicitly routed this item for review.';
   if (containsHumanActionSignal(task)) return 'The result contains a human-action signal such as approval, review, sending, signing, or a manual step.';
   if (isNonDevDeliverable(task)) return 'The mission produced a deliverable or handoff that should be checked before closure.';
-  if (isSortedCompletion(task, missions)) return 'This is a Ruan-originated completion. It is shown as sorted so you can see it landed, then archive it.';
+  if (isSortedCompletion(task, missions)) return 'This is a user-originated completion. It is shown as sorted so you can see it landed, then archive it.';
   return 'This item has an open review state.';
 }
 
@@ -970,7 +970,7 @@ function buildReviewFollowupPrompt(task: MissionTask, instructions: string): str
     `Previous result/error:`,
     task.result || task.error || 'No result text was recorded.',
     '',
-    `Ruan's instructions for this pass:`,
+    `the user's instructions for this pass:`,
     instructions || 'Review the previous result, close the loop, and return a clear deliverable or blocker.',
     '',
     `Expected output: return the deliverable, exact file/link if one is created, and any remaining blocker.`,
@@ -1749,7 +1749,7 @@ interface StructuredBriefAction {
   confidence: number;
   suggestedAgent?: string | null;
   due?: string | null;
-  requiresRuan?: boolean;
+  requiresHuman?: boolean;
 }
 
 const TERMINAL_MISSION_STATUSES = new Set(['completed', 'failed', 'partial', 'cancelled']);
@@ -1866,8 +1866,8 @@ function normalizeStructuredAction(input: any): StructuredBriefAction | null {
       : typeof input.dueAt === 'string' ? input.dueAt.trim()
         : '';
   const due = dueRaw && !/^null$/i.test(dueRaw) ? dueRaw : null;
-  const requiresRuan = typeof input.requires_ruan === 'boolean' ? input.requires_ruan
-    : typeof input.requiresRuan === 'boolean' ? input.requiresRuan
+  const requiresHuman = typeof input.requires_human === 'boolean' ? input.requires_human
+    : typeof input.requiresHuman === 'boolean' ? input.requiresHuman
       : undefined;
   return {
     title: rawTitle || category || 'Brief action',
@@ -1877,7 +1877,7 @@ function normalizeStructuredAction(input: any): StructuredBriefAction | null {
     confidence,
     suggestedAgent,
     due,
-    requiresRuan,
+    requiresHuman,
   };
 }
 
@@ -2015,7 +2015,7 @@ function displayDetailForStructuredAction(action: StructuredBriefAction): string
   const meta: string[] = [];
   if (action.suggestedAgent) meta.push(`Suggested agent: @${action.suggestedAgent.replace(/^@/, '')}`);
   if (action.due) meta.push(`Due: ${action.due}`);
-  if (typeof action.requiresRuan === 'boolean') meta.push(`Requires Ruan: ${action.requiresRuan ? 'yes' : 'no'}`);
+  if (typeof action.requiresHuman === 'boolean') meta.push(`Requires human: ${action.requiresHuman ? 'yes' : 'no'}`);
   if (meta.length > 0) meta.push(`Confidence: ${Math.round(action.confidence * 100)}%`);
   const detail = meta.length > 0 ? `${action.detail}\n${meta.join(' · ')}` : action.detail;
   return detail.length > 1000 ? `${detail.slice(0, 997)}...` : detail;
@@ -2264,8 +2264,8 @@ function canonicalFollowUpIds(missions: MissionTask[]): Set<string> {
 
 // Only suppress the parent when an ACTIVE follow-up exists. If the follow-up
 // itself is already completed/failed/partial, the parent must remain visible
-// so Ruan can review the result. (2026-05-06: this used to suppress
-// regardless of follow-up status, which hid completions Ruan asked for.)
+// so the user can review the result. (2026-05-06: this used to suppress
+// regardless of follow-up status, which hid completions the user asked for.)
 const ACTIVE_FOLLOWUP_STATUSES = new Set(['queued', 'running', 'assigned']);
 
 function completedMissionHasFollowUp(mission: MissionTask, missions: MissionTask[]): boolean {
@@ -2283,7 +2283,7 @@ function buildHomeAttention(tasks: ScheduledTask[], missions: MissionTask[]) {
     syncReportAttentionItems(tasks, missions);
     syncTerminalMissionAttentionItems(missions);
     // Auto-resolve attention items whose linked mission landed successfully.
-    // Failed/partial stay visible (workStatus='failed') so Ruan sees them.
+    // Failed/partial stay visible (workStatus='failed') so the user sees them.
     // This is the self-cleaning behaviour for assigned rows.
     for (const item of listActiveAttentionItems(200)) {
       if (item.status !== 'assigned' || !item.linked_mission_id) continue;
@@ -3804,7 +3804,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         `Source: ${attention.source_kind}:${attention.source_id}`,
         `Title: ${attention.title}`,
         `Detail: ${attention.detail}`,
-        instruction ? `Additional instructions from Ruan:\n${instruction}` : '',
+        instruction ? `Additional instructions from the user:\n${instruction}` : '',
         attention.href ? `Source link: ${attention.href}` : '',
       ].filter(Boolean).join('\n'), agentId, 'dashboard', attention.severity === 'high' ? 9 : attention.severity === 'medium' ? 6 : 3);
       markAttentionAssigned(attention.id, id, agentId);
@@ -3833,7 +3833,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         `Source status: ${task.status}`,
         task.result ? `Result:\n${task.result.slice(0, 2000)}` : '',
         task.error ? `Error:\n${task.error.slice(0, 2000)}` : '',
-        instruction ? `Additional instructions from Ruan:\n${instruction}` : '',
+        instruction ? `Additional instructions from the user:\n${instruction}` : '',
       ].filter(Boolean).join('\n'), agentId, 'dashboard', task.status === 'failed' ? 9 : 6);
       upsertMissionReview({
         taskId: task.id,
@@ -3855,7 +3855,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
         `Source schedule: ${schedule.id}`,
         `Last status: ${schedule.last_status || schedule.status}`,
         schedule.last_result ? `Last result:\n${schedule.last_result.slice(0, 2000)}` : '',
-        instruction ? `Additional instructions from Ruan:\n${instruction}` : '',
+        instruction ? `Additional instructions from the user:\n${instruction}` : '',
       ].filter(Boolean).join('\n'), agentId, 'dashboard', schedule.last_status === 'failed' ? 9 : 6);
       clearScheduledTaskAttention(id, `Assigned follow-up mission ${missionId} from Home Needs Attention.`);
       return c.json({ ok: true, task: getMissionTask(missionId) }, 201);

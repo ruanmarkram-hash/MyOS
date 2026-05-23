@@ -41,7 +41,7 @@ describe('tryExtractShellCommand', () => {
 
   it('returns null for free-form judgment prompts', () => {
     const got = tryExtractShellCommand(
-      'Produce Ruan\'s morning briefing. Check calendar, inbox, reminders, and write a 5-line summary.'
+      'Produce the user\'s morning briefing. Check calendar, inbox, reminders, and write a 5-line summary.'
     );
     expect(got).toBeNull();
   });

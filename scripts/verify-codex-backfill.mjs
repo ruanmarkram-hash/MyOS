@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 
-const ROOT = '/Users/sc/HQ';
+const ROOT = process.env.PROJECT_ROOT || new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const env = Object.fromEntries(
   readFileSync(`${ROOT}/.env`, 'utf-8').split(/\r?\n/)
     .filter((l) => l && !l.startsWith('#') && l.includes('='))

@@ -50,7 +50,7 @@ describe('buildMemoryContextOb1', () => {
         'Captured: 4/23/2026',
         'Type: observation',
         'Topics: MyOS, Phase 2, AI',
-        'People: Ruan',
+        'People: the user',
         '',
         'Sage is testing the brain pipeline end to end.',
       ].join('\n'),

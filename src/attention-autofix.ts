@@ -105,12 +105,12 @@ function validAgentIds(): Set<string> {
   }
 }
 
-function hasExplicitRuanFlag(text: string): boolean {
-  return /\bRequires Ruan:\s*yes\b/i.test(text);
+function hasExplicitHumanFlag(text: string): boolean {
+  return /\bRequires human:\s*yes\b/i.test(text);
 }
 
 function hasHardHumanBlocker(text: string): boolean {
-  return /\b(?:ruan(?:'s)?\s+(?:approval|review|decision|input|confirmation|call)|ruan\s+(?:to|needs? to|must|should)\s+(?:reply|send|call|review|decide|approve|confirm|choose|log\s?in|login|re-?auth|authenticate|inspect|check)|needs?\s+(?:your\s+|ruan\s+)?review|your\s+(?:approval|review|decision|input|confirmation|call)|approve|sign[- ]?off|confirm(?:\s+approach)?|choose|decide|decision(?:\s+needed|\s+deferred)?|send\s+(?:the|this|email|message)|external account|admin account|device code|log\s?in|login|re-?auth|authenticate|refresh token|mfa|2fa|consent|payment|billing|bank|manual permission|full disk access|system settings|keychain password)\b/i.test(text);
+  return /\b(?:user(?:'s)?\s+(?:approval|review|decision|input|confirmation|call)|user\s+(?:to|needs? to|must|should)\s+(?:reply|send|call|review|decide|approve|confirm|choose|log\s?in|login|re-?auth|authenticate|inspect|check)|needs?\s+(?:your\s+|user\s+)?review|your\s+(?:approval|review|decision|input|confirmation|call)|approve|sign[- ]?off|confirm(?:\s+approach)?|choose|decide|decision(?:\s+needed|\s+deferred)?|send\s+(?:the|this|email|message)|external account|admin account|device code|log\s?in|login|re-?auth|authenticate|refresh token|mfa|2fa|consent|payment|billing|bank|manual permission|full disk access|system settings|keychain password)\b/i.test(text);
 }
 
 function hasActionableSignal(text: string): boolean {
@@ -135,8 +135,8 @@ function suggestedAgent(text: string): string | null {
   return match?.[1]?.toLowerCase() ?? null;
 }
 
-function explicitlyNoRuan(text: string): boolean {
-  return /\bRequires Ruan:\s*no\b/i.test(text);
+function explicitlyNoHuman(text: string): boolean {
+  return /\bRequires human:\s*no\b/i.test(text);
 }
 
 function hasAgentExecutableWork(text: string): boolean {
@@ -182,19 +182,19 @@ export function classifyAttentionItem(item: AttentionItem): AutofixDecision {
   const hinted = suggestedAgent(text);
   const hardHumanBlocker = hasHardHumanBlocker(text);
 
-  if (hardHumanBlocker || hasExternalActionBlocker(text) || (hasExplicitRuanFlag(text) && hasExplicitHumanReviewBlocker(text))) {
+  if (hardHumanBlocker || hasExternalActionBlocker(text) || (hasExplicitHumanFlag(text) && hasExplicitHumanReviewBlocker(text))) {
     return { action: 'keep', reason: 'requires a human decision, credential, approval, or manual permission' };
   }
 
-  if (hinted && agents.has(hinted) && explicitlyNoRuan(text)) {
+  if (hinted && agents.has(hinted) && explicitlyNoHuman(text)) {
     return { action: 'route', agentId: hinted, reason: 'structured action says the operator is not required and suggests an agent' };
   }
-  if (hinted && agents.has(hinted) && hasExplicitRuanFlag(text) && hasAgentExecutableWork(text)) {
+  if (hinted && agents.has(hinted) && hasExplicitHumanFlag(text) && hasAgentExecutableWork(text)) {
     return { action: 'route', agentId: hinted, reason: 'suggested agent can execute the work without a hard human blocker' };
   }
 
   const inferred = inferAgent(text);
-  if (inferred && agents.has(inferred) && (item.source_kind === 'mission' || item.source_kind === 'schedule' || explicitlyNoRuan(text) || isSystemFixRecommendation(text))) {
+  if (inferred && agents.has(inferred) && (item.source_kind === 'mission' || item.source_kind === 'schedule' || explicitlyNoHuman(text) || isSystemFixRecommendation(text))) {
     return { action: 'route', agentId: inferred, reason: 'agent-owned issue with no human blocker detected' };
   }
 

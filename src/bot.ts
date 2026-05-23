@@ -1411,7 +1411,7 @@ export function createBot(): Bot {
     }
     touchActivity();
 
-    // ── Sonke Hub pipeline reply interceptor ──────────────────────
+    // ── [YOUR PROJECT] pipeline reply interceptor ──────────────────────
     // If this is a Telegram-native reply to one of our pipeline
     // deliverable pings (human gate) AND the text contains a
     // pipeline keyword, forward to pipeline-webhook and stop here.

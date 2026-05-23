@@ -36,11 +36,11 @@ describe('scheduler prompt contracts', () => {
   });
 
   it('adds the structured attention action contract to scheduled agent tasks', () => {
-    const prompt = withScheduledTaskContract('Produce Ruan morning brief.');
+    const prompt = withScheduledTaskContract('Produce the user morning brief.');
 
     expect(prompt).toContain('ATTENTION_ACTIONS');
     expect(prompt).toContain('"suggested_agent"');
-    expect(prompt).toContain('"requires_ruan"');
+    expect(prompt).toContain('"requires_human"');
     expect(prompt).toContain('ATTENTION_ACTIONS: []');
   });
 

@@ -5,8 +5,8 @@
 # Why: `launchctl kickstart -k com.myos.main` SIGTERMs the live bot
 # process. If Sage runs that herself while replying to a Telegram message,
 # the message stream gets cut mid-flush and her final reply is dropped —
-# Ruan sees ~5 minutes of activity then nothing. Per CLAUDE.md the rule
-# is "tell Ruan to send /restart in Telegram" — this wrapper enforces it.
+# the user sees ~5 minutes of activity then nothing. Per CLAUDE.md the rule
+# is "tell the user to send /restart in Telegram" — this wrapper enforces it.
 #
 # Other launchctl operations (list, print, kickstart of OTHER agents) pass
 # through unchanged. Specifically:
@@ -38,7 +38,7 @@ safe-launchctl: REFUSED — cannot kickstart the main MyOS service from an
 agent session. SIGTERM'ing the live bot mid-reply drops the in-flight
 Telegram message and orphans the assistant turn in conversation_log.
 
-If you want the new code live, ask Ruan to send `/restart` in Telegram
+If you want the new code live, ask the user to send `/restart` in Telegram
 (per CLAUDE.md). The bot will pick up new code on its next natural
 restart anyway.
 

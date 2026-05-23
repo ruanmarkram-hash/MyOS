@@ -48,7 +48,7 @@ const conversations: AgentConvo[] = [
       { user: 'can you check what time it is in Bali right now', assistant: 'It is currently 2:30 AM in Bali (WITA, UTC+8).', expectStore: false, label: 'ephemeral query' },
       { user: 'I wake up at 6am EST every day. First thing I do is check Telegram, then email, then Slack. That is my morning order and I do not want it disrupted.', assistant: 'Morning routine: 6am EST, Telegram first, then email, then Slack. Will respect that order.', expectStore: true, label: 'routine/workflow' },
       { user: 'checkpoint', assistant: 'Checkpoint saved. Safe to /newchat.', expectStore: false, label: 'command' },
-      { user: 'I am building MyOS as an open source project. The repo is at ruanmarkram-hash/MyOS on GitHub. It is a Telegram bot powered by Claude Code that runs as a persistent service. I want it to become the reference implementation for personal AI assistants.', assistant: 'Noted. MyOS is your open-source reference implementation for personal AI assistants, living at ruanmarkram-hash/MyOS.', expectStore: true, label: 'project context' },
+      { user: 'I am building MyOS as an open source project. The repo is at <your-github-username>/MyOS on GitHub. It is a Telegram bot powered by Claude Code that runs as a persistent service. I want it to become the reference implementation for personal AI assistants.', assistant: 'Noted. MyOS is your open-source reference implementation for personal AI assistants, living at <your-github-username>/MyOS.', expectStore: true, label: 'project context' },
     ],
   },
 

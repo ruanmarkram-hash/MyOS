@@ -1,19 +1,12 @@
 # MyOS
 
-```
- ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗
-██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝
-██║     ██║     ███████║██║   ██║██║  ██║█████╗
-██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝
-╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗
- ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝╚══════╝
-
- ██████╗██╗      █████╗ ██╗    ██╗     ██████╗ ███████╗
-██╔════╝██║     ██╔══██╗██║    ██║    ██╔═══██╗██╔════╝
-██║     ██║     ███████║██║ █╗ ██║    ██║   ██║███████╗
-██║     ██║     ██╔══██║██║███╗██║    ██║   ██║╚════██║
-╚██████╗███████╗██║  ██║╚███╔███╔╝    ╚██████╔╝███████║
- ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝     ╚═════╝ ╚══════╝
+```text
+ __  __       ___  ____
+|  \/  |_   _/ _ \/ ___|
+| |\/| | | | | | | \___ \
+| |  | | |_| | |_| |___) |
+|_|  |_|\__, |\___/|____/
+        |___/
 ```
 
 > Your Claude Code CLI, delivered to your phone via Telegram.
@@ -21,7 +14,7 @@
 ### Getting Started
 
 ```bash
-git clone https://github.com/ruanmarkram-hash/MyOS.git
+git clone https://github.com/<your-github-username>/MyOS.git
 cd MyOS
 npm install
 npm run setup
@@ -119,7 +112,7 @@ Keep this token handy for the next step.
 ### Step 3: Clone and install
 
 ```bash
-git clone https://github.com/ruanmarkram-hash/MyOS.git
+git clone https://github.com/<your-github-username>/MyOS.git
 cd MyOS
 npm install
 ```
@@ -843,7 +836,7 @@ This is the critical step. You need to add permissions so the app can read and s
 1. Open your `.env` file in the MyOS project directory
 2. Add the token:
    ```
-   SLACK_USER_TOKEN=xoxp-your-token-here
+   SLACK_USER_TOKEN=<your-slack-user-token>
    ```
 3. Restart MyOS
 
@@ -2041,16 +2034,6 @@ cd .. && rm -rf MyOS
 ```
 
 This stops all background services, removes `~/.myos`, clears the SQLite database and session data, and wipes temp files. The final `rm -rf` deletes the repo itself.
-
----
-
-## Other channels
-
-The same `runAgent()` pattern in `src/agent.ts` works on any channel:
-
-- **[NanoClaw](https://github.com/qwibitai/nanoclaw)**: WhatsApp, isolated Linux containers
-- **[OpenClaw](https://github.com/openclaw/openclaw)**: Telegram, WhatsApp, Slack, Discord, iMessage, Signal, and more
-- **[TinyClaw](https://github.com/jlia0/tinyclaw)**: ~400 lines of shell, Claude Code + tmux, zero dependencies
 
 ---
 

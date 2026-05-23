@@ -403,7 +403,7 @@ supabase link --project-ref YOUR_PROJECT_REF
 Set your access key from Step 5:
 
 ```bash
-supabase secrets set MCP_ACCESS_KEY=your-access-key-from-step-5
+supabase secrets set MCP_ACCESS_KEY=<your-access-key-from-step-5>
 ```
 
 Set your OpenRouter key from Step 4:
@@ -585,7 +585,7 @@ supabase link --project-ref YOUR_PROJECT_REF
 Set your access key from Step 5:
 
 ```powershell
-supabase secrets set MCP_ACCESS_KEY=your-access-key-from-step-5
+supabase secrets set MCP_ACCESS_KEY=<your-access-key-from-step-5>
 ```
 
 Set your OpenRouter key from Step 4:

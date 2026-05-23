@@ -3,7 +3,7 @@
 graph_client.py - Shared MS Graph HTTP client for read/write operations.
 
 Standalone from msgraph_auth.py. Uses the same refresh token (stored in `pass`
-at sonke/ms-graph-refresh-token) but requests the broader scope set required
+at myos/ms-graph-refresh-token) but requests the broader scope set required
 for inbox management and calendar operations.
 
 Usage:
@@ -22,9 +22,9 @@ from typing import Optional
 
 import requests
 
-CLIENT_ID = os.environ.get("GRAPH_CLIENT_ID", "4938226d-531c-4334-b3a0-7b40058fc34e")
-TENANT_ID = os.environ.get("GRAPH_TENANT_ID", "4e4a54d8-0cc6-473f-baee-a99418c99ce6")
-PASS_KEY = "sonke/ms-graph-refresh-token"
+CLIENT_ID = os.environ.get("GRAPH_CLIENT_ID", "__GRAPH_CLIENT_ID__")
+TENANT_ID = os.environ.get("GRAPH_TENANT_ID", "__GRAPH_TENANT_ID__")
+PASS_KEY = "myos/ms-graph-refresh-token"
 
 # Broad scope set covering email management + calendar + meetings.
 # Grant was already done in Azure (admin consent click).

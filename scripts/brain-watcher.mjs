@@ -24,7 +24,7 @@ import { parseTurnPairs, stripInjectedContext, isJsonlIncluded } from './brain-w
 import { embed, vecLit, EMBED_DIM, EMBED_MODEL_NAME } from './lib/embed.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
-const ROOT = '/Users/sc/HQ';
+const ROOT = process.env.PROJECT_ROOT || new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 const CODEX_SESSIONS_DIR = join(homedir(), '.codex', 'archived_sessions');
 const VAULT_DIR = join(homedir(), 'workspace');
@@ -49,7 +49,7 @@ const GEMINI_FLASH_MODEL = 'gemini-2.5-flash';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 const VAULT_SKIP_DIRS = new Set(['.git', 'node_modules', '.obsidian', 'dist', '.next', '.cache', '__pycache__', '.vitepress', 'build']);
-const VAULT_SKIP_TOP = new Set(['sonke-hub-app', 'sonke-support', 'scratchpad']);
+const VAULT_SKIP_TOP = new Set(['scratchpad']);
 
 // ── Env / handles ───────────────────────────────────────────────────
 const env = Object.fromEntries(

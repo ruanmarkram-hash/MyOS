@@ -373,9 +373,9 @@ export const WARROOM_PORT = parseInt(
   10,
 );
 
-// ── Staff-intake pipeline (Sonke Hub) ───────────────────────────────
+// ── Staff-intake pipeline ([YOUR PROJECT]) ───────────────────────────────
 // When PIPELINE_ENABLED=true, the bot intercepts Telegram replies to
-// SonkeSage pipeline deliverable pings (human gates) and forwards the
+// ExampleAssistant pipeline deliverable pings (human gates) and forwards the
 // resolution to pipeline-webhook. Requires Supabase URL + service role
 // key so the bot can match telegram_message_id to an open gate and POST
 // the manual path with bearer auth.

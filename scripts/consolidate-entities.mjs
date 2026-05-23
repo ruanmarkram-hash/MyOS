@@ -4,12 +4,12 @@
 // Strategy (conservative, string-only — no LLM adjudication):
 // 1. Aggressive normalisation: lowercase, strip punctuation, collapse whitespace.
 //    Entities with the same (type, aggressive_key) are definitely the same thing
-//    ("Sonke Hub" vs "sonke-hub" vs "Sonke-Hub").
+//    ("[YOUR PROJECT]" vs "your-project" vs "Your Project").
 // 2. Alias containment: if A.canonical_name appears (case-insensitive) in B.aliases
 //    (or vice versa), they are the same thing.
 // 3. Token-subset with high overlap: if A's normalised tokens are a strict subset
 //    of B's AND A has <=2 mentions AND the types agree, merge A into B. This
-//    catches "Ruan" (1 token, 216 mentions) vs "Ruan Markram" (2 tokens, 72
+//    catches "the user" (1 token, 216 mentions) vs "[YOUR NAME]" (2 tokens, 72
 //    mentions) — but we keep the longer canonical name as survivor.
 //
 // For each merge:
@@ -25,7 +25,7 @@
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 
-const ROOT = '/Users/sc/HQ';
+const ROOT = process.env.PROJECT_ROOT || new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DRY_RUN = process.argv.includes('--dry-run');
 
 const env = Object.fromEntries(

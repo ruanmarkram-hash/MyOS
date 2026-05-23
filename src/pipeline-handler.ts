@@ -1,14 +1,14 @@
 // ============================================================
-// Pipeline reply handler (Sonke Hub staff-intake pipeline)
+// Pipeline reply handler ([YOUR PROJECT] staff-intake pipeline)
 //
-// Intercepts Telegram text replies on @SonkeSage_bot when the reply
+// Intercepts Telegram text replies on @ExampleAssistant_bot when the reply
 // targets a pipeline deliverable message we previously sent, and
 // forwards the resolution to the pipeline-webhook Edge Function.
 //
 // Scope (Q10 lock): human gates, errors, decisions only. URL-button
 // taps on the human-gate inline_keyboard go directly to the webhook
 // and never touch the bot runtime. This handler is the text-reply
-// complement for when Ruan types back instead of tapping.
+// complement for when the user types back instead of tapping.
 //
 // Shape contract, from supabase/functions/pipeline-webhook/index.ts:
 //   Path 4 (manual service-role POST):

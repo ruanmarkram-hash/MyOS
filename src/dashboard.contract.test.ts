@@ -634,7 +634,7 @@ describe('GET /api/home dashboard endpoints', () => {
 
   it('classifies brief slots from the scheduled prompt, not body wording', async () => {
     const now = Math.floor(Date.now() / 1000);
-    createScheduledTask('brief-evening', 'Produce Ruan evening wrap', '0 18 * * *', now + 3600, 'main');
+    createScheduledTask('brief-evening', 'Produce the user evening wrap', '0 18 * * *', now + 3600, 'main');
     updateTaskAfterRun('brief-evening', now + 86400, 'What landed this morning: shipped dashboard work', 'success');
 
     const res = await get('/api/home/briefs');
@@ -676,7 +676,7 @@ describe('GET /api/home dashboard endpoints', () => {
       sourceId: 'brief-running-mission',
       sourceKey: 'brief:brief-running-mission:workstatus-running',
       title: 'Fix Graph auth',
-      detail: 'Re-auth Sage-Cos before calendar briefs can run.',
+      detail: 'Re-auth your Graph app before calendar briefs can run.',
       severity: 'high',
       href: '/home',
     });
@@ -737,7 +737,7 @@ describe('GET /api/home dashboard endpoints', () => {
     updateTaskAfterRun(
       'brief-structured',
       now + 86400,
-      'ATTENTION_ACTIONS: [{"title":"Review Graph auth","detail":"Microsoft Graph auth expired; re-auth Sage-Cos before calendar briefs can run.","severity":"high","sourceCategory":"runtime","due":"today","requires_ruan":true,"confidence":0.91}]',
+      'ATTENTION_ACTIONS: [{"title":"Review Graph auth","detail":"Microsoft Graph auth expired; re-auth your Graph app before calendar briefs can run.","severity":"high","sourceCategory":"runtime","due":"today","requires_human":true,"confidence":0.91}]',
       'success',
     );
 
@@ -752,7 +752,7 @@ describe('GET /api/home dashboard endpoints', () => {
       detail: expect.stringContaining('Microsoft Graph auth expired'),
     });
     expect(item.detail).toContain('Due: today');
-    expect(item.detail).toContain('Requires Ruan: yes');
+    expect(item.detail).toContain('Requires human: yes');
     expect(item.detail).toContain('Confidence: 91%');
   });
 
@@ -762,7 +762,7 @@ describe('GET /api/home dashboard endpoints', () => {
     updateTaskAfterRun(
       'brief-generic-title',
       now + 86400,
-      'ATTENTION_ACTIONS: [{"title":"Morning brief","detail":"Tag contacts in ~/workspace/operations/email-triage/contacts-review.md with K/W/S/I flags to enable smart inbox filtering.","severity":"medium","sourceCategory":"brief","requires_ruan":true,"confidence":0.8}]',
+      'ATTENTION_ACTIONS: [{"title":"Morning brief","detail":"Tag contacts in ~/workspace/operations/email-triage/contacts-review.md with K/W/S/I flags to enable smart inbox filtering.","severity":"medium","sourceCategory":"brief","requires_human":true,"confidence":0.8}]',
       'success',
     );
 
@@ -782,7 +782,7 @@ describe('GET /api/home dashboard endpoints', () => {
       sourceId: 'brief-existing-generic',
       sourceKey: 'brief:brief-existing-generic:tag-contacts',
       title: 'Morning brief',
-      detail: 'Tag contacts in ~/workspace/operations/email-triage/contacts-review.md with K/W/S/I flags to enable smart inbox filtering.\nRequires Ruan: yes · Confidence: 80%',
+      detail: 'Tag contacts in ~/workspace/operations/email-triage/contacts-review.md with K/W/S/I flags to enable smart inbox filtering.\nRequires human: yes · Confidence: 80%',
       severity: 'low',
       href: '/home',
     });
@@ -887,13 +887,13 @@ describe('GET /api/home dashboard endpoints', () => {
     ]));
   });
 
-  it('auto-routes structured attention that explicitly does not need Ruan', async () => {
+  it('auto-routes structured attention that explicitly does not need the user', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-autofix-route', 'Morning brief', '0 9 * * *', now + 3600, 'main');
     updateTaskAfterRun(
       'brief-autofix-route',
       now + 86400,
-      'ATTENTION_ACTIONS: [{"title":"Fix CalDAV module","detail":"Scripts unavailable: missing caldav module. Install the dependency and rerun the Reminders digest smoke test.","severity":"high","sourceCategory":"runtime","suggested_agent":"mason","requires_ruan":false,"confidence":0.93}]',
+      'ATTENTION_ACTIONS: [{"title":"Fix CalDAV module","detail":"Scripts unavailable: missing caldav module. Install the dependency and rerun the Reminders digest smoke test.","severity":"high","sourceCategory":"runtime","suggested_agent":"mason","requires_human":false,"confidence":0.93}]',
       'success',
     );
 
@@ -915,13 +915,13 @@ describe('GET /api/home dashboard endpoints', () => {
     ]));
   });
 
-  it('auto-routes suggested-agent work even when a brief overstates Requires Ruan', async () => {
+  it('auto-routes suggested-agent work even when a brief overstates Requires human', async () => {
     const now = Math.floor(Date.now() / 1000);
-    createScheduledTask('brief-overstated-ruan', 'Evening brief', '0 18 * * *', now + 3600, 'main');
+    createScheduledTask('brief-overstated-user', 'Evening brief', '0 18 * * *', now + 3600, 'main');
     updateTaskAfterRun(
-      'brief-overstated-ruan',
+      'brief-overstated-user',
       now + 86400,
-      'ATTENTION_ACTIONS: [{"title":"Export Child Safety Charter PDF","detail":"Export ~/workspace/projects/sonke-hub/dry-run-4-deliverables/Child-Safety-Charter-DRAFT-v3-signed-branded.docx to PDF, upload to SharePoint, paste webUrl back.","severity":"medium","sourceCategory":"deliverable","suggested_agent":"mason","requires_ruan":true,"confidence":0.95}]',
+      'ATTENTION_ACTIONS: [{"title":"Export Child Safety Charter PDF","detail":"Export ~/workspace/projects/example-project/dry-run-4-deliverables/Child-Safety-Charter-DRAFT-v3-signed-branded.docx to PDF, upload to SharePoint, paste webUrl back.","severity":"medium","sourceCategory":"deliverable","suggested_agent":"mason","requires_human":true,"confidence":0.95}]',
       'success',
     );
 
@@ -946,7 +946,7 @@ describe('GET /api/home dashboard endpoints', () => {
     updateTaskAfterRun(
       'brief-decision-needed',
       now + 86400,
-      'ATTENTION_ACTIONS: [{"title":"Confirm OR merge approach","detail":"Codex recommended OR-merge in convert_prospect_to_client reconciliation should overwrite stale-true flags; brief forbade overwriting withdrawn-true. Confirm approach.","severity":"high","sourceCategory":"sonke-hub","suggested_agent":"mason","requires_ruan":true,"confidence":0.9}]',
+      'ATTENTION_ACTIONS: [{"title":"Confirm OR merge approach","detail":"Codex recommended OR-merge in convert_prospect_to_client reconciliation should overwrite stale-true flags; brief forbade overwriting withdrawn-true. Confirm approach.","severity":"high","sourceCategory":"example-project","suggested_agent":"mason","requires_human":true,"confidence":0.9}]',
       'success',
     );
 
@@ -959,13 +959,13 @@ describe('GET /api/home dashboard endpoints', () => {
     ]));
   });
 
-  it('keeps suggested-agent review work when Requires Ruan is explicit', async () => {
+  it('keeps suggested-agent review work when Requires human is explicit', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-review-human', 'Evening brief', '0 18 * * *', now + 3600, 'main');
     updateTaskAfterRun(
       'brief-review-human',
       now + 86400,
-      'ATTENTION_ACTIONS: [{"title":"Review draft intake policy","detail":"Review the draft intake policy and confirm whether it should replace the current version.","severity":"medium","sourceCategory":"policy","suggested_agent":"charter","requires_ruan":true,"confidence":0.9}]',
+      'ATTENTION_ACTIONS: [{"title":"Review draft intake policy","detail":"Review the draft intake policy and confirm whether it should replace the current version.","severity":"medium","sourceCategory":"policy","suggested_agent":"charter","requires_human":true,"confidence":0.9}]',
       'success',
     );
 
@@ -978,13 +978,13 @@ describe('GET /api/home dashboard endpoints', () => {
     ]));
   });
 
-  it('keeps bare suggested-agent review work when Requires Ruan is explicit', async () => {
+  it('keeps bare suggested-agent review work when Requires human is explicit', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-review-human-bare', 'Evening brief', '0 18 * * *', now + 3600, 'main');
     updateTaskAfterRun(
       'brief-review-human-bare',
       now + 86400,
-      'ATTENTION_ACTIONS: [{"title":"Review draft intake policy","detail":"Review draft intake policy.","severity":"medium","sourceCategory":"policy","suggested_agent":"charter","requires_ruan":true,"confidence":0.9}]',
+      'ATTENTION_ACTIONS: [{"title":"Review draft intake policy","detail":"Review draft intake policy.","severity":"medium","sourceCategory":"policy","suggested_agent":"charter","requires_human":true,"confidence":0.9}]',
       'success',
     );
 
@@ -1000,13 +1000,13 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(missions.tasks.map((task: any) => task.title)).not.toContain('Review draft intake policy');
   });
 
-  it('keeps external comms actions when Requires Ruan is explicit', async () => {
+  it('keeps external comms actions when Requires human is explicit', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-send-reply-human', 'Morning brief', '0 9 * * *', now + 3600, 'main');
     updateTaskAfterRun(
       'brief-send-reply-human',
       now + 86400,
-      'ATTENTION_ACTIONS: [{"title":"Reply to Lucas family","detail":"Write and send reply to the family.","severity":"medium","sourceCategory":"inbox","suggested_agent":"ember","requires_ruan":true,"confidence":0.9}]',
+      'ATTENTION_ACTIONS: [{"title":"Reply to Lucas family","detail":"Write and send reply to the family.","severity":"medium","sourceCategory":"inbox","suggested_agent":"ember","requires_human":true,"confidence":0.9}]',
       'success',
     );
 
@@ -1022,13 +1022,13 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(missions.tasks.map((task: any) => task.title)).not.toContain('Reply to Lucas family');
   });
 
-  it('keeps SMS actions when Requires Ruan is explicit', async () => {
+  it('keeps SMS actions when Requires human is explicit', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('brief-sms-human', 'Morning brief', '0 9 * * *', now + 3600, 'main');
     updateTaskAfterRun(
       'brief-sms-human',
       now + 86400,
-      'ATTENTION_ACTIONS: [{"title":"SMS Lucas family","detail":"Write SMS to Lucas family.","severity":"medium","sourceCategory":"inbox","suggested_agent":"ember","requires_ruan":true,"confidence":0.9}]',
+      'ATTENTION_ACTIONS: [{"title":"SMS Lucas family","detail":"Write SMS to Lucas family.","severity":"medium","sourceCategory":"inbox","suggested_agent":"ember","requires_human":true,"confidence":0.9}]',
       'success',
     );
 
@@ -1044,7 +1044,7 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(missions.tasks.map((task: any) => task.title)).not.toContain('SMS Lucas family');
   });
 
-  it('keeps external comms actions even when they omit explicit Requires Ruan metadata', async () => {
+  it('keeps external comms actions even when they omit explicit Requires human metadata', async () => {
     upsertAttentionItem({
       sourceKind: 'mission',
       sourceId: 'mission-external-comms',
@@ -1070,7 +1070,7 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(missions.tasks.map((task: any) => task.title)).not.toContain('SMS Lucas family failed');
   });
 
-  it('keeps plain message or text actions human-gated when they omit explicit Requires Ruan metadata', async () => {
+  it('keeps plain message or text actions human-gated when they omit explicit Requires human metadata', async () => {
     upsertAttentionItem({
       sourceKind: 'brief',
       sourceId: 'brief-message-human',
@@ -1118,7 +1118,7 @@ describe('GET /api/home dashboard endpoints', () => {
     ]));
   });
 
-  it('auto-routes system fix recommendations from briefs without explicit no-Ruan metadata', async () => {
+  it('auto-routes system fix recommendations from briefs without explicit no-the user metadata', async () => {
     upsertAttentionItem({
       sourceKind: 'brief',
       sourceId: 'brief-ob1-health',
@@ -1144,7 +1144,7 @@ describe('GET /api/home dashboard endpoints', () => {
     ]));
   });
 
-  it('auto-routes plain technical brief failures without explicit no-Ruan metadata', async () => {
+  it('auto-routes plain technical brief failures without explicit no-the user metadata', async () => {
     upsertAttentionItem({
       sourceKind: 'brief',
       sourceId: 'brief-imessage-db',
@@ -1170,13 +1170,13 @@ describe('GET /api/home dashboard endpoints', () => {
     ]));
   });
 
-  it('keeps system-looking brief items when they explicitly need Ruan', async () => {
+  it('keeps system-looking brief items when they explicitly need the user', async () => {
     upsertAttentionItem({
       sourceKind: 'brief',
       sourceId: 'brief-ob1-human',
       sourceKey: 'brief:brief-ob1-human:ob1-health',
       title: 'Other brief',
-      detail: '[ob1-brain-health]: monitor-brain returned exit 2. Requires Ruan: yes. Ruan to inspect the source export before ingestion is retried.',
+      detail: '[ob1-brain-health]: monitor-brain returned exit 2. Requires human: yes. the user to inspect the source export before ingestion is retried.',
       severity: 'high',
       href: '/home',
     });
@@ -1185,7 +1185,7 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(attention.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
         title: '[ob1-brain-health]: monitor-brain returned exit 2',
-        detail: expect.stringContaining('Requires Ruan: yes'),
+        detail: expect.stringContaining('Requires human: yes'),
       }),
     ]));
   });
@@ -1196,7 +1196,7 @@ describe('GET /api/home dashboard endpoints', () => {
       sourceId: 'brief-human-reply',
       sourceKey: 'brief:brief-human-reply:reply',
       title: 'Morning brief',
-      detail: 'Fix recommendation: Ruan to reply to Lucas contact form before Ember drafts the follow-up.',
+      detail: 'Fix recommendation: the user to reply to Lucas contact form before Ember drafts the follow-up.',
       severity: 'medium',
       href: '/home',
     });
@@ -1204,8 +1204,8 @@ describe('GET /api/home dashboard endpoints', () => {
     const attention = await jsonOf(await get('/api/home/attention'));
     expect(attention.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        title: 'Fix recommendation: Ruan to reply to Lucas contact form before Ember drafts the follow-up',
-        detail: expect.stringContaining('Ruan to reply to Lucas'),
+        title: 'Fix recommendation: the user to reply to Lucas contact form before Ember drafts the follow-up',
+        detail: expect.stringContaining('the user to reply to Lucas'),
       }),
     ]));
   });
@@ -1251,7 +1251,7 @@ describe('GET /api/home dashboard endpoints', () => {
       now + 86400,
       [
         '**Microsoft Graph auth expired**',
-        'Calendar, email, and tasks unavailable. The MS app consent lapsed. Need to re-auth the Sage-Cos app.',
+        'Calendar, email, and tasks unavailable. The MS app consent lapsed. Need to re-auth the your Graph app app.',
       ].join('\n'),
       'success',
     );
@@ -1261,7 +1261,7 @@ describe('GET /api/home dashboard endpoints', () => {
     const body = await jsonOf(res);
     const details = body.items.map((item: any) => item.detail);
     expect(details).toContain('Microsoft Graph auth expired');
-    expect(details).toContain('Calendar, email, and tasks unavailable. The MS app consent lapsed. Need to re-auth the Sage-Cos app.');
+    expect(details).toContain('Calendar, email, and tasks unavailable. The MS app consent lapsed. Need to re-auth the your Graph app app.');
     expect(body.items.filter((item: any) => item.source === 'brief').every((item: any) => item.id.startsWith('attention:'))).toBe(true);
   });
 
@@ -1378,14 +1378,14 @@ describe('GET /api/home dashboard endpoints', () => {
     const missions = await jsonOf(await get('/api/mission/tasks'));
     expect(missions.tasks.map((task: any) => task.title)).toContain('Draft Lucas inquiry response');
     const created = missions.tasks.find((task: any) => task.title === 'Draft Lucas inquiry response');
-    expect(created.prompt).toContain('Additional instructions from Ruan');
+    expect(created.prompt).toContain('Additional instructions from the user');
     expect(created.prompt).toContain('Prioritise the Lucas contact form');
   });
 
   it('carries steering instructions when assigning a scheduled attention item', async () => {
     const now = Math.floor(Date.now() / 1000);
     createScheduledTask('schedule-steering', 'Run a full workspace health audit', '0 * * * *', now - 3600, 'warden');
-    updateTaskAfterRun('schedule-steering', now + 3600, 'Requires Ruan: yes. Credential drift needs review before retry.', 'failed');
+    updateTaskAfterRun('schedule-steering', now + 3600, 'Requires human: yes. Credential drift needs review before retry.', 'failed');
 
     const before = await jsonOf(await get('/api/home/attention'));
     const item = before.items.find((entry: any) => entry.id === 'schedule:schedule-steering:last-status');
@@ -1399,7 +1399,7 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(assign.status).toBe(201);
     const body = await jsonOf(assign);
     const created = getMissionTask(body.task.id);
-    expect(created?.prompt).toContain('Additional instructions from Ruan');
+    expect(created?.prompt).toContain('Additional instructions from the user');
     expect(created?.prompt).toContain('Check Graph auth before retrying');
   });
 
@@ -1595,7 +1595,7 @@ describe('GET /api/home dashboard endpoints', () => {
     updateTaskAfterRun(
       'brief-old-terminal-cover',
       now + 86400,
-      'Scripts unavailable (missing `caldav` module). Requires Ruan: yes. Ruan to inspect the Reminders account permission before retrying.',
+      'Scripts unavailable (missing `caldav` module). Requires human: yes. the user to inspect the Reminders account permission before retrying.',
       'success',
     );
     createMissionTask('m-old-reminders', 'Fix Reminders CalDAV auth', 'fix reminders', 'warden', 'dashboard', 8);
@@ -1607,7 +1607,7 @@ describe('GET /api/home dashboard endpoints', () => {
     expect(body.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
         title: 'Scripts unavailable (missing `caldav` module)',
-        detail: expect.stringContaining('Requires Ruan: yes'),
+        detail: expect.stringContaining('Requires human: yes'),
       }),
     ]));
   });
@@ -1976,7 +1976,7 @@ describe('GET /api/review/inbox', () => {
       body: JSON.stringify({ instruction: 'Use the smaller scope and report blockers first.' }),
     });
     expect(res.status).toBe(200);
-    expect(getMissionTask('m-steer')?.prompt).toContain('Additional instructions from Ruan:');
+    expect(getMissionTask('m-steer')?.prompt).toContain('Additional instructions from the user:');
     expect(getMissionTask('m-steer')?.prompt).toContain('Use the smaller scope');
   });
 
@@ -2120,7 +2120,7 @@ describe('GET /api/review/inbox', () => {
     expect(getMissionManifest(getMissionTask('m-dev-deliverable-word')!)).toMatchObject({ route: 'sorted' });
   });
 
-  it('does not treat generic Codex review wording as a Ruan review decision', async () => {
+  it('does not treat generic Codex review wording as a the user review decision', async () => {
     createMissionTask('m-codex-review-history', 'Close Codex review findings', 'address Codex review notes', 'mason', 'dashboard', 4);
     completeMissionTask('m-codex-review-history', 'Codex review fixes landed and tests passed.', 'completed');
 
@@ -2130,14 +2130,14 @@ describe('GET /api/review/inbox', () => {
     expect(body.items.map((item: any) => item.id)).not.toContain('m-codex-review-history');
   });
 
-  it('does not show completed Mason work just because it mentions Ruan in the result', async () => {
-    createMissionTask('m-mason-ruan-history', 'Build internal thing', 'do code work', 'mason', 'dashboard', 4);
-    completeMissionTask('m-mason-ruan-history', 'Done. Ruan can inspect the commit later if needed.', 'completed');
+  it('does not show completed Mason work just because it mentions the user in the result', async () => {
+    createMissionTask('m-mason-user-history', 'Build internal thing', 'do code work', 'mason', 'dashboard', 4);
+    completeMissionTask('m-mason-user-history', 'Done. the user can inspect the commit later if needed.', 'completed');
 
     const res = await get('/api/review/inbox?limit=10');
     expect(res.status).toBe(200);
     const body = await jsonOf(res);
-    expect(body.items.map((item: any) => item.id)).not.toContain('m-mason-ruan-history');
+    expect(body.items.map((item: any) => item.id)).not.toContain('m-mason-user-history');
   });
 
   it('creates a child mission with review instructions and moves parent to waiting_followup', async () => {
@@ -2259,10 +2259,10 @@ describe('GET /api/review/inbox', () => {
   });
 
   // ── Three-category surfacing rules (2026-05-06) ───────────────────────
-  // A: needs Ruan's action  →  kind='needs_action'
+  // A: needs the user's action  →  kind='needs_action'
   // B: he asked, it landed  →  kind='sorted'
   // C: agent-to-agent       →  hidden
-  it('Category A: surfaces a completed mason mission whose result asks for Ruan to send', async () => {
+  it('Category A: surfaces a completed mason mission whose result asks for the user to send', async () => {
     createMissionTask('m-cat-a-mason', 'Draft outreach email', 'write email', 'mason', 'main', 5);
     completeMissionTask('m-cat-a-mason', 'Draft ready. Awaiting your review before sending.', 'completed');
 
@@ -2284,8 +2284,8 @@ describe('GET /api/review/inbox', () => {
     expect(item.kind).toBe('needs_action');
   });
 
-  it('Category B: surfaces a Ruan-asked completion (created_by=main) as sorted ✓', async () => {
-    createMissionTask('m-cat-b-direct', 'Fix the dashboard bug Ruan flagged', 'fix bug', 'mason', 'main', 5);
+  it('Category B: surfaces a the user-asked completion (created_by=main) as sorted ✓', async () => {
+    createMissionTask('m-cat-b-direct', 'Fix the dashboard bug the user flagged', 'fix bug', 'mason', 'main', 5);
     completeMissionTask('m-cat-b-direct', 'Done. Bug fixed and tests passed.', 'completed');
 
     const res = await get('/api/review/inbox?limit=50');
@@ -2313,12 +2313,12 @@ describe('GET /api/review/inbox', () => {
     expect(item.kind).toBe('sorted');
   });
 
-  it('Category B: lineage trace — child completion of a Ruan-originated parent is sorted ✓', async () => {
-    createMissionTask('m-parent-ruan', 'Original ask from Ruan', 'do thing', 'mason', 'main', 5);
+  it('Category B: lineage trace — child completion of a user-originated parent is sorted ✓', async () => {
+    createMissionTask('m-parent-user', 'Original ask from the user', 'do thing', 'mason', 'main', 5);
     createMissionTask(
       'm-cat-b-child',
-      'Follow up: Original ask from Ruan',
-      'Source mission: m-parent-ruan\nReassigned with extra notes.',
+      'Follow up: Original ask from the user',
+      'Source mission: m-parent-user\nReassigned with extra notes.',
       'mason',
       'review-inbox',
       5,
@@ -2332,7 +2332,7 @@ describe('GET /api/review/inbox', () => {
     expect(item.kind).toBe('sorted');
   });
 
-  it('Category C: hides routine agent-to-agent completion with no Ruan-facing breadcrumb', async () => {
+  it('Category C: hides routine agent-to-agent completion with no user-facing breadcrumb', async () => {
     createMissionTask('m-cat-c-internal', 'Refactor internal helper', 'do code work', 'mason', 'mason', 4);
     completeMissionTask('m-cat-c-internal', 'Refactor done. Tests green.', 'completed');
 
@@ -2510,7 +2510,7 @@ describe('POST /api/review/tasks/:id/email', () => {
       { REVIEW_EXPORT_EMAIL: undefined },
       {
         OWNER_EMAIL: 'owner@example.com',
-        RUAN_EMAIL: 'personal@example.com',
+        USER_EMAIL: 'personal@example.com',
         APPLE_ID_EMAIL: 'apple@example.com',
         GRAPH_USER_EMAIL: 'graph@example.com',
         MSGRAPH_USER_EMAIL: 'msgraph@example.com',

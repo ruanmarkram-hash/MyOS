@@ -67,7 +67,7 @@ const NOTIFY_TIMEOUT_MS = 10_000;
 /**
  * Escape the five characters Telegram's HTML parse mode treats as markup.
  * Without this, a task title or result containing `<a href="evil">click</a>`
- * renders as a real link in Ruan's chat.
+ * renders as a real link in the user's chat.
  *
  * Telegram only requires `&`, `<`, `>` to be escaped in text bodies; quotes
  * are escaped defensively to keep the output safe if the message is ever

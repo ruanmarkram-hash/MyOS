@@ -26,14 +26,14 @@ export interface MissionManifest {
 }
 
 const HUMAN_ACTION_PATTERN = new RegExp([
-  'needs? (?:your|ruan)',
-  'requires? (?:your|ruan|approval|review|sign[- ]?off|input|decision|attention|confirmation|authori[sz]ation)',
-  'awaiting (?:you|your|ruan|review|approval|sign[- ]?off|decision|confirmation|input|response)',
-  'waiting (?:on|for) (?:you|ruan|your)',
-  'blocked (?:on|by) (?:you|ruan)',
-  'pending (?:your|ruan|approval|review|sign[- ]?off|decision|confirmation)',
+  'needs? (?:your|user)',
+  'requires? (?:your|user|approval|review|sign[- ]?off|input|decision|attention|confirmation|authori[sz]ation)',
+  'awaiting (?:you|your|user|review|approval|sign[- ]?off|decision|confirmation|input|response)',
+  'waiting (?:on|for) (?:you|user|your)',
+  'blocked (?:on|by) (?:you|user)',
+  'pending (?:your|user|approval|review|sign[- ]?off|decision|confirmation)',
   'please (?:review|send|sign|approve|confirm|decide|choose|grant|authori[sz]e|check|provide)',
-  'ready (?:for you|to send|to sign|for review|for approval|for your review|for ruan)',
+  'ready (?:for you|to send|to sign|for review|for approval|for your review|for user)',
   'action required',
   'action needed',
   'manual (?:step|action|fix|refresh|intervention)',
@@ -50,7 +50,7 @@ const HUMAN_ACTION_PATTERN = new RegExp([
 ].join('|'), 'i');
 
 const DELIVERABLE_HINT_PATTERN = /(deliverable|handoff|review pack|prepared|draft|response|audit|compliance|support plan|restrictive practice|charter|inquiry|letter|policy|document)/i;
-const NO_HUMAN_ACTION_PATTERN = /\b(?:no|none|without)\s+(?:human\s+|manual\s+|your\s+|ruan\s+)?(?:action|review|approval|follow[- ]?up|intervention)\s+(?:required|needed|pending)|\bno\s+(?:deliverable|human action|manual action|review)\b/i;
+const NO_HUMAN_ACTION_PATTERN = /\b(?:no|none|without)\s+(?:human\s+|manual\s+|your\s+|user\s+)?(?:action|review|approval|follow[- ]?up|intervention)\s+(?:required|needed|pending)|\bno\s+(?:deliverable|human action|manual action|review)\b/i;
 
 function compactText(text: string, limit: number): string {
   const cleaned = text.replace(/\s+/g, ' ').trim();

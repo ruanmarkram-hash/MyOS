@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import pg from 'pg';
 import { embed, vecLit, EMBED_DIM, EMBED_MODEL_NAME } from './lib/embed.mjs';
 
-const ROOT = '/Users/sc/HQ';
+const ROOT = process.env.PROJECT_ROOT || new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const VAULT = join(homedir(), 'workspace');
 const CHUNK_CHARS = 4000;           // aim for ~1000 tokens per chunk
 const CHUNK_OVERLAP = 400;
@@ -26,8 +26,6 @@ const SKIP_DIRS = new Set([
   '__pycache__', '.vitepress', 'build',
 ]);
 const SKIP_FOLDERS_REL = new Set([
-  'sonke-hub-app',    // full code tree, already in git
-  'sonke-support',    // legacy code tree
   'scratchpad',       // ephemeral
 ]);
 

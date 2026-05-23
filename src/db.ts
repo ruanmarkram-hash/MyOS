@@ -3091,7 +3091,7 @@ export function appendMissionTaskInstruction(id: string, instruction: string): M
   const nextPrompt = [
     task.prompt,
     '',
-    'Additional instructions from Ruan:',
+    'Additional instructions from the user:',
     clean,
   ].join('\n').slice(0, 12000);
   db.prepare(
@@ -3769,7 +3769,7 @@ export function claimDueTelegramOutbox(limit = 20, agentId?: string): TelegramOu
   // tick on its own process and delivers via its own bot token. Without
   // an agent_id filter, agents race each other for any pending row and
   // send via the WRONG bot — caught 2026-05-05 when Mason's tick beat
-  // main's tick to the morning brief and delivered it via @SonkeMason_bot
+  // main's tick to the morning brief and delivered it via @ExampleMason_bot
   // instead of main's bot. agentId is optional only so the legacy unit
   // tests that don't run a real bot keep working; production callers
   // (tickTelegramOutbox) always pass it.

@@ -36,7 +36,7 @@ cd ~/HQ && npm start
 1. Open Telegram, search for **@BotFather**
 2. Send `/newbot`
 3. Choose a name (e.g. "HQ" or "MyOS")
-4. Choose a username ending in `bot` (e.g. `ruan_hq_bot`)
+4. Choose a username ending in `bot` (e.g. `myos_assistant_bot`)
 5. BotFather gives you a token like `123456789:AAF...`
 6. Copy it — you'll paste it into `.env` at your desk
 

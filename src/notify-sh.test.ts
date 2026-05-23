@@ -47,7 +47,7 @@ describe('notify.sh durability', () => {
     mkdirSync(scriptsDir, { recursive: true });
     copyFileSync(SCRIPT, join(scriptsDir, 'notify.sh'));
     chmodSync(join(scriptsDir, 'notify.sh'), 0o755);
-    writeFileSync(join(tmp, '.env'), 'TELEGRAM_BOT_TOKEN=000:DEFINITELY_INVALID\nALLOWED_CHAT_ID=1\n');
+    writeFileSync(join(tmp, '.env'), 'TELEGRAM_BOT_TOKEN=<invalid-test-token>\nALLOWED_CHAT_ID=<test-chat-id>\n');
     const r = spawnSync('bash', [join(scriptsDir, 'notify.sh'), 'hi', '1'], { encoding: 'utf8' });
     expect(r.status).not.toBe(0);
     // Confirm we surfaced an error message (telegram-side or curl-side).

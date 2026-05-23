@@ -13,14 +13,13 @@ import { readFileSync } from 'node:fs';
 // only fires when the watcher actually skipped data it should have ingested.)
 //
 // Folder names come from `~/.claude/projects/<dir>` where Claude Code encodes
-// the project cwd by replacing slashes with hyphens (e.g. `/Users/sc/HQ` →
-// `-Users-sc-HQ`).
+// the project cwd by replacing slashes with hyphens.
 export function isJsonlIncluded(folderName) {
   if (folderName.includes('claude-worktrees')) return false;
   const stripped = folderName.replace(/^-Users-[^-]+-?-?/, '').replace(/^-/, '');
   if (stripped === '') return true;
   if (/^HQ(-|$)/.test(stripped)) return true;
-  if (/^sonke-hub/.test(stripped)) return true;
+  if (/^myos/.test(stripped)) return true;
   if (/^openclaw/.test(stripped)) return true;
   return false;
 }

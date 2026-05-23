@@ -5,8 +5,10 @@
 
 process.env.BRAIN = 'ob1';
 
+const ROOT = process.env.PROJECT_ROOT || new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+
 const { pingBrain, captureThought, searchThoughts, brainEnabled } =
-  await import('/Users/sc/HQ/dist/brain/client.js');
+  await import(`${ROOT}/dist/brain/client.js`);
 
 function fail(msg) {
   console.error(`FAIL: ${msg}`);

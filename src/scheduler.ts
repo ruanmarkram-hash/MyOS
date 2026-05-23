@@ -708,7 +708,7 @@ function snapshotAndPushMissionBranch(wt: MissionWorktree): boolean {
 /**
  * Prefix injected at the top of every mission prompt that runs inside a
  * worktree. Tells the agent (a) where it's running, (b) which branch its
- * commits go on, and (c) NOT to cd back to /Users/sc/HQ — that would
+ * commits go on, and (c) NOT to cd back to <project-root> — that would
  * defeat the isolation. The merge step is handled by the scheduler.
  */
 function buildWorktreePromptHeader(wt: MissionWorktree, missionId: string): string {
@@ -719,9 +719,9 @@ function buildWorktreePromptHeader(wt: MissionWorktree, missionId: string): stri
     `On branch:`,
     `  ${wt.branch}`,
     `Rules:`,
-    `  • Do NOT cd to /Users/sc/HQ or any other path. Stay in this worktree.`,
+    `  • Do NOT cd to <project-root> or any other path. Stay in this worktree.`,
     `  • Commit your work to this branch. Do NOT push — the scheduler pushes and fast-forwards main after you finish.`,
-    `  • The shared /Users/sc/HQ tree is read by 5 other agents simultaneously; moving its HEAD breaks them.`,
+    `  • The shared <project-root> tree is read by 5 other agents simultaneously; moving its HEAD breaks them.`,
     `  • Mission id: ${missionId}`,
     ``,
     `Mission brief follows:`,
@@ -750,8 +750,8 @@ Use absolute file paths for real deliverables. If a promised file was not create
 const ATTENTION_ACTIONS_CONTRACT = `
 
 Attention action contract:
-If this output contains items Ruan or another agent needs to act on, include one line near the end:
-ATTENTION_ACTIONS: [{"title":"short action","detail":"full action and context","severity":"high|medium|low","sourceCategory":"brief|calendar|inbox|mission|runtime|reliability","suggested_agent":"main|charter|ember|marlow|mason|warden|null","due":"ISO date/time or natural due text, or null","requires_ruan":true|false,"confidence":0.0}]
+If this output contains items the user or another agent needs to act on, include one line near the end:
+ATTENTION_ACTIONS: [{"title":"short action","detail":"full action and context","severity":"high|medium|low","sourceCategory":"brief|calendar|inbox|mission|runtime|reliability","suggested_agent":"main|charter|ember|marlow|mason|warden|null","due":"ISO date/time or natural due text, or null","requires_human":true|false,"confidence":0.0}]
 If there are no action items, include exactly:
 ATTENTION_ACTIONS: []
 `.trim();

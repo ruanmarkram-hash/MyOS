@@ -33,8 +33,8 @@ class MSGraphAuth:
     """Persistent MS Graph authentication handler with pass (GPG) token storage."""
 
     # Azure app config (env vars override hardcoded defaults)
-    CLIENT_ID = os.environ.get("GRAPH_CLIENT_ID", "4938226d-531c-4334-b3a0-7b40058fc34e")
-    TENANT_ID = os.environ.get("GRAPH_TENANT_ID", "4e4a54d8-0cc6-473f-baee-a99418c99ce6")
+    CLIENT_ID = os.environ.get("GRAPH_CLIENT_ID", "__GRAPH_CLIENT_ID__")
+    TENANT_ID = os.environ.get("GRAPH_TENANT_ID", "__GRAPH_TENANT_ID__")
     AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
     SCOPES = [
         "https://graph.microsoft.com/Mail.Send",
@@ -43,7 +43,7 @@ class MSGraphAuth:
     ]
 
     # Credential store (pass, GPG-encrypted CLI)
-    PASS_KEY = "sonke/ms-graph-refresh-token"
+    PASS_KEY = "myos/ms-graph-refresh-token"
 
     # Token refresh buffer (refresh if expiry < 5 min away)
     REFRESH_BUFFER_SECONDS = 300

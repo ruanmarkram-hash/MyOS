@@ -8,7 +8,7 @@ confirmation for that specific send.
 
 ## Architecture
 
-Two parallel clients sharing the same refresh token (`pass: sonke/ms-graph-refresh-token`):
+Two parallel clients sharing the same refresh token (`pass: myos/ms-graph-refresh-token`):
 
 - **`msgraph_auth.py`** — original MSAL-based client (token refresh + send email). Untouched.
 - **`graph_client.py`** — new HTTP-based client with broad scopes for inbox + calendar management. Used by all `read_inbox.py`, `reply_email.py`, `manage_email.py`, `calendar_ops.py`, `availability.py`.
@@ -127,8 +127,8 @@ Well-known names accepted by `--folder`: `inbox`, `archive`, `sentitems`, `draft
 
 | Var | Notes |
 |-----|-------|
-| `GRAPH_CLIENT_ID` | Defaults to Sage-Cos app |
-| `GRAPH_TENANT_ID` | Defaults to Sonke tenant |
+| `GRAPH_CLIENT_ID` | Defaults to [YOUR APP NAME] app |
+| `GRAPH_TENANT_ID` | Defaults to [YOUR ORGANIZATION] tenant |
 | `GRAPH_REFRESH_TOKEN` | Fallback if `pass` unavailable |
 
 ## Dependencies

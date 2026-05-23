@@ -3,15 +3,16 @@
 # Called by com.myos.brain-backup launchd plist every Sunday 03:00.
 
 set -uo pipefail
-cd /Users/sc/HQ
+ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+cd "$ROOT"
 
-BACKUP_DIR=/Users/sc/HQ/store/brain-backups
-LOG=/Users/sc/HQ/logs/brain-backup.log
+BACKUP_DIR="$ROOT/store/brain-backups"
+LOG="$ROOT/logs/brain-backup.log"
 mkdir -p "$BACKUP_DIR"
 
 # Export the env vars the vendored script expects
 set -a
-source /Users/sc/HQ/.env
+source "$ROOT/.env"
 set +a
 export SUPABASE_URL="$OB1_SUPABASE_URL"
 export SUPABASE_SERVICE_ROLE_KEY="$OB1_SUPABASE_SERVICE_KEY"
@@ -21,7 +22,7 @@ RUN_DIR="$BACKUP_DIR/$TS"
 mkdir -p "$RUN_DIR"
 cd "$RUN_DIR"
 
-OUT=$(/opt/homebrew/bin/node /Users/sc/HQ/vendor/ob1/recipes/brain-backup/backup-brain.mjs 2>&1)
+OUT=$(/opt/homebrew/bin/node "$ROOT/vendor/ob1/recipes/brain-backup/backup-brain.mjs" 2>&1)
 CODE=$?
 
 {
@@ -38,7 +39,7 @@ done
 
 # Only alert on failure; silent on success
 if [ "$CODE" -ne 0 ]; then
-  bash /Users/sc/HQ/scripts/notify.sh "brain-backup FAILED exit=$CODE — see $LOG"
+  bash "$ROOT/scripts/notify.sh" "brain-backup FAILED exit=$CODE — see $LOG"
 fi
 
 exit "$CODE"

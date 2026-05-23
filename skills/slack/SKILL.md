@@ -37,7 +37,7 @@ You need a `SLACK_USER_TOKEN` in your MyOS `.env` file. If you haven't set this 
 
 7. Scroll back up, click **Install to Workspace**, then click **Allow**
 8. Copy the **User OAuth Token** (starts with `xoxp-`)
-9. Add to your `.env`: `SLACK_USER_TOKEN=xoxp-your-token-here`
+9. Add to your `.env`: `SLACK_USER_TOKEN=<your-slack-user-token>`
 
 ## Setup
 

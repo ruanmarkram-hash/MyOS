@@ -18,8 +18,8 @@ import warnings
 warnings.filterwarnings('ignore', message='.*urllib3.*OpenSSL.*')
 import sys, os
 sys.path.insert(0, '$SCRIPT_DIR')
-os.environ.setdefault('GRAPH_CLIENT_ID', '4938226d-531c-4334-b3a0-7b40058fc34e')
-os.environ.setdefault('GRAPH_TENANT_ID', '4e4a54d8-0cc6-473f-baee-a99418c99ce6')
+os.environ.setdefault('GRAPH_CLIENT_ID', '__GRAPH_CLIENT_ID__')
+os.environ.setdefault('GRAPH_TENANT_ID', '__GRAPH_TENANT_ID__')
 
 from msgraph_auth import MSGraphAuth
 auth = MSGraphAuth()

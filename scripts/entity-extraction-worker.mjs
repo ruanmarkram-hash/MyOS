@@ -7,7 +7,7 @@
 import { readFileSync, appendFileSync } from 'node:fs';
 import pg from 'pg';
 
-const ROOT = '/Users/sc/HQ';
+const ROOT = process.env.PROJECT_ROOT || new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const LOG_PATH = `${ROOT}/logs/entity-worker.log`;
 const WORKER_VERSION = 'entity-worker-gemini-v1';
 
@@ -42,7 +42,7 @@ Relations (lowercase): works_on, uses, related_to, member_of, located_in, co_occ
 
 Rules:
 - Only entities that are EXPLICITLY named in the text. No inference, no generic concepts.
-- Canonical name should match what appears in the text, cleaned (e.g. "Sonke Hub" not "sonke_hub", "Ruan Markram" not just "Ruan" if the fuller name appears; collect alternate forms into aliases).
+- Canonical name should match what appears in the text, cleaned (e.g. "[YOUR PROJECT]" not "project_slug", "[YOUR NAME]" not just "the user" if the fuller name appears; collect alternate forms into aliases).
 - aliases: other surface forms seen in this text only.
 - Tools: libraries, frameworks, databases, APIs, services. NOT generic verbs.
 - Topics: short concept tags only when they are the SUBJECT of the thought (e.g. "NDIS compliance", "memory architecture"). Skip noisy topics.

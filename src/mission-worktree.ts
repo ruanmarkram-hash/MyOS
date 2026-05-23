@@ -2,7 +2,7 @@
  * mission-worktree — per-mission git worktree isolation.
  *
  * THE PROBLEM (2026-05-04 — discovered overnight):
- * Every Mason mission used to run in /Users/sc/HQ as cwd. When a mission did
+ * Every Mason mission used to run in <project-root> as cwd. When a mission did
  * `git checkout feature-branch`, every other agent (sage, warden, charter,
  * ember, marlow) saw the new HEAD because they all share the same working
  * tree. That caused:
@@ -13,9 +13,9 @@
  *
  * THE FIX (this module):
  * Each mission gets its own isolated git worktree at
- * /Users/sc/HQ/.worktrees/mission-<id>/, cut off the latest origin/main,
+ * <project-root>/.worktrees/mission-<id>/, cut off the latest origin/main,
  * on a dedicated branch `mission-<id>`. The Mason runtime process keeps its
- * cwd at /Users/sc/HQ; only the mission's Claude Code subprocess sees the
+ * cwd at <project-root>; only the mission's Claude Code subprocess sees the
  * worktree path. The shared HEAD never moves while a mission runs.
  *
  * Cleanup: removed (force) when the mission terminates (any status). A

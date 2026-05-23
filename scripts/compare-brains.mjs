@@ -10,10 +10,10 @@ import { embed as embedShared } from './lib/embed.mjs';
 process.env.BRAIN = 'ob1';
 
 const QUERIES = [
-  'What do I know about Sonke Hub?',
+  'What do I know about [YOUR PROJECT]?',
   "What's my em-dash rule?",
-  "What's the Sonke Hub canonical URL?",
-  'Who is Ruan and what does he work on?',
+  "What's the [YOUR PROJECT] canonical URL?",
+  'Who is the user and what does he work on?',
   "What's the workspace layout under ~/workspace/?",
   'How do I restart Sage?',
   "What's the Supabase SQL access pattern?",
@@ -21,14 +21,14 @@ const QUERIES = [
   "What's in the mock data cleanup sprint?",
   "What's the CLAUDECODE env scrub fix?",
   "What's the root-cause feedback rule?",
-  "What's the next major Sonke Hub feature?",
+  "What's the next major [YOUR PROJECT] feature?",
   "What's the SharePoint companion CSV pattern?",
   "What's the context discipline feedback?",
-  "What's the Sonke Hub state as of April 21?",
+  "What's the [YOUR PROJECT] state as of April 21?",
 ];
 
 // Load chat_id from sessions
-const ROOT = '/Users/sc/HQ';
+const ROOT = process.env.PROJECT_ROOT || new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DB_PATH = `${ROOT}/store/myos.db`;
 const envText = readFileSync(`${ROOT}/.env`, 'utf-8');
 const env = Object.fromEntries(

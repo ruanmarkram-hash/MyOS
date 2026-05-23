@@ -91,14 +91,14 @@ while IFS=$'\t' read -r id title level permalink; do
   echo "| $now | $id | $escaped_title | (pending) | open |" >> "$LOG_FILE"
 
   # Dispatch mission task to Mason
-  brief="Sentry error detected in Sonke Hub. Issue ID: $id. Level: $level. Title: $title. Permalink: $permalink.
+  brief="Sentry error detected in [YOUR PROJECT]. Issue ID: $id. Level: $level. Title: $title. Permalink: $permalink.
 
 Fetch the full stack trace: curl -sS -H \"Authorization: Bearer \$SENTRY_AUTH_TOKEN\" \"\$SENTRY_API/issues/$id/events/latest/\" | jq .
 
 Then:
 1. Diagnose the root cause from the stack trace
-2. Check the Sonke Hub repo for the affected code
-3. Propose a fix (draft branch: fix/sentry-$id). Do not push without Ruan's review.
+2. Check the [YOUR PROJECT] repo for the affected code
+3. Propose a fix (draft branch: fix/sentry-$id). Do not push without the user's review.
 4. Reply with: (a) diagnosis, (b) proposed fix summary, (c) branch name, (d) whether manual review is needed before deploy.
 
 Log result to hive_mind and append the fix branch + status to ~/workspace/compliance/sentry-error-log.md."

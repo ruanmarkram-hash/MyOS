@@ -93,7 +93,7 @@ Copy the output (64 characters). Save it in your credential tracker.
 Set it as a Supabase secret:
 
 ```bash
-supabase secrets set MCP_ACCESS_KEY=your-generated-key-here
+supabase secrets set MCP_ACCESS_KEY=<your-generated-key>
 ```
 
 > If you already set `MCP_ACCESS_KEY` for a previous extension or during the Getting Started guide, setting it again will overwrite it. All functions share the same secrets, so every deployed function will use the new key. If you want separate keys per extension, use a different secret name (e.g., `HOUSEHOLD_MCP_KEY`) and update the extension's `index.ts` to read from that name instead.

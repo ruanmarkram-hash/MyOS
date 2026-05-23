@@ -39,7 +39,7 @@ bash ~/HQ/skills/n8n/history.sh [limit]
 | Var | Required | Notes |
 |-----|----------|-------|
 | `N8N_API_KEY` | Yes | JWT token for n8n API |
-| `N8N_LOGIN` | Info | Login username (sonke2026) |
+| `N8N_LOGIN` | Info | Login username (your-n8n-username) |
 
 ## Approval Gate (non-negotiable)
 
